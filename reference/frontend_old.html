@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>사루라 아뜨리에 (R03.11+)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-darkest:#1a1a1a; --bg-dark:#2c2c2c; --bg-medium:#3a3a3a; --bg-light:#4a4a4a;
+      --text-light:#e0e0e0; --text-medium:#a0a0a0; --accent-gold:#ffdd57; --accent-blue:#007bff;
+      --status-red:#dc3545; --status-green:#28a745; --status-yellow:#ffc107;
+    }
+    *,*::before,*::after{box-sizing:border-box}
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: 'Noto Sans KR', sans-serif;
+      background: var(--bg-darkest);
+      color: var(--text-light);
+    }
+    /* ✅ 최종 통합본: 레이아웃의 기준 컨테이너 */
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100dvh;
+      max-width: 700px;
+      background: var(--bg-dark);
+      box-shadow: 0 0 20px rgba(0,0,0,.5);
+      margin: 0 auto;
+    }
+    /* 대화 영역은 남는 공간을 차지하고 스크롤 가능 */
+    .chat-log {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .chat-log {
+      padding-bottom: 12px;
+    }
+    /* 안전장치: 이미지/캔버스가 튀어나오지 않게 */
+    .chat-log img, .chat-log canvas, .chat-log video {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+    /* Top Bar */
+    .top-bar{flex-shrink:0;padding:8px 15px;background:var(--bg-darkest);border-bottom:1px solid #000;display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .status-indicator{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:bold}
+    .traffic-light{width:12px;height:12px;border-radius:50%;background:var(--text-medium);transition:background-color .3s}
+    .traffic-light.red{background:var(--status-red)}
+    .traffic-light.green{background:var(--status-green)}
+    .traffic-light.yellow{background:var(--status-yellow)}
+    .save-code-wrap{display:flex;align-items:center;gap:6px;min-width:0}
+    .save-code-wrap { display: none !important; }
+    .save-code-display{font-size:12px;color:var(--accent-gold);font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px}
+    .top-bar .buttons{display:flex;gap:8px;align-items:center;flex-wrap:nowrap}
+    .icon-btn{background:var(--bg-light);color:var(--text-light);border:1px solid #555;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer}
+
+    /* Header */
+    .header{position:relative;flex-shrink:0;height:35%;min-height:150px;background:var(--bg-darkest);overflow:hidden}
+    .header-gif{width:100%;height:100%;object-fit:cover;opacity:.85;transition:opacity .2s}
+    .header-character-name{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:5px 15px;border-radius:15px;font-size:14px;font-weight:bold}
+    .header{cursor:pointer}
+    .header.collapsed{height:28px;min-height:28px}
+    .header.collapsed .header-gif,.header.collapsed .header-character-name{display:none}
+    .header.collapsed::after{
+      content:'▼ 펼치기';position:absolute;bottom:4px;left:50%;transform:translateX(-50%);
+      color:#a0a0a0;font-size:12px;font-weight:bold
+    }
+
+    /* Info Bar */
+    .info-bar{flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:10px 15px;background:var(--bg-medium);color:var(--text-medium);font-size:13px;border-bottom:1px solid #000}
+    .participants-display{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:15px}
+    .info-bar .label{font-weight:bold;color:var(--accent-gold)}
+    .toggle-button{border:1px solid #555;border-radius:5px;padding:4px 8px;font-size:12px;cursor:pointer}
+    .info-bar .buttons{display:flex;gap:10px;flex-wrap:nowrap}
+    .toggle-button{display:inline-flex;align-items:center;white-space:nowrap}
+
+    /* Panels */
+    .control-panel{display:none;flex-shrink:0;padding:15px;background:var(--bg-dark);border-bottom:1px solid #000;max-height:50%;overflow-y:auto}
+    .control-group{margin-bottom:15px}
+    .control-label{font-weight:bold;color:var(--accent-gold);font-size:14px;margin-bottom:8px;display:block}
+    .control-flex{display:flex;gap:8px}
+    .control-flex input{flex-grow:1;padding:8px;border:1px solid var(--bg-light);border-radius:5px;background:var(--bg-dark);color:var(--text-light)}
+    .control-flex button{padding:8px 15px;border:none;border-radius:5px;background:var(--accent-blue);color:#fff;font-weight:bold;cursor:pointer}
+    .character-selector{display:flex;flex-wrap:wrap;gap:8px}
+    .toggles-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .toggle-container{display:flex;justify-content:space-between;align-items:center;background:var(--bg-light);padding:8px;border-radius:5px}
+    .panel-button {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 6px;
+      background: #8d7b68;
+      color: #fff;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .panel-actions .panel-button + .panel-button {
+      margin-left: 8px;
+    }
+
+    /* Character buttons (기본룩) — REPLACED */
+    .char-btn{
+      padding:6px 12px; border:2px solid #fff; border-radius:15px;
+      font-size:13px; font-weight:bold; cursor:pointer; transition:.2s;
+      background:transparent; color:#fff; opacity:.8;
+    }
+    .char-btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+    /* 플레이어 버튼 룩 유지 */
+    .char-btn.player-btn{ border-color: var(--accent-blue); }
+    .char-btn.player-btn.active{ background: var(--accent-blue); color:#fff; }
+
+    /* 선택 상태 가시성 */
+    .char-btn.active{ opacity:1; }
+
+    /* 퍼스널 컬러는 '선택된 경우'에만 적용 */
+    .char-btn.active[style*="--c"]{
+      border-color: var(--c);
+      color:#fff;
+      /* Fallback + modern */
+      background: rgba(0,0,0,.15);
+      background: color-mix(in oklab, var(--c) 18%, black);
+      box-shadow: 0 0 0 2px var(--c) inset;
+    }
+    /* Chat */
+    .chat-log{flex-grow:1;overflow-y:auto;padding:10px}
+    .turn-wrapper{margin-bottom:15px}
+    .message{padding:8px 12px;border-radius:15px;max-width:85%;line-height:1.6}
+    .narration-message{
+      color: var(--text-medium);
+      font-style: italic;
+      text-align: left;
+      margin: 10px 0;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+    .user-message-wrapper{display:flex;justify-content:flex-end;margin-top:5px}
+    .user-message{background:var(--accent-blue);color:#fff}
+    .character-message-wrapper{ gap:0; }
+    .character-message{background:var(--bg-medium)}
+    .character-name{font-weight:bold;font-size:.9em;margin-bottom:4px}
+    .monologue{color:var(--text-medium);font-style:italic;font-size:.9em;margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-light)}
+    .char-avatar{ display:none !important; }
+ 
+    /* Form */
+    /* 기존 .chat-form 규칙을 찾아 아래 코드로 교체하세요 */
+    .chat-form{
+      flex-shrink: 0;
+      display: flex;
+      padding: 10px;
+      background: var(--bg-medium);
+      align-items: flex-end;
+      /* ✅ [최종 마감] 입력창 하단 고정을 위한 보강 */
+      position: sticky;
+      bottom: 0;
+      z-index: 1;
+    }
+    .chat-form textarea{flex-grow:1;padding:10px;border:none;border-radius:20px;margin-right:10px;background:var(--bg-light);color:var(--text-light);font-size:16px;resize:none;max-height:120px}
+    .chat-form button{padding:12px 20px;border:none;border-radius:20px;background:var(--accent-gold);color:var(--bg-darkest);font-weight:bold;cursor:pointer}
+    /* 전송 버튼 비활성 룩(회색 바탕 + 흰 글자) */
+    .chat-form button:disabled{
+      background:#666;
+      color:#fff;
+      cursor:not-allowed;
+      filter:saturate(0.6);
+      }
+
+
+    /* Modal */
+    .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:1000;display:flex;justify-content:center;align-items:center;padding:10px}
+    .modal-content{background:var(--bg-medium);padding:25px;border-radius:10px;max-width:90%;width:520px}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bg-light);padding-bottom:15px;margin-bottom:15px}
+    .modal-header h2{margin:0;color:var(--accent-gold)}
+    .modal-close-btn{background:none;border:none;color:var(--text-medium);font-size:1.5em;cursor:pointer}
+    .modal-hidden{display:none!important}
+    .recent-list{display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto}
+    .recent-item{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--bg-light);padding:8px;border-radius:6px}
+    .recent-id{font-family:monospace;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+    .btn{border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px}
+    .btn-primary{background:var(--accent-blue);color:#fff}
+    .btn-danger{background:var(--status-red);color:#fff}
+    .btn-ghost{background:transparent;border:1px solid #666;color:#ddd}
+    .section-title{font-weight:bold;color:#ffdd57;margin:8px 0}
+    .small{font-size:12px;color:var(--text-medium)}
+/* ⬇️ <style> 맨 아래 추가 */
+:root{
+      --font-base: clamp(15px, 1.8vw, 18px);
+      --font-large: calc(var(--font-base)*1.1);
+    }
+    .message, .chat-form textarea{ font-size: var(--font-base); }
+    .narration-message{ font-size: var(--font-large); line-height:1.8; }
+
+    /* 줄바꿈 보존 */
+    .message{ white-space: pre-wrap; }
+
+    /* 모바일 가독성 */
+    @media (max-width: 480px){
+      .app-container{ max-width: none; }
+      .chat-form textarea{ min-height: 48px; }
+    }
+    /* 드롭다운 인풋 룩 통일 */
+    #director-panel select{
+      padding:8px;border:1px solid var(--bg-light);border-radius:5px;
+      background:var(--bg-dark);color:var(--text-light)
+    }
+        /* 장르 선택 태그 UI 스타일 */
+    .genre-tags-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .genre-tags-container button {
+      padding: 6px 12px;
+      border: 1px solid var(--bg-light);
+      border-radius: 15px;
+      background-color: var(--bg-dark);
+      color: var(--text-medium);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .genre-tags-container button.active {
+      background-color: var(--accent-gold);
+      color: var(--bg-darkest);
+      border-color: var(--accent-gold);
+      font-weight: bold;
+    }
+    .novel-container {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 90vh;
+        max-width: 700px;
+        background-color: #fdfaf2;
+        color: #333;
+        border-radius: 10px;
+        box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+    }
+    .novel-header {
+        flex-shrink: 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 30px;
+        border-bottom: 1px solid #ddd;
+    }
+    .novel-header h2 {
+        margin: 0;
+        color: #5c4b3f;
+        font-family: 'KoPub Batang', serif;
+        font-size: 1.5em;
+    }
+    .novel-body {
+        flex-grow: 1;
+        overflow-y: auto;
+        line-height: 2;
+        font-size: 16px;
+        white-space: pre-wrap;
+        padding: 30px 40px;
+        font-family: 'KoPub Batang', serif;
+    }
+    .novel-footer {
+        flex-shrink: 0;
+        padding: 20px 30px;
+        border-top: 1px solid #ddd;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .novel-actions button {
+        background-color: #8d7b68;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        padding: 10px 20px;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    .novel-actions button.secondary { background-color: #b0a090; }
+    .novel-share-info { font-size: 12px; color: #777; }
+    .novel-share-info input { background-color: #eee; border: 1px solid #ccc; border-radius: 3px; padding: 4px 8px; text-align: center; }
+    .novel-share-info button { background-color: #aaa; color: white; border: none; padding: 4px 8px; font-size: 12px; border-radius: 3px; cursor: pointer; margin-left: 5px; }
+
+    /* [NEW] chips & world context */
+    .control-panel .kv .label{display:inline-block; min-width:52px; color:#888}
+    .chip-hud{display:flex; gap:8px; flex-wrap:wrap; padding:8px 12px;}
+    .chip{display:inline-block; padding:2px 8px; border-radius:12px; background:var(--surface-2, #2a2a2a); font-size:12px}
+    .chip--muted{opacity:.5}
+    .chip-group{display:flex; align-items:center; gap:6px; border:1px dashed rgba(255,255,255,.08); padding:4px 6px; border-radius:14px}
+    .chip-name{font-weight:600; font-size:12px}
+
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div class="top-bar">
+      <div class="status-indicator">
+        <div id="traffic-light" class="traffic-light red"></div>
+        <span id="status-text">대기 중</span>
+      </div>
+        <div class="buttons">
+          <button id="open-novel-btn" class="icon-btn" aria-label="소설 생성" title="소설 생성">📖</button>
+          <button id="session-menu-btn" class="icon-btn" aria-label="불러오기·새로하기" title="불러오기·새로하기">📂</button>
+        </div>
+      <div class="save-code-wrap">
+        <span id="save-code-display" class="save-code-display">새로운 이야기</span>
+        <button id="copy-save-code-btn" class="icon-btn" title="저장 코드 복사">📋</button>
+      </div>
+    </div>
+
+
+    <div class="header">
+      <img id="header-gif" class="header-gif" src="https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier" alt="Header Image">
+      <div id="header-character-name" class="header-character-name"></div>
+    </div>
+
+    <div class="info-bar">
+      <div id="participants-display" class="participants-display">
+        <span class="label">내 이름:</span> <span id="current-player-name">사용자</span> |
+        <span class="label">참여자:</span> <span id="participants-list-display">사용자</span>
+      </div>
+      <div class="buttons">
+        <div id="toggle-scene-panel" class="toggle-button">씬 설정🎬</div>
+        <div id="toggle-director-panel" class="toggle-button">연출 설정⚙️</div>
+      </div>
+    </div>
+
+    <div id="scene-panel" class="control-panel">
+      <div class="control-group">
+        <div class="control-label">내 이름 설정</div>
+        <div class="control-flex">
+          <input type="text" id="player-name-input" placeholder="이름 입력...">
+          <button id="set-player-name-btn">설정</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">참여자 선택</div>
+        <div id="character-selector" class="character-selector"></div>
+      </div>
+    </div>
+  <div id="director-panel" class="control-panel">
+    <!-- 그룹 1: 연출 설정 (토글들) -->
+    <div class="control-group">
+      <div class="control-label">연출 설정</div>
+      <div class="toggles-grid">
+        <div class="toggle-container">
+          <label for="pov-toggle">1인칭 시점</label>
+          <input type="checkbox" id="pov-toggle" data-key="pov_first_person" checked>
+        </div>
+        <div class="toggle-container">
+          <label for="monologue-toggle">속마음 표시</label>
+          <input type="checkbox" id="monologue-toggle" data-key="show_monologue" checked>
+        </div>
+        <div class="toggle-container">
+          <label for="acquainted-toggle">지인 모드</label>
+          <input type="checkbox" id="acquainted-toggle" data-key="acquainted">
+        </div>
+        <div class="toggle-container">
+          <label for="adult-mode-toggle">성인 모드</label>
+          <input type="checkbox" id="adult-mode-toggle" data-key="adult_mode">
+        </div>
+        <!-- 철학 스위치: 캐릭터 주도권 -->
+        <div class="toggle-container">
+          <label for="initiative-toggle">캐릭터 서사 주도권</label>
+          <input type="checkbox" id="initiative-toggle"
+         data-key="offer_interactive_choices" checked>
+        </div>
+            <!-- [NEW] NPC 주도권 -->
+        <div class="toggle-container">
+      <label for="npc-initiative-toggle">관망 허용</label>
+      <input type="checkbox" id="npc-initiative-toggle" data-key="npc_initiative" checked>
+    </div>
+
+      </div>
+    </div>
+
+    <!-- 그룹 2: 연출 스타일 미세 조정 (슬라이더들) -->
+    <div class="control-group">
+      <div class="control-label">연출 스타일 미세 조정</div>
+      <div class="toggles-grid" style="grid-template-columns: 1fr;">
+        <div class="slider-container" style="display:flex;flex-direction:column;gap:5px;">
+          <label for="narration-ratio-slider">대화 ↔ 나레이션 비중</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:12px;">대화</span>
+            <input type="range" id="narration-ratio-slider" data-key="narration_ratio" min="0" max="100" value="70" style="flex-grow:1;">
+            <span style="font-size:12px;">나레이션</span>
+            <span id="narration-ratio-value" style="font-weight:bold;min-width:30px;">70%</span>
+          </div>
+        </div>
+        <div class="slider-container" style="display:flex;flex-direction:column;gap:5px;">
+          <label for="tempo-slider">서사 진행 속도</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:12px;">느긋하게</span>
+            <input type="range" id="tempo-slider" data-key="tempo" min="1" max="9" value="6" style="flex-grow:1;">
+            <span style="font-size:12px;">빠르게</span>
+            <span id="tempo-value" style="font-weight:bold;min-width:30px;">6</span>
+          </div>
+        </div>
+        <div class="slider-container" style="display:flex;flex-direction:column;gap:5px;">
+          <label for="description-focus-slider">묘사 밀도</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:12px;">간결하게</span>
+            <input type="range" id="description-focus-slider" data-key="description_focus" min="1" max="9" value="7" style="flex-grow:1;">
+            <span style="font-size:12px;">상세하게</span>
+            <span id="description-focus-value" style="font-weight:bold;min-width:30px;">7</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 그룹 3: 장르 프리셋 -->
+    <div class="control-group">
+      <div class="control-label">장르 프리셋</div>
+      <div id="genre-preset-tags" class="genre-tags-container" data-key="genre_preset">
+        <button data-value="auto" class="active">자동 (균형)</button>
+        <button data-value="slice_of_life">일상 (힐링)</button>
+        <button data-value="romance">로맨스</button>
+        <button data-value="comedy">코미디</button>
+        <button data-value="fantasy">판타지</button>
+        <button data-value="mystery">미스터리</button>
+        <button data-value="thriller">스릴러 & 서스펜스</button>
+        <button data-value="horror">호러</button>
+        <button data-value="sci-fi">SF (사이버펑크)</button>
+        <button data-value="historical">시대극</button>
+        <button data-value="noir">느와르 & 하드보일드</button>
+        <button data-value="wuxia">무협</button>
+        <button data-value="adventure">액션 & 어드벤처</button>
+        <button data-value="dark_fantasy">다크 판타지</button>
+        <button data-value="soap_opera">막장 드라마</button>
+      </div>
+    </div>
+  </div>
+      <!-- [NEW] 월드 컨텍스트 카드 -->
+    <div id="world-context-card" class="control-panel">
+      <div class="control-label">월드 컨텍스트</div>
+      <div class="kv">
+        <div><span class="label">위치:</span> <span id="world-location">-</span></div>
+        <div><span class="label">분위기:</span> <span id="world-tags">-</span></div>
+        <div><span class="label">소품:</span> <span id="world-affordances">-</span></div>
+      </div>
+    </div>
+    <div id="chat-log" class="chat-log"></div>
+
+    <form id="chat-form" class="chat-form">
+      <textarea id="user-input" placeholder="이곳에 메시지를 입력하세요." rows="1"></textarea>
+      <button type="submit" id="chat-submit-btn">시작</button>
+    </form>
+  </div>
+
+  <div id="novel-modal-overlay" class="modal-overlay modal-hidden">
+      <div class="novel-container">
+          <div class="novel-header">
+              <h2 id="novel-title">아뜨리에 북</h2>
+              <button id="novel-close-btn" class="modal-close-btn">&times;</button>
+          </div>
+          <div id="novel-content" class="novel-body genre-default"></div>
+          <div id="novel-footer" class="novel-footer">
+              <button id="novel-footer-toggle">메뉴 보기</button>
+              <div id="novel-actions" class="novel-actions">
+                  <button id="generate-novel-btn">소설 쓰기 / 업데이트</button>
+                  <button id="view-shared-novel-btn" class="secondary">공유 책 불러오기</button>
+                  <button id="back-to-my-novel-btn" class="secondary modal-hidden">내 소설로 돌아가기</button>
+              </div>
+              <div id="novel-share-container" class="novel-share-info modal-hidden">이 책 공유하기:
+                  <input type="text" id="novel-share-code" readonly>
+                  <button id="copy-share-code-btn">복사</button>
+              </div>
+          </div>
+      </div>
+  </div>
+  <div id="novel-options-modal" class="modal-overlay modal-hidden">
+      <div class="modal-content" style="max-width: 500px;">
+          <div class="modal-header">
+              <h2>📖 소설 쓰기 옵션</h2>
+              <button id="novel-options-close-btn" class="modal-close-btn">&times;</button>
+          </div>
+          <div class="modal-body" style="display: flex; flex-direction: column; gap: 20px;">
+              <div class="control-section">
+                  <div class="label">디렉터 메모 (AI 작가에게 특별 요청사항)</div>
+                  <textarea id="novel-director-memo" placeholder="예: 주인공의 감정을 더 절절하게 묘사해줘. 이번 장면은 좀 더 어둡고 무거운 톤으로 부탁해." style="width: 100%; min-height: 80px; padding: 10px; border-radius: 5px; background-color: #2c2c2c; color: #fff; border: 1px solid #555; resize: vertical;"></textarea>
+              </div>
+              <div class="panel-actions" style="border-top: none; padding-top: 0;">
+                  <button id="novel-generate-append-btn" class="panel-button">➡️ 마지막부터 이어 쓰기</button>
+                  <button id="novel-generate-rewrite-btn" class="panel-button" style="background-color: #c82333;">🔄 처음부터 새로 쓰기</button>
+              </div>
+          </div>
+      </div>
+  </div>
+
+
+  <!-- Session Modal -->
+  <div id="session-modal" class="modal-overlay modal-hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>이야기 이어하기 / 새로하기</h2>
+        <button class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="section-title">현재 세션</div>
+        <div class="control-group">
+          <div class="control-flex">
+            <input type="text" id="current-save-code" readonly placeholder="세션이 시작되면 코드가 표시됩니다.">
+            <button id="copy-code-in-modal" class="btn btn-primary" type="button">복사</button>
+          </div>
+          <div class="small">코드를 복사해 두면 나중에 이어서 플레이할 수 있어요.</div>
+        </div>
+
+        <div class="section-title">불러오기</div>
+        <div class="control-group">
+          <div class="control-flex">
+            <input type="text" id="load-code-input" placeholder="저장 코드 입력...">
+            <button id="session-load-btn" class="btn btn-primary" type="button">이어하기</button>
+          </div>
+        </div>
+
+        <div class="section-title">최근 세션</div>
+        <div id="recent-list" class="recent-list"></div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button id="clear-recents-btn" class="btn btn-ghost" type="button">최근 목록 지우기</button>
+        </div>
+
+        <div class="section-title">새로하기</div>
+        <button id="session-reset-btn" class="btn btn-danger" style="width:100%;" type="button">모든 기록 지우고 새로 시작</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // --- Elements & State ---
+      const $ = id => document.getElementById(id);
+      const el = {
+        trafficLight: $('traffic-light'), statusText: $('status-text'),
+        saveCodeDisplay: $('save-code-display'), copySaveCodeBtn: $('copy-save-code-btn'),
+        sessionMenuBtn: $('session-menu-btn'), headerGif: $('header-gif'), headerCharName: $('header-character-name'),
+        participantsDisplay: $('participants-display'), toggleScenePanelBtn: $('toggle-scene-panel'),
+        toggleDirectorPanelBtn: $('toggle-director-panel'), scenePanel: $('scene-panel'), directorPanel: $('director-panel'),
+        playerNameInput: $('player-name-input'), setPlayerNameBtn: $('set-player-name-btn'), characterSelector: $('character-selector'),
+        chatLog: $('chat-log'), chatForm: $('chat-form'), userInput: $('user-input'), submitBtn: $('chat-submit-btn'),
+        sessionModal: $('session-modal'), loadCodeInput: $('load-code-input'), sessionLoadBtn: $('session-load-btn'),
+        sessionResetBtn: $('session-reset-btn'), currentSaveCode: $('current-save-code'), copyCodeInModal: $('copy-code-in-modal'),
+        recentList: $('recent-list'), clearRecentsBtn: $('clear-recents-btn'),
+        novelModalOverlay: $('novel-modal-overlay'),
+        novelTitle: $('novel-title'),
+        novelContent: $('novel-content'),
+        novelCloseBtn: $('novel-close-btn'),
+        generateNovelBtn: $('generate-novel-btn'),
+        viewSharedNovelBtn: $('view-shared-novel-btn'),
+        backToMyNovelBtn: $('back-to-my-novel-btn'),
+        novelShareContainer: $('novel-share-container'),
+        novelShareCode: $('novel-share-code'),
+        copyShareCodeBtn: $('copy-share-code-btn'),
+        novelOptionsModal: $('novel-options-modal'),
+        novelOptionsCloseBtn: $('novel-options-close-btn'),
+        novelDirectorMemo: $('novel-director-memo'),
+        novelGenerateAppendBtn: $('novel-generate-append-btn'),
+        novelGenerateRewriteBtn: $('novel-generate-rewrite-btn'),
+        openNovelBtn: $('open-novel-btn'),
+        novelFooterToggle: $('novel-footer-toggle'),
+        novelActions: $('novel-actions'),
+      };
+      const directorToggles = document.querySelectorAll(
+        '#director-panel input, #director-panel select, #director-panel .genre-tags-container button'
+      );
+      let STAGED_ON_SCREEN = new Set();
+      let PLAYER_ON = true; // ✅ 플레이어 기본 참여
+      let STATE = {};
+      // 레거시 코드가 window.player_name을 참조해도 터지지 않도록 전역을 정의
+      window.player_name = '';    // 초기 정의(없으면 ReferenceError)
+      let characterProfiles = [];
+      let nameToEng = {}; // 한글명 -> 영문 슬러그 매핑
+      let isBootstrapped = false;
+      let pollTimer = null;
+      // [PATCH-UI-A] Typewriter + 폴백 컬러
+      let LAST_TURN_ID = 0;
+      const TYPEWRITER = { enabled: true, cps: 22 }; // 느리게: 18~24
+      // === 전역: getCurrentDirectorSettings ===
+      function getCurrentDirectorSettings() {
+        const settings = {};
+        document.querySelectorAll('#director-panel [data-key]').forEach(elem => {
+          const key = elem.dataset.key;
+
+          // 장르 프리셋(버튼) 컨테이너
+          if (elem.id === 'genre-preset-tags' || elem.classList.contains('genre-tags-container')) {
+            const active = elem.querySelector('button.active');
+            if (active?.dataset.value) settings[key] = active.dataset.value;
+            return;
+          }
+
+          if (elem.type === 'checkbox') settings[key] = elem.checked;
+          else if (elem.type === 'range' || elem.type === 'number') settings[key] = Number(elem.value);
+          else settings[key] = elem.value;
+        });
+        return settings;
+      }
+
+      function typeText(el, text){
+        return new Promise(res=>{
+          const chat = document.getElementById('chat-log');
+          if (!TYPEWRITER.enabled) {
+            el.textContent = text || "";
+            if (chat) chat.scrollTop = chat.scrollHeight;
+            return res();
+          }
+          let i = 0; el.textContent = "";
+          (function tick(){
+            if (i >= (text || "").length) return res();
+            el.textContent += text[i++];
+            if (chat) chat.scrollTop = chat.scrollHeight;
+            setTimeout(tick, 1000 / TYPEWRITER.cps);
+          })();
+        });
+      }
+
+      // 이름 기반 HSL 폴백(프로필 색 없을 때)
+      function colorFromName(name){
+        let h=0; for (let i=0;i<String(name||"").length;i++) h=(h*31+name.charCodeAt(i))>>>0;
+        return `hsl(${h%360} 70% 55%)`;
+      }
+
+      function makePlayerBtn(name){
+        // 기존 플레이어 버튼 제거 후 생성
+        document.querySelectorAll('.char-btn.player-btn').forEach(b => b.remove());
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'char-btn player-btn';
+        b.dataset.charName = name;
+        b.textContent = name;
+
+        // 초기 상태 반영
+        b.classList.toggle('active', PLAYER_ON);
+
+        b.addEventListener('click', () => {
+          // 처리중엔 잠금
+          if (isBootstrapped && STATE?.traffic_light !== 'GREEN') return;
+          PLAYER_ON = !PLAYER_ON;
+          b.classList.toggle('active', PLAYER_ON);
+          renderParticipantsPreview();
+        });
+
+        el.characterSelector.prepend(b);
+      }
+
+
+          function updatePrestartParticipants(){
+            if (isBootstrapped) return;
+            renderParticipantsPreview();
+          }
+
+      // ✅ 교체: 선택 즉시 반영되는 미리보기
+      function renderParticipantsPreview() {
+        const player =
+          (document.getElementById('current-player-name')?.textContent || '사용자').trim();
+        const $out = document.getElementById('participants-list-display');
+
+        // 부트스트랩 전: 버튼의 active 상태를 그대로 미리보기
+        if (!isBootstrapped) {
+          const actives = Array.from(
+            el.characterSelector.querySelectorAll('.char-btn.active:not(.player-btn)')
+          ).map(b => b.dataset.charName);
+
+          const list = (PLAYER_ON ? [player] : []).concat(actives);
+          $out.textContent = list.length ? Array.from(new Set(list)).join(', ') : '없음';
+          return;
+        }
+
+        // 부트스트랩 후: 서버 커밋 전이라도 STAGED_ON_SCREEN을 표시
+        const staged = Array.from(STAGED_ON_SCREEN);
+        const list = (PLAYER_ON ? [player] : []).concat(staged);
+        $out.textContent = list.length ? list.join(', ') : '없음';
+      }
+
+            /* === [NEW] 월드 컨텍스트 렌더 === */
+      function renderWorldContext(state) {
+        const locEl = document.getElementById('world-location');
+        const tagsEl = document.getElementById('world-tags');
+        const affEl  = document.getElementById('world-affordances');
+        if (!locEl || !state) return;
+
+        const ws = state.world_state || {};
+        const loc = ws.current_location || ws.location || '-';
+        const tags = ws.location_tags || ws.tags || [];
+        const afford = ws.affordances || ws.current_location_affordances || [];
+
+        locEl.textContent = loc || '-';
+        tagsEl.textContent = Array.isArray(tags) && tags.length ? tags.join(', ') : '-';
+        affEl.textContent  = Array.isArray(afford) && afford.length ? afford.slice(0,3).join(', ') : '-';
+      }
+
+      /* === [NEW] 상태칩 HUD === */
+      function renderStatusHUD(state) {
+        const hud = document.getElementById('status-hud');
+        if (!hud || !state) return;
+
+        const ons = state.on_screen_names || state.on_screen || [];
+        const cs  = state.character_states || {};
+        const chips = [];
+
+        ons.forEach(name => {
+          const ds = (((cs[name]||{}).dynamic_state)||{});
+          const tags = ds.status_tags || [];
+          if (tags.length) {
+            const top = tags.slice(0,2).map(t => `<span class="chip">${t}</span>`).join('');
+            chips.push(`<div class="chip-group"><span class="chip-name">${name}</span>${top}</div>`);
+          } else {
+            chips.push(`<div class="chip-group"><span class="chip-name">${name}</span><span class="chip chip--muted">-</span></div>`);
+          }
+        });
+
+        hud.innerHTML = chips.join('');
+      }
+
+      // B-7: R02 폴더 구조 기반 헤더 GIF 세터
+      function setHeaderGif(character, emotion) {
+        const eng = nameToEng[character] || String(character || '').toLowerCase();
+        const file = emotionToWebpFile(emotion || 'subtle smile');
+
+        // 기본 배너(원하면 /static/gifs/common/default-header.webp 등 로컬 경로로 교체 가능)
+        const DEFAULT_HEADER = 'https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier';
+
+        const src = eng ? `/static/gifs/${eng}/${file}` : DEFAULT_HEADER;
+
+        // 부드러운 페이드
+        el.headerGif.style.opacity = '0.6';
+
+        // 파일 없으면 Subtle Smile로 폴백(한 번만 시도)
+        el.headerGif.onerror = () => {
+          el.headerGif.onerror = null; // 무한루프 방지
+          if (eng) el.headerGif.src = `/static/gifs/${eng}/Subtle%20Smile.webp`; // 공백 URL 인코딩 주의
+          else     el.headerGif.src = DEFAULT_HEADER;
+        };
+
+        el.headerGif.onload = () => { el.headerGif.style.opacity = '0.85'; };
+        el.headerGif.src = src;
+
+        el.headerCharName.textContent = character || '';
+      }
+
+      // --- LocalStorage: Recent Sessions ---
+      const RECENTS_KEY = 'sarura_recent_sessions';
+      function loadRecents() {
+        try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]'); } catch { return []; }
+      }
+      function saveRecents(list) {
+        try { localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, 10))); } catch {}
+      }
+      function addRecent(id) {
+        if (!id) return;
+        const list = loadRecents().filter(x => x.id !== id);
+        list.unshift({ id, ts: Date.now() });
+        saveRecents(list);
+        renderRecentList();
+      }
+      function removeRecent(id) {
+        const list = loadRecents().filter(x => x.id !== id);
+        saveRecents(list);
+        renderRecentList();
+      }
+      function clearRecents() { saveRecents([]); renderRecentList(); }
+
+      function renderRecentList() {
+        const list = loadRecents();
+        el.recentList.innerHTML = '';
+        if (!list.length) {
+          el.recentList.innerHTML = '<div class="small">최근 세션이 없습니다.</div>';
+          return;
+        }
+        list.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'recent-item';
+          const left = document.createElement('div');
+          left.className = 'recent-id';
+          const date = new Date(item.ts);
+          left.title = date.toLocaleString();
+          left.textContent = item.id;
+          const right = document.createElement('div');
+          right.style.display = 'flex'; right.style.gap = '6px';
+
+          const loadBtn = document.createElement('button');
+          loadBtn.className = 'btn btn-primary'; loadBtn.textContent = '불러오기';
+          loadBtn.addEventListener('click', async () => {
+            try {
+              const res = await POST('/bootstrap', { save_code: item.id });
+              if (res && res.state) {
+                renderUIFromState(res.state);
+                closeModal(el.sessionModal);
+              } else { alert('세션 로드 실패'); }
+            } catch { alert('세션 로드 실패'); }
+          });
+
+          const delBtn = document.createElement('button');
+          delBtn.className = 'btn btn-ghost'; delBtn.textContent = '삭제';
+          delBtn.addEventListener('click', () => removeRecent(item.id));
+
+          right.appendChild(loadBtn); right.appendChild(delBtn);
+          row.appendChild(left); row.appendChild(right);
+          el.recentList.appendChild(row);
+        });
+      }
+
+      // --- HTTP helpers (replace) ---
+      const POST = async (endpoint, body) => {
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(body ?? {})
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.message || `서버 요청 실패 (상태: ${r.status})`);
+        return data;
+      };
+
+      const GET = async (endpoint) => {
+        const r = await fetch(endpoint, { credentials: 'include' });
+        if (!r.ok) throw new Error(`GET ${endpoint} -> ${r.status}`);
+        return r.json();
+      };
+
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+      async function pollTurn(taskId, { interval = 600, maxMs = 30000 } = {}) {
+        const t0 = Date.now();
+        while (true) {
+          const r = await GET(`/get-turn-result/${taskId}`);
+          if (r.status === 'ok') return r;                // { rendered?, state }
+          if (r.status === 'error') throw new Error(r.message || 'turn failed');
+          if (Date.now() - t0 > maxMs) throw new Error('turn timeout');
+          await sleep(interval);
+        }
+      }
+
+      // 우리 코드에 맞춘 runTurn (user_text 사용 + renderUIFromState만 호출)
+      async function runTurn(text) {
+        // 1) (선택) 캐스팅 변경 먼저 커밋
+        if (STAGED_ON_SCREEN?.size) {
+          try {
+            await POST('/set_on_screen', {
+              on_screen_names: Array.from(STAGED_ON_SCREEN),
+              ui_settings: { force_player_on_scene: PLAYER_ON, monologue_policy: 'stagger' }
+            });
+          } catch (e) {
+            console.warn('set_on_screen 실패 → execute-turn에 함께 전달로 폴백', e);
+          }
+        }
+
+                // 2) 턴 시작
+        const baseUI = getCurrentDirectorSettings();
+        baseUI.narration_ratio = applyNarrationPolicy(baseUI.narration_ratio, { 
+          hasUserText: !!text, 
+          showMonologue: (baseUI?.show_monologue ?? true)
+        });
+        baseUI.spice_hint = spiceHintFromUserText(text); // adult_mode 과열 제어 힌트 (서버가 쓰면 사용, 아니면 무시)
+        baseUI.role_mode = 'participant';
+        
+        const start = await POST('/execute-turn', {
+          user_text: text,
+          ui_settings: { 
+            ...baseUI, 
+            force_player_on_scene: (typeof PLAYER_ON !== 'undefined' ? PLAYER_ON : true) 
+          },
+          on_screen_names: Array.from(STAGED_ON_SCREEN || []),
+        });
+        if (start?.status !== 'processing' || !start?.task_id) {
+          throw new Error(start?.message || 'Bad execute-turn start response');
+        }
+
+        // 3) 폴링
+        const done = await pollTurn(start.task_id);
+
+        // 4) 렌더 (우린 state 스냅샷 기반 렌더가 이미 있음)
+        if (done.state) await renderUIFromState(done.state);
+        return done;
+      }
+      function applyNarrationPolicy(baseRatio, { hasUserText, showMonologue }) {
+        let r = Number(baseRatio ?? 40);
+        if (hasUserText) r = Math.min(r, 25); // 선택/응답턴엔 내레이션 ≤ 25%
+        if (showMonologue) r = Math.min(r, 35); // 독백 ON이면 추가 캡
+        return Math.max(10, Math.min(80, r));  // 하한/상한 안전
+      }
+
+      function spiceHintFromUserText(text) {
+        if (!text) return 'stay';
+        const t = text.toLowerCase();
+        const down = ['당황','그만','불편','싫','stop','no'];
+        const up   = ['좋아','더','계속','원해','kiss','❤️','😍'];
+        if (down.some(w => t.includes(w))) return 'down';
+        if (up.some(w => t.includes(w)))   return 'up';
+        return 'stay';
+      }
+            
+
+      // B-6: 감정/파일 유틸 + [emotion] 태그 파서
+      const EMOTION_ALIASES = {
+        // EN → Canonical
+        'amusement':'playful teasing',
+        'interest':'curiosity',
+        'surprise':'curiosity',
+        'happiness':'ecstatic joy',
+        'joy':'ecstatic joy',
+        'anger':'explosive anger',
+        'sadness':'welling sorrow',
+        'love':'warm affection',
+        'smile':'subtle smile',
+        // KR → Canonical
+        '경멸':'cold disdain',
+        '즐거움':'ecstatic joy',
+        '기대':'curiosity',
+        '당황':'shyness',
+        '부끄러움':'shyness',
+        '웃음':'subtle smile',
+        '미소':'subtle smile',
+        '분노':'explosive anger',
+        '슬픔':'welling sorrow',
+        '사랑':'warm affection',
+        '흥미':'curiosity',
+        '재미':'playful teasing',
+        '기쁨':'ecstatic joy',
+        '긴장':'nervous tension',
+        '의심':'skeptical doubt',
+        '무표정':'neutral',
+        '평온':'calm serenity'
+      };
+
+      // 예외 파일명(Title Case 규칙에서 어긋나는 케이스 보정)
+       const EMOTION_FILE_OVERRIDES = {
+        'confident assertion': 'Confident assertion',
+        // ⬇️ ADD: Neutral은 실제 파일이 없어 Subtle Smile로 바로 매핑
+        'neutral': 'Subtle Smile',
+      };
+      // 감정 키 -> 파일명 변환 (Title Case + .webp)
+      function emotionToWebpFile(emotion) {
+        const raw = normalizeEmotion(emotion) || 'subtle smile';
+        const canonical = EMOTION_ALIASES[raw] || raw; // 별칭 치환
+        const base = EMOTION_FILE_OVERRIDES[canonical] ||
+          canonical.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        return `${base}.webp`;
+      }
+
+      // "[curiosity] 이런 식 문장"에서 태그 떼고 { cleaned, tag } 반환
+      function cleanEmotionTagFromText(text) {
+        const str = String(text || '');
+        const m = str.match(/^\s*\[([^\]]+)\]\s*/i);
+        if (!m) return { cleaned: str, tag: null };
+        return { cleaned: str.slice(m[0].length), tag: m[1] };
+      }
+
+      // 감정 표준화 (소문자/트리밍)
+      function normalizeEmotion(tag) {
+        return String(tag || '').toLowerCase().trim();
+      }
+
+      // --- UI helpers ---
+      const updateTrafficLight = (status, text) => {
+        el.trafficLight.className = `traffic-light ${status}`;
+        el.statusText.textContent = text;
+      };
+
+      // [PATCH-UI-B] 마지막 턴만 타자기 적용을 위해 async
+      const addMessageToLog = async (wrapper, type, data) => {
+        const msgWrapper = document.createElement('div');
+        const msg = document.createElement('div');
+        msg.className = 'message';
+
+        if (type === 'narration') {
+          msg.className = 'narration-message';
+            wrapper.appendChild(msg);               // 1) 먼저 DOM에 붙이고
+            await typeText(msg, data.content || ''); // 2) 그리고 타자기
+          return;
+        }
+
+        if (type === 'user') {
+          msgWrapper.className = 'user-message-wrapper';
+          msg.classList.add('user-message');
+          msg.textContent = data.content || '';
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+          return;
+        }
+
+        if (type === 'dialogue') {
+          msgWrapper.className = 'character-message-wrapper';
+          msg.classList.add('character-message');
+
+          // 이름(색상)
+          const profile = characterProfiles.find(p => p.name === data.character);
+          const nameEl = document.createElement('div');
+          nameEl.className = 'character-name';
+          nameEl.textContent = data.character;
+          nameEl.style.color = (profile && profile.color) ? profile.color : colorFromName(data.character || '?');
+
+          // 감정 추출 + 헤더 webp
+          const cleaned = cleanEmotionTagFromText(data.content || "");
+          let emotion = data.emotion ? normalizeEmotion(data.emotion) : null;
+          if (!emotion && cleaned.tag) emotion = normalizeEmotion(cleaned.tag);
+          if (emotion) emotion = EMOTION_ALIASES[emotion] || emotion;
+          setHeaderGif(data.character, emotion);
+
+          const contentEl = document.createElement('div');
+          // 1) 구조 먼저 붙임
+          msg.appendChild(nameEl);
+          msg.appendChild(contentEl);
+
+          // 👇 기본값: show_monologue가 undefined면 true로 간주
+          const wantMono = (STATE?.ui_settings?.show_monologue ?? true);
+          if (data.monologue && wantMono) {
+            const monologueEl = document.createElement('div');
+            monologueEl.className = 'monologue';
+            monologueEl.textContent = data.monologue || "";
+            msg.appendChild(monologueEl);
+          }
+
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+
+          // 2) 이제 타자기 시작
+          await typeText(contentEl, cleaned.cleaned || "");
+          return;
+        }
+
+        // === [PATCH A] Standalone monologue 지원] ===
+        if (type === 'monologue') {
+          if (!(STATE?.ui_settings?.show_monologue ?? true)) return;
+          msgWrapper.className = 'character-message-wrapper';
+          msg.classList.add('character-message');
+
+          const who = data.character || (STATE?.player_name || '속마음');
+          const profile = (characterProfiles || []).find(p => p.name === who);
+
+          const nameEl = document.createElement('div');
+          nameEl.className = 'character-name';
+          nameEl.textContent = who;
+          nameEl.style.color = (profile && profile.color) ? profile.color : colorFromName(who);
+
+          const contentEl = document.createElement('div');
+          contentEl.className = 'monologue';
+
+          msg.appendChild(nameEl);
+          msg.appendChild(contentEl);
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+
+          // 타자기 적용
+          await typeText(contentEl, data.content || "");
+          return;
+        }
+
+        // 안전망
+        msg.className = 'narration-message';
+        msg.textContent = (data && data.content) ? data.content : '(unknown block)';
+        wrapper.appendChild(msg);
+      };
+
+        
+
+        // === [PATCH B1] 이 턴에 모놀로그가 없으면 한 줄 보강 ===
+      function ensureMonologueForTurn(turn) {
+        const blocks = Array.isArray(turn?.script) ? [...turn.script] : [];
+        const want = !!(STATE?.ui_settings?.show_monologue ?? true);
+        if (!want) return blocks;
+
+        
+
+        const hasInline = blocks.some(b => b.type === 'dialogue' && b.monologue && b.monologue.trim());
+        const hasStandalone = blocks.some(b => b.type === 'monologue' && b.content && b.content.trim());
+        if (hasInline || hasStandalone) return blocks;
+
+        // ▼ 간단 합성(클라 안전망): 마지막 대사/감정 힌트 사용
+        const lastDlg = [...blocks].reverse().find(b => b.type === 'dialogue');
+        const emo = (lastDlg?.emotion || "").toLowerCase();
+        const who = STATE?.player_name || '나';
+
+        let line = '';
+        if (emo.includes('curiosity') || emo.includes('흥미')) {
+          line = '나는 굳이 끼어들지 않고 분위기를 가늠한다.';
+        } else if (emo.includes('shyness') || emo.includes('부끄')) {
+          line = '말끝을 삼키며 눈치만 본다.';
+        } else if (emo.includes('anger') || emo.includes('분노')) {
+          line = '속으론 씁쓸하게 웃고 만다.';
+        } else {
+          line = '짧게 숨을 고르며 다음 말을 떠올린다.';
+        }
+
+        blocks.push({
+          type: 'monologue',
+          character: who,
+          content: line
+        });
+        return blocks;
+      }
+      
+        // ▼ [새로 추가] 턴 간 유지되는 큐/이전 감정값 (다중 캐릭터 대응)
+        let PENDING_MONOS = new Map(); // { character -> string(monologue) }
+        let LAST_EMO = new Map();      // { character -> {valence, arousal, interest} }
+
+        // [유틸] 감정 델타 스코어링 (데이터 없으면 0)
+        function scoreDelta(name, dyn) {
+          const prev = LAST_EMO.get(name) || { valence:0, arousal:0, interest:0 };
+          const v = Number(dyn?.valence ?? 0), a = Number(dyn?.arousal ?? 0), i = Number(dyn?.interest ?? 0);
+          const dv = Math.abs(v - prev.valence) + 0.7*Math.abs(a - prev.arousal) + 0.5*Math.abs(i - prev.interest);
+          LAST_EMO.set(name, { valence:v, arousal:a, interest:i });
+          return dv;
+        }
+
+        // [핵심] 몽롤 스태거 + 인라인: N명일 때도 자동으로 예산 내에서 정리
+        function staggerAndInlineMonologues(turn, onScreenNames = []) {
+          const blocks = Array.isArray(turn?.script) ? [...turn.script] : [];
+          if (!blocks.length) return blocks;
+
+          const showMonologue = (STATE?.ui_settings?.show_monologue ?? true);
+
+          // 1) 단독 monologue 임시 분리
+          const standalone = [];
+          const linear = [];
+          for (const b of blocks) {
+            if (b?.type === 'monologue' && (b.content || b.monologue)) {
+              standalone.push(b);
+            } else {
+              linear.push(b);
+            }
+          }
+
+          // 2) 우선순위 캐릭터 선정(말한 순서 + 감정 델타)
+          const speakingOrder = linear.filter(b => b.type === 'dialogue' && b.character).map(b => b.character);
+          const onScreenSet = new Set(onScreenNames || []);
+          const cs = STATE?.world_state?.character_states || {};
+          onScreenSet.forEach(name => scoreDelta(name, cs?.[name]?.dynamic_state));
+
+          const rankedByDelta = [...onScreenSet].sort((a,b) => {
+            return (scoreDelta(b, cs?.[b]?.dynamic_state) - scoreDelta(a, cs?.[a]?.dynamic_state));
+          });
+
+          const primary = new Set();
+          if (speakingOrder[0]) primary.add(speakingOrder[0]);
+          if (rankedByDelta[0]) primary.add(rankedByDelta[0]);
+
+          // 턴당 표시 예산(겹서술 방지). 필요하면 1~3 사이로만 조절해.
+          const BUDGET = 2;
+          while (primary.size > BUDGET) {
+            primary.delete([...primary][primary.size - 1]);
+          }
+
+          // 3) 대사 안 monologue 정리: 예산 밖/숨김은 다음 턴으로 이월
+          for (const b of linear) {
+            if (b.type === 'dialogue' && b.character && b.monologue) {
+              if (!(showMonologue && primary.has(b.character))) {
+                PENDING_MONOS.set(b.character, String(b.monologue||''));
+                delete b.monologue;
+              }
+            }
+          }
+
+          // 4) 단독 monologue: 같은 캐릭터 대사에 끼우거나, 없으면 큐로 이월
+          for (const m of standalone) {
+            const who = m.character || speakingOrder[0];
+            const content = m.content || m.monologue || '';
+            if (showMonologue && who && primary.has(who)) {
+              let placed = false;
+              for (let i=0; i<linear.length; i++) {
+                const b = linear[i];
+                if (b.type === 'dialogue' && b.character === who && !b.monologue) {
+                  b.monologue = String(content);
+                  placed = true;
+                  break;
+                }
+              }
+              if (!placed && who) PENDING_MONOS.set(who, String(content));
+            } else if (who) {
+              PENDING_MONOS.set(who, String(content));
+            }
+          }
+
+          // 5) 큐에 있던 것, 이번 턴에 기회 있으면 인라인
+          for (const b of linear) {
+            if (b.type === 'dialogue' && b.character && showMonologue && primary.has(b.character)) {
+              if (!b.monologue && PENDING_MONOS.has(b.character)) {
+                b.monologue = PENDING_MONOS.get(b.character);
+                PENDING_MONOS.delete(b.character);
+              }
+            }
+          }
+
+          return linear;
+        }
+
+
+      const renderUIFromState = async (newState) => {
+          STATE = newState;
+          // ▼ 중복 턴 렌더링 가드
+          const newLastId = (newState?.turns && newState.turns.length) ? newState.turns[newState.turns.length - 1].turn_id : 0;
+          if (newLastId && newLastId === LAST_TURN_ID) {
+            // 동일 결과가 폴링으로 재도착한 경우 스킵
+            return;
+          }
+
+          const isBusy = STATE?.traffic_light === 'YELLOW';
+          const isReady = STATE?.traffic_light === 'GREEN';
+          isBootstrapped = !!(STATE && STATE.session_id);
+
+          el.submitBtn.disabled = !isReady && isBootstrapped;
+          el.submitBtn.textContent = isReady ? '전송' : '처리 중…';
+          directorToggles.forEach(t => t.disabled = isBusy);
+          el.characterSelector.querySelectorAll('.char-btn').forEach(btn => {
+            btn.disabled = isBootstrapped && !isReady;
+          });
+          el.setPlayerNameBtn.disabled = isBootstrapped;
+
+          if (!isBootstrapped) {
+            updateTrafficLight('red', '대기 중');
+            el.saveCodeDisplay.textContent = '새로운 이야기';
+            el.currentSaveCode.value = '';
+            el.chatLog.innerHTML = '<div class="narration-message">새로운 이야기를 시작하세요.</div>';
+            setHeaderGif(null, null);
+            el.submitBtn.textContent = '시작';
+            el.submitBtn.disabled = false;
+            return;
+          }
+
+          const sid = STATE.session_id;
+          el.saveCodeDisplay.textContent = `저장: ${sid}`;
+          el.currentSaveCode.value = sid;
+          addRecent(sid);
+
+          const lightMap = { RED:'red', GREEN:'green', YELLOW:'yellow' };
+          const textMap  = { RED:'대기 중', GREEN:'입력 가능', YELLOW:'처리 중' };
+          updateTrafficLight(lightMap[STATE.traffic_light] || 'red', textMap[STATE.traffic_light] || '오류');
+
+          const player = STATE.player_name || '사용자';
+          el.playerNameInput.value = player;
+          document.getElementById('current-player-name').textContent = player;
+          window.player_name = player;
+
+          const onScreenAll = Array.isArray(STATE?.on_screen) ? STATE.on_screen.slice() : [];
+          PLAYER_ON = onScreenAll.includes(player);
+          el.characterSelector.querySelectorAll('.char-btn:not(.player-btn)').forEach(btn => {
+            const charName = btn.dataset.charName;
+            btn.classList.toggle('active', onScreenAll.includes(charName));
+          });
+          const pbtn = el.characterSelector.querySelector('.char-btn.player-btn');
+          if (pbtn) pbtn.classList.toggle('active', PLAYER_ON);
+          STAGED_ON_SCREEN = new Set(onScreenAll.filter(n => n !== player));
+          renderParticipantsPreview();
+
+          el.chatLog.innerHTML = '';
+          const turns = STATE.turns || [];
+          for (let i = 0; i < turns.length; i++) {
+            const turn = turns[i];
+            const wrap = document.createElement('div');
+            wrap.className = 'turn-wrapper';
+            
+            const isLastTurn = i === turns.length - 1;
+            if (isBootstrapped && !isLastTurn) {
+                const branchBtn = document.createElement('button');
+                branchBtn.textContent = '↪️';
+                branchBtn.title = `이 시점(${i+1}턴)에서 이야기 분기 만들기`;
+                branchBtn.style.cssText = `position: absolute; top: 5px; right: 5px; font-size: 12px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center;`;
+                wrap.style.position = 'relative';
+                branchBtn.onclick = () => handleBranchFromTurn(i);
+                wrap.appendChild(branchBtn);
+            }
+
+            el.chatLog.appendChild(wrap);
+            TYPEWRITER.enabled = isLastTurn;
+
+            if (turn.user_input) await addMessageToLog(wrap, 'user', { content: turn.user_input });
+
+            // show_monologue 토글(기본 true)
+            const showMono = (STATE?.ui_settings?.show_monologue ?? true);
+
+          const onScreenNow = Array.isArray(STATE?.on_screen) ? STATE.on_screen : [];
+          const staged = staggerAndInlineMonologues(turn, onScreenNow);
+          for (const b of staged) {
+            await addMessageToLog(wrap, b.type, b);
+          }
+
+
+          }
+          if (turns.length > 0) LAST_TURN_ID = turns[turns.length - 1].turn_id;
+          TYPEWRITER.enabled = true;
+          
+          requestAnimationFrame(() => {
+            el.chatLog.scrollTop = el.chatLog.scrollHeight;
+          });
+
+          el.submitBtn.textContent = '전송';
+          try { renderWorldContext(STATE); renderStatusHUD(STATE); } catch (e) { console.warn(e); }
+          
+          const ui = STATE?.ui_settings || {};
+          document.querySelectorAll('#director-panel [data-key]').forEach(elem => {
+              const key = elem.dataset.key;
+              if (ui[key] === undefined) return;
+
+              if (elem.type === 'checkbox') {
+                  elem.checked = ui[key];
+              } else if (elem.id === 'genre-preset-tags' || elem.classList.contains('genre-tags-container')) {
+                  elem.querySelectorAll('button').forEach(btn => {
+                      btn.classList.toggle('active', btn.dataset.value === String(ui[key]));
+                  });
+              } else {
+                  // ✅ [최종 보강] 값을 대입할 때 명시적으로 문자열로 변환하여 안정성 강화
+                  elem.value = String(ui[key]);
+                  const valueDisplayId = (elem.id || '').replace('-slider', '-value');
+                  const valueDisplay = valueDisplayId ? document.getElementById(valueDisplayId) : null;
+                  if (valueDisplay) {
+                      valueDisplay.textContent = elem.id === 'narration-ratio-slider' ? `${elem.value}%` : elem.value;
+                  }
+              }
+          });
+
+          if (STATE.traffic_light === 'YELLOW') startPolling(); else stopPolling();
+        };
+
+      const startPolling = () => {
+        stopPolling();
+        pollTimer = setInterval(async () => {
+          try {
+            const data = await GET('/get-session-data');
+            if (data.status === 'ok') {
+              renderUIFromState(data.state);
+              if (data.state.traffic_light !== 'YELLOW') stopPolling();
+            }
+          } catch {}
+        }, 1200);
+      };
+      const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+
+      // --- Actions ---
+      
+       function appendUserGhost(text){
+          if (!text) return;
+          const wrap = document.createElement('div');
+          wrap.className = 'turn-wrapper';
+          addMessageToLog(wrap, 'user', { content: text });
+          el.chatLog.appendChild(wrap);
+          el.chatLog.scrollTop = el.chatLog.scrollHeight;
+        }
+
+        async function waitForGreen(maxMs = 20000){
+          const start = Date.now();
+          while (Date.now() - start < maxMs){
+            const d = await GET('/get-session-data').catch(()=>null);
+            if (d?.status === 'ok' && d.state?.traffic_light === 'GREEN') return;
+            await new Promise(r => setTimeout(r, 900));
+          }
+          throw new Error('timeout waiting GREEN');
+        }
+
+        // ✅ handleBranchFromTurn 함수 바로 위에 이 코드 블록 전체를 추가하세요.
+      
+      let doesNovelExist = false;
+
+      const displayNovel = (data, mode = 'my-novel') => {
+          const { novel_title, novel_text, novel_share_code } = data || {};
+          const { novelTitle, novelContent, novelShareContainer, novelShareCode, generateNovelBtn, viewSharedNovelBtn, backToMyNovelBtn } = el;
+          
+          doesNovelExist = !!novel_text;
+
+          if (mode === 'my-novel') {
+              novelTitle.textContent = novel_title || "아뜨리에 북";
+              novelContent.innerHTML = novel_text ? htmlDecode(novel_text).replace(/\n/g, '<br>') : `<strong>당신의 이야기를 한 편의 소설로 엮어보세요.</strong><br><br>- <strong>[소설 쓰기 / 업데이트]</strong> 버튼을 눌러 시작하세요.<br>- 처음 만들 때는 전체 이야기가 소설로 변환됩니다.<br>- 기존 소설이 있다면, 전체를 <strong>새로 쓰거나</strong> 뒷이야기를 <strong>이어 쓸지</strong> 선택할 수 있습니다.<br><br><em>소설 생성 후에는 하단에 <strong>공유 코드</strong>가 나타납니다. 코드를 복사해서 친구에게 당신의 이야기를 공유해 보세요!</em>`;
+              generateNovelBtn.classList.remove('modal-hidden');
+              viewSharedNovelBtn.classList.remove('modal-hidden');
+              backToMyNovelBtn.classList.add('modal-hidden');
+              if (novel_share_code) {
+                  novelShareCode.value = novel_share_code;
+                  novelShareContainer.classList.remove('modal-hidden');
+              } else {
+                  novelShareContainer.classList.add('modal-hidden');
+              }
+          } else { // shared-novel mode
+              novelTitle.textContent = novel_title || "공유된 이야기";
+              novelContent.innerHTML = (novel_text ? htmlDecode(novel_text).replace(/\n/g, '<br>') : "공유된 책을 찾고 있습니다...");
+              generateNovelBtn.classList.add('modal-hidden');
+              viewSharedNovelBtn.classList.add('modal-hidden');
+              backToMyNovelBtn.classList.remove('modal-hidden');
+              novelShareContainer.classList.add('modal-hidden');
+          }
+          openModal(el.novelModalOverlay);
+      };
+      
+      const openMyNovel = async () => {
+          displayNovel({ novel_text: "당신의 책을 펼치는 중입니다..." }, 'my-novel');
+          try {
+              const result = await POST('/get-my-novel');
+              displayNovel(result.status === 'success' ? result.data : {}, 'my-novel');
+          } catch (error) {
+              displayNovel({ novel_text: `책을 불러오는 데 실패했습니다. (${error.message})`}, 'my-novel');
+          }
+      };
+
+      const handleNovelGeneration = async (mode) => {
+          closeModal(el.novelOptionsModal);
+          const { novelContent, generateNovelBtn } = el;
+          const directorMemo = el.novelDirectorMemo.value.trim();
+
+          generateNovelBtn.disabled = true;
+          generateNovelBtn.textContent = "생성 중...";
+          novelContent.innerHTML = "<strong>AI 작가가 당신의 이야기를 멋진 소설로 엮고 있습니다... ✍️</strong><br><br><em>대화가 길 경우 몇 분 정도 소요될 수 있습니다.</em>";
+
+          try {
+              const result = await POST('/novelize', { mode, director_memo: directorMemo });
+              if (result.status === 'success') {
+                  displayNovel(result.data, 'my-novel');
+              } else {
+                  throw new Error(result.message || '알 수 없는 오류');
+              }
+          } catch (error) {
+              novelContent.textContent = `소설 생성에 실패했어요. (${error.message})`;
+          } finally {
+              generateNovelBtn.disabled = false;
+              generateNovelBtn.textContent = "소설 쓰기 / 업데이트";
+              el.novelDirectorMemo.value = '';
+          }
+      };
+      
+      const htmlDecode = (input) => {
+        const doc = new DOMParser().parseFromString(input, "text/html");
+        return doc.documentElement.textContent;
+      }
+
+// ⬇️ 기존 handleFormSubmit 함수를 지우고 아래 코드로 통째로 교체하세요.
+const handleBranchFromTurn = async (turnIndex) => {
+        if (!STATE?.session_id) return;
+        if (confirm(`현재 턴(${turnIndex + 1})에서 새로운 이야기 분기를 만드시겠습니까?\n이후의 대화는 사라지고, 이 시점부터 새로운 선택을 할 수 있습니다.`)) {
+          try {
+            updateTrafficLight('yellow', '분기 생성 중...');
+            el.submitBtn.disabled = true;
+
+            const res = await POST('/branch_from_turn', { turn_index: turnIndex });
+            
+            if (res.status === 'ok' && res.state) {
+              await renderUIFromState(res.state);
+              // 성공 알림은 renderUIFromState가 트래픽 라이트를 green으로 바꾸므로 생략
+            } else {
+              throw new Error(res.message || '분기 생성에 실패했습니다.');
+            }
+          } catch (err) {
+            console.error(err);
+            alert(`오류: ${err.message}`);
+            // 실패 시 UI 원상 복구
+            updateTrafficLight('green', '입력 가능');
+            el.submitBtn.disabled = false;
+          }
+        }
+      };
+
+
+ // ⬇︎ 기존 handleFormSubmit 를 전부 이걸로 교체
+  const handleFormSubmit = async (e) => {
+    e.preventDefault();
+    if (el.submitBtn.disabled) return;
+
+    const text = el.userInput.value.trim();
+    el.submitBtn.disabled = true;
+    el.userInput.value = '';
+
+
+
+    try {
+      if (!isBootstrapped) {
+        // === 최초 시작 ===
+        updateTrafficLight('yellow', '이야기 준비 중...');
+        el.submitBtn.textContent = '시작 중…';
+
+        const selectedNPCs = Array
+          .from(el.characterSelector.querySelectorAll('.char-btn.active:not(.player-btn)'))
+          .map(btn => btn.dataset.charName);
+
+        const playerName = (el.playerNameInput.value.trim() || '사용자');
+
+        // 플레이어 참가 토글(있다면) 반영: PLAYER_ON이 true면 캐스트 첫 칸에 플레이어 넣기
+        const cast = (typeof PLAYER_ON !== 'undefined' && PLAYER_ON)
+          ? [playerName, ...selectedNPCs]
+          : selectedNPCs;
+
+        const bootPayload = {
+          player_name: playerName,
+          on_screen_names: cast.length ? cast : undefined,
+        ui_settings: { 
+          ...getCurrentDirectorSettings(),
+          role_mode: 'participant',               // POV 혼선 방지
+          monologue_policy: 'stagger'             // 서버가 이해하면 사용, 모르면 무시
+        },
+        seed_text: text || undefined,
+        };
+
+        const bootResponse = await POST('/bootstrap', bootPayload);
+        if (bootResponse && bootResponse.state) {
+          await renderUIFromState(bootResponse.state);
+        } else {
+          throw new Error(bootResponse?.message || '이야기 시작에 실패했습니다.');
+        }
+
+      } else {
+        // === 이후 턴 실행 ===
+        updateTrafficLight('yellow', '요청 중...');
+        el.submitBtn.textContent = '처리 중…';
+        if (text) appendUserGhost(text);
+
+        try {
+          await runTurn(text);
+        } catch (err) {
+          console.error(err);
+          updateTrafficLight('red', '오류');
+          await addMessageToLog(el.chatLog, 'narration', { content: `오류: ${err.message}`});
+          el.submitBtn.disabled = false;
+          el.submitBtn.textContent = '재시도';
+        }
+
+
+        const poll = async () => {
+          const r = await GET(`/get-turn-result/${start.task_id}`);
+          if (r.status === 'processing') return setTimeout(poll, 800);
+          if (r.status === 'ok' && r.state) return await renderUIFromState(r.state);
+          const s = await GET('/get-session-data').catch(() => null);
+          if (s?.status === 'ok' && s.state) return await renderUIFromState(s.state);
+          throw new Error(r.message || '결과 조회에 실패했습니다.');
+        };
+        setTimeout(poll, 800);
+      }
+
+    } catch (err) {
+      console.error(err);
+      updateTrafficLight('red', '오류');
+      await addMessageToLog(el.chatLog, 'narration', { content: `오류: ${err.message}`});
+      el.submitBtn.disabled = false;
+      el.submitBtn.textContent = isBootstrapped ? '재시도' : '다시 시도';
+    }
+  };
+
+      const openModal = m => m.classList.remove('modal-hidden');
+      const closeModal = m => m.classList.add('modal-hidden');
+
+      function copyText(text) {
+        if (!text) return;
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(() => updateTrafficLight('green', '코드 복사됨'));
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+          updateTrafficLight('green', '코드 복사됨');
+        }
+        setTimeout(() => {
+          // 상태 텍스트 원복
+          const map = { RED:'대기 중', GREEN:'입력 가능', YELLOW:'처리 중' };
+          const light = STATE?.traffic_light || 'RED';
+          updateTrafficLight(light.toLowerCase(), map[light] || '상태');
+        }, 900);
+      }
+
+// ✅ [최종] init 함수 전체를 이 코드로 교체하세요.
+      (async function init(){
+          // --- 캐릭터 목록 ---
+          try {
+            const profiles = await GET('/get-character-profiles');
+            characterProfiles = Array.isArray(profiles) ? profiles : [];
+            nameToEng = {};
+            el.characterSelector.innerHTML = '';
+
+            characterProfiles.forEach(p => {
+              nameToEng[p.name] = p.eng || p.name.toLowerCase();
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'char-btn';
+              btn.dataset.charName = p.name;
+              btn.textContent = p.name;
+              if (p.color) btn.style.setProperty('--c', p.color);
+              btn.addEventListener('click', () => {
+                if (isBootstrapped && STATE?.traffic_light !== 'GREEN') return;
+                btn.classList.toggle('active');
+                const name = btn.dataset.charName;
+                if (btn.classList.contains('active')) STAGED_ON_SCREEN.add(name);
+                else STAGED_ON_SCREEN.delete(name);
+                renderParticipantsPreview();
+              });
+              el.characterSelector.appendChild(btn);
+            });
+
+            makePlayerBtn(el.playerNameInput.value.trim() || '사용자');
+            updatePrestartParticipants();
+          // [DEV] World Context Card: 기본 숨김, 개발자만 열람
+          (function setupDevWorldCard(){
+            const card = document.getElementById('world-context-card');
+            if (!card) return;
+
+            // URL에 #debug-world 가 있거나, 로컬 저장 플래그가 있으면 보이기
+            const shouldShow = location.hash.includes('debug-world')
+              || localStorage.getItem('DEV_WORLD_CARD') === '1';
+            if (shouldShow) card.style.display = 'block';
+
+            // 단축키: Alt+Shift+W (입력창에 포커스 있으면 무시)
+            window.addEventListener('keydown', (e) => {
+              const t = (document.activeElement?.tagName || '').toUpperCase();
+              if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || document.activeElement?.isContentEditable) return;
+              if (e.altKey && e.shiftKey && e.code === 'KeyW') {
+                const on = card.style.display !== 'block';
+                card.style.display = on ? 'block' : 'none';
+                localStorage.setItem('DEV_WORLD_CARD', on ? '1' : '0');
+              }
+            });
+          })();
+
+
+
+          } catch (e) { console.error('캐릭터 프로필 로드 실패', e); }
+
+          // --- 기존 세션 상태 ---
+          try {
+              const data = await GET('/get-session-data');
+              if (data.status === 'ok' && data.state) {
+                  await renderUIFromState(data.state);
+              } else {
+                  await renderUIFromState(null);
+              }
+          } catch (e) { await renderUIFromState(null); }
+          
+          renderRecentList();
+          
+          // --- Events ---
+          el.chatForm.addEventListener('submit', handleFormSubmit);
+          
+          document.querySelectorAll('#director-panel input[type="range"]').forEach(slider => {
+            const valueDisplayId = slider.id.replace('-slider', '-value');
+            const valueDisplay = document.getElementById(valueDisplayId);
+            if (valueDisplay) {
+              slider.addEventListener('input', () => {
+                let displayValue = slider.value;
+                if (slider.id === 'narration-ratio-slider') displayValue += '%';
+                valueDisplay.textContent = displayValue;
+              });
+            }
+          });
+          // ✅ init() 함수 내부 Events 섹션에 추가하세요.
+          
+          el.openNovelBtn.addEventListener('click', openMyNovel);
+          el.novelCloseBtn.addEventListener('click', () => closeModal(el.novelModalOverlay));
+          el.novelOptionsCloseBtn.addEventListener('click', () => closeModal(el.novelOptionsModal));
+
+          el.generateNovelBtn.addEventListener('click', () => {
+            el.novelGenerateAppendBtn.style.display = doesNovelExist ? 'block' : 'none';
+            openModal(el.novelOptionsModal);
+          });
+          
+          el.novelGenerateAppendBtn.addEventListener('click', () => handleNovelGeneration('append'));
+          el.novelGenerateRewriteBtn.addEventListener('click', () => {
+            if (doesNovelExist) {
+                if (confirm("정말로 기존 소설을 지우고 전체 이야기를 처음부터 새로 쓸까요?")) {
+                    handleNovelGeneration('rewrite');
+                }
+            } else {
+                handleNovelGeneration('rewrite');
+            }
+          });
+          
+          el.viewSharedNovelBtn.addEventListener('click', async () => {
+            const code = prompt("불러올 소설의 공유 코드를 입력하세요:");
+            if (code) {
+                try {
+                    const result = await POST('/get-shared-novel', { novel_share_code: code });
+                    if(result.status === 'success') {
+                        displayNovel(result.data, 'shared-novel');
+                    } else {
+                        alert(`소설 불러오기 실패: ${result.message}`);
+                    }
+                } catch(e) { alert('오류가 발생했습니다: ' + e.message); }
+            }
+          });
+          
+          el.backToMyNovelBtn.addEventListener('click', openMyNovel);
+          el.copyShareCodeBtn.addEventListener('click', () => copyText(el.novelShareCode.value));
+          // ✅ [핵심 추가] 장르 태그 버튼 클릭 이벤트 처리
+          const genreTagsContainer = document.getElementById('genre-preset-tags');
+          genreTagsContainer.addEventListener('click', (e) => {
+            if (e.target.tagName === 'BUTTON') {
+              genreTagsContainer.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+              e.target.classList.add('active');
+            }
+          });
+
+          document.querySelectorAll('#director-panel input[type="range"]').forEach(slider => {
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+
+          el.userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (!el.submitBtn.disabled) el.chatForm.requestSubmit();
+            }
+          });
+          el.playerNameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              el.setPlayerNameBtn.click();
+            }
+          });
+          document.querySelector('.header').addEventListener('click', () => {
+              document.querySelector('.header').classList.toggle('collapsed');
+          });
+          const closePanels = () => {
+              el.scenePanel.style.display = 'none';
+              el.directorPanel.style.display = 'none';
+          };
+          el.toggleScenePanelBtn.addEventListener('click', () => {
+              const willOpen = el.scenePanel.style.display !== 'block';
+              closePanels();
+              if (willOpen) el.scenePanel.style.display = 'block';
+          });
+          el.toggleDirectorPanelBtn.addEventListener('click', () => {
+              const willOpen = el.directorPanel.style.display !== 'block';
+              closePanels();
+              if (willOpen) el.directorPanel.style.display = 'block';
+          });
+          el.setPlayerNameBtn.addEventListener('click', () => {
+              if(isBootstrapped) return;
+              const n = el.playerNameInput.value.trim() || '사용자';
+              document.getElementById('current-player-name').textContent = n;
+              makePlayerBtn(n);
+              updatePrestartParticipants();
+              window.player_name = n;
+          });
+          el.sessionMenuBtn.addEventListener('click', () => {
+              el.currentSaveCode.value = STATE?.session_id || '';
+              openModal(el.sessionModal);
+          });
+          el.sessionModal.querySelector('.modal-close-btn').addEventListener('click', () => closeModal(el.sessionModal));
+          el.sessionLoadBtn.addEventListener('click', async () => {
+              const code = el.loadCodeInput.value.trim();
+              if (!code) return;
+              try {
+                  const res = await POST('/bootstrap', { save_code: code });
+                  if (res && res.state) {
+                      await renderUIFromState(res.state);
+                      closeModal(el.sessionModal);
+                  } else alert('세션 로드 실패');
+              } catch { alert('세션 로드 실패'); }
+          });
+          el.sessionResetBtn.addEventListener('click', async () => {
+              if (confirm('정말로 모든 기록을 지우고 새로 시작할까요?')) {
+                  try {
+                      await GET('/reset-session'); 
+                      localStorage.removeItem(RECENTS_KEY); 
+                      window.location.reload(); 
+                  } catch (err) {
+                      console.error("세션 초기화 실패:", err);
+                      alert("세션 초기화에 실패했습니다. 페이지를 수동으로 새로고침 해주세요.");
+                  }
+              }
+          });
+          el.copySaveCodeBtn.addEventListener('click', () => copyText(STATE?.session_id || ''));
+          el.copyCodeInModal.addEventListener('click', () => copyText(el.currentSaveCode.value));
+          el.clearRecentsBtn.addEventListener('click', clearRecents);
+          // ✅ (선택) 소설 뷰어의 '메뉴 보기' 버튼에 토글 기능을 추가합니다.
+          el.novelFooterToggle?.addEventListener('click', () => {
+              el.novelShareContainer.classList.toggle('modal-hidden');
+              el.novelActions.classList.toggle('modal-hidden');
+          });
+      })();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,1840 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>사루라 아뜨리에 (R03.11+)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-darkest:#1a1a1a; --bg-dark:#2c2c2c; --bg-medium:#3a3a3a; --bg-light:#4a4a4a;
+      --text-light:#e0e0e0; --text-medium:#a0a0a0; --accent-gold:#ffdd57; --accent-blue:#007bff;
+      --status-red:#dc3545; --status-green:#28a745; --status-yellow:#ffc107;
+    }
+    *,*::before,*::after{box-sizing:border-box}
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: 'Noto Sans KR', sans-serif;
+      background: var(--bg-darkest);
+      color: var(--text-light);
+    }
+    /* ✅ 최종 통합본: 레이아웃의 기준 컨테이너 */
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100dvh;
+      max-width: 700px;
+      background: var(--bg-dark);
+      box-shadow: 0 0 20px rgba(0,0,0,.5);
+      margin: 0 auto;
+    }
+    /* 대화 영역은 남는 공간을 차지하고 스크롤 가능 */
+    .chat-log {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .chat-log {
+      padding-bottom: 12px;
+    }
+    /* 안전장치: 이미지/캔버스가 튀어나오지 않게 */
+    .chat-log img, .chat-log canvas, .chat-log video {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+    /* Top Bar */
+    .top-bar{flex-shrink:0;padding:8px 15px;background:var(--bg-darkest);border-bottom:1px solid #000;display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .status-indicator{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:bold}
+    .traffic-light{width:12px;height:12px;border-radius:50%;background:var(--text-medium);transition:background-color .3s}
+    .traffic-light.red{background:var(--status-red)}
+    .traffic-light.green{background:var(--status-green)}
+    .traffic-light.yellow{background:var(--status-yellow)}
+    .save-code-wrap{display:flex;align-items:center;gap:6px;min-width:0}
+    .save-code-display{font-size:12px;color:var(--accent-gold);font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px}
+    .top-bar .buttons{display:flex;gap:8px;align-items:center;flex-wrap:nowrap}
+    .icon-btn{background:var(--bg-light);color:var(--text-light);border:1px solid #555;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer}
+    .save-code-wrap{ display:none !important; }
+
+    /* Header */
+    .header{position:relative;flex-shrink:0;height:35%;min-height:150px;background:var(--bg-darkest);overflow:hidden}
+    .header-gif{width:100%;height:100%;object-fit:cover;opacity:.85;transition:opacity .2s}
+    .header-character-name{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:5px 15px;border-radius:15px;font-size:14px;font-weight:bold}
+    .header{cursor:pointer}
+    .header.collapsed{height:28px;min-height:28px}
+    .header.collapsed .header-gif,.header.collapsed .header-character-name{display:none}
+    .header.collapsed::after{
+      content:'▼ 펼치기';position:absolute;bottom:4px;left:50%;transform:translateX(-50%);
+      color:#a0a0a0;font-size:12px;font-weight:bold
+    }
+
+    /* Info Bar */
+    .info-bar{flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:10px 15px;background:var(--bg-medium);color:var(--text-medium);font-size:13px;border-bottom:1px solid #000}
+    .participants-display{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:15px}
+    .info-bar .label{font-weight:bold;color:var(--accent-gold)}
+    .toggle-button{border:1px solid #555;border-radius:5px;padding:4px 8px;font-size:12px;cursor:pointer}
+    .info-bar .buttons{display:flex;gap:10px;flex-wrap:nowrap}
+    .toggle-button{display:inline-flex;align-items:center;white-space:nowrap}
+
+    /* Panels */
+    .control-panel{display:none;flex-shrink:0;padding:15px;background:var(--bg-dark);border-bottom:1px solid #000;max-height:50%;overflow-y:auto}
+    .control-group{margin-bottom:15px}
+    .control-label{font-weight:bold;color:var(--accent-gold);font-size:14px;margin-bottom:8px;display:block}
+    .control-flex{display:flex;gap:8px}
+    .control-flex input{flex-grow:1;padding:8px;border:1px solid var(--bg-light);border-radius:5px;background:var(--bg-dark);color:var(--text-light)}
+    .control-flex button{padding:8px 15px;border:none;border-radius:5px;background:var(--accent-blue);color:#fff;font-weight:bold;cursor:pointer}
+    .character-selector{display:flex;flex-wrap:wrap;gap:8px}
+    .toggles-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .toggle-container{display:flex;justify-content:space-between;align-items:center;background:var(--bg-light);padding:8px;border-radius:5px}
+    .panel-button {
+      padding: 10px 14px;
+      border: none;
+      border-radius: 6px;
+      background: #8d7b68;
+      color: #fff;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .panel-actions .panel-button + .panel-button {
+      margin-left: 8px;
+    }
+
+    /* Character buttons (기본룩) — REPLACED */
+    .char-btn{
+      padding:6px 12px; border:2px solid #fff; border-radius:15px;
+      font-size:13px; font-weight:bold; cursor:pointer; transition:.2s;
+      background:transparent; color:#fff; opacity:.8;
+    }
+    .char-btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+    /* 플레이어 버튼 룩 유지 */
+    .char-btn.player-btn{ border-color: var(--accent-blue); }
+    .char-btn.player-btn.active{ background: var(--accent-blue); color:#fff; }
+
+    /* 선택 상태 가시성 */
+    .char-btn.active{ opacity:1; }
+
+    /* 퍼스널 컬러는 '선택된 경우'에만 적용 */
+    .char-btn.active[style*="--c"]{
+      border-color: var(--c);
+      color:#fff;
+      /* Fallback + modern */
+      background: rgba(0,0,0,.15);
+      background: color-mix(in oklab, var(--c) 18%, black);
+      box-shadow: 0 0 0 2px var(--c) inset;
+    }
+    /* Chat */
+    .chat-log{flex-grow:1;overflow-y:auto;padding:10px}
+    .turn-wrapper{margin-bottom:15px}
+    .message{padding:8px 12px;border-radius:15px;max-width:85%;line-height:1.6}
+    .narration-message{
+      color: var(--text-medium);
+      font-style: italic;
+      text-align: left;
+      margin: 10px 0;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+    .user-message-wrapper{display:flex;justify-content:flex-end;margin-top:5px}
+    .user-message{background:var(--accent-blue);color:#fff}
+    .character-message-wrapper{ gap:0; }
+    .character-message{background:var(--bg-medium)}
+    .character-name{font-weight:bold;font-size:.9em;margin-bottom:4px}
+    .monologue{color:var(--text-medium);font-style:italic;font-size:.9em;margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-light)}
+    .char-avatar{ display:none !important; }
+ 
+    /* Form */
+    /* 기존 .chat-form 규칙을 찾아 아래 코드로 교체하세요 */
+    .chat-form{
+      flex-shrink: 0;
+      display: flex;
+      padding: 10px;
+      background: var(--bg-medium);
+      align-items: flex-end;
+      /* ✅ [최종 마감] 입력창 하단 고정을 위한 보강 */
+      position: sticky;
+      bottom: 0;
+      z-index: 1;
+    }
+    .chat-form textarea{flex-grow:1;padding:10px;border:none;border-radius:20px;margin-right:10px;background:var(--bg-light);color:var(--text-light);font-size:16px;resize:none;max-height:120px}
+    .chat-form button{padding:12px 20px;border:none;border-radius:20px;background:var(--accent-gold);color:var(--bg-darkest);font-weight:bold;cursor:pointer}
+    /* 전송 버튼 비활성 룩(회색 바탕 + 흰 글자) */
+    .chat-form button:disabled{
+      background:#666;
+      color:#fff;
+      cursor:not-allowed;
+      filter:saturate(0.6);
+      }
+
+
+    /* Modal */
+    .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:1000;display:flex;justify-content:center;align-items:center;padding:10px}
+    .modal-content{background:var(--bg-medium);padding:25px;border-radius:10px;max-width:90%;width:520px}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bg-light);padding-bottom:15px;margin-bottom:15px}
+    .modal-header h2{margin:0;color:var(--accent-gold)}
+    .modal-close-btn{background:none;border:none;color:var(--text-medium);font-size:1.5em;cursor:pointer}
+    .modal-hidden{display:none!important}
+    .recent-list{display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto}
+    .recent-item{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--bg-light);padding:8px;border-radius:6px}
+    .recent-id{font-family:monospace;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+    .btn{border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px}
+    .btn-primary{background:var(--accent-blue);color:#fff}
+    .btn-danger{background:var(--status-red);color:#fff}
+    .btn-ghost{background:transparent;border:1px solid #666;color:#ddd}
+    .section-title{font-weight:bold;color:#ffdd57;margin:8px 0}
+    .small{font-size:12px;color:var(--text-medium)}
+/* ⬇️ <style> 맨 아래 추가 */
+:root{
+      --font-base: clamp(15px, 1.8vw, 18px);
+      --font-large: calc(var(--font-base)*1.1);
+    }
+    .message, .chat-form textarea{ font-size: var(--font-base); }
+    .narration-message{ font-size: var(--font-large); line-height:1.8; }
+
+    /* 줄바꿈 보존 */
+    .message{ white-space: pre-wrap; }
+
+    /* 모바일 가독성 */
+    @media (max-width: 480px){
+      .app-container{ max-width: none; }
+      .chat-form textarea{ min-height: 48px; }
+    }
+
+    /* 드롭다운 인풋 룩 통일 */
+    #director-panel select{
+      padding:8px;border:1px solid var(--bg-light);border-radius:5px;
+      background:var(--bg-dark);color:var(--text-light)
+    }
+        /* 장르 선택 태그 UI 스타일 */
+    .genre-tags-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .genre-tags-container button {
+      padding: 6px 12px;
+      border: 1px solid var(--bg-light);
+      border-radius: 15px;
+      background-color: var(--bg-dark);
+      color: var(--text-medium);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .genre-tags-container button.active {
+      background-color: var(--accent-gold);
+      color: var(--bg-darkest);
+      border-color: var(--accent-gold);
+      font-weight: bold;
+    }
+    .novel-container {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 90vh;
+        max-width: 700px;
+        background-color: #fdfaf2;
+        color: #333;
+        border-radius: 10px;
+        box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+    }
+    .novel-header {
+        flex-shrink: 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 30px;
+        border-bottom: 1px solid #ddd;
+    }
+    .novel-header h2 {
+        margin: 0;
+        color: #5c4b3f;
+        font-family: 'KoPub Batang', serif;
+        font-size: 1.5em;
+    }
+    .novel-body {
+        flex-grow: 1;
+        overflow-y: auto;
+        line-height: 2;
+        font-size: 16px;
+        white-space: pre-wrap;
+        padding: 30px 40px;
+        font-family: 'KoPub Batang', serif;
+    }
+    .novel-footer {
+        flex-shrink: 0;
+        padding: 20px 30px;
+        border-top: 1px solid #ddd;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .novel-actions button {
+        background-color: #8d7b68;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        padding: 10px 20px;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    .novel-actions button.secondary { background-color: #b0a090; }
+    .novel-share-info { font-size: 12px; color: #777; }
+    .novel-share-info input { background-color: #eee; border: 1px solid #ccc; border-radius: 3px; padding: 4px 8px; text-align: center; }
+    .novel-share-info button { background-color: #aaa; color: white; border: none; padding: 4px 8px; font-size: 12px; border-radius: 3px; cursor: pointer; margin-left: 5px; }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div class="top-bar">
+      <div class="status-indicator">
+        <div id="traffic-light" class="traffic-light red"></div>
+        <span id="status-text">대기 중</span>
+      </div>
+        <div class="buttons">
+          <button id="open-novel-btn" class="icon-btn" aria-label="소설 생성" title="소설 생성">📖</button>
+          <button id="session-menu-btn" class="icon-btn" aria-label="불러오기·새로하기" title="불러오기·새로하기">📂</button>
+        </div>
+      <div class="save-code-wrap">
+        <span id="save-code-display" class="save-code-display">새로운 이야기</span>
+        <button id="copy-save-code-btn" class="icon-btn" title="저장 코드 복사">📋</button>
+      </div>
+    </div>
+
+
+    <div class="header">
+      <img id="header-gif" class="header-gif" src="https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier" alt="Header Image">
+      <div id="header-character-name" class="header-character-name"></div>
+    </div>
+
+    <div class="info-bar">
+      <div id="participants-display" class="participants-display">
+        <span class="label">내 이름:</span> <span id="current-player-name">사용자</span> |
+        <span class="label">참여자:</span> <span id="participants-list-display">사용자</span>
+      </div>
+      <div class="buttons">
+        <div id="toggle-scene-panel" class="toggle-button">씬 설정🎬</div>
+        <div id="toggle-director-panel" class="toggle-button">연출 설정⚙️</div>
+      </div>
+    </div>
+
+    <!-- Hidden HUD (for internal state & location; not visible to user) -->
+    <div id="hidden-hud" style="display:none">
+      <div id="current-location-hud"></div>
+      <div id="state-hud"></div>
+    </div>
+
+
+    <div id="scene-panel" class="control-panel">
+      <div class="control-group">
+        <div class="control-label">내 이름 설정</div>
+        <div class="control-flex">
+          <input type="text" id="player-name-input" placeholder="이름 입력...">
+          <button id="set-player-name-btn">설정</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">참여자 선택</div>
+        <div id="character-selector" class="character-selector"></div>
+      </div>
+    </div>
+
+    <div id="director-panel" class="control-panel">
+      <div class="control-group">
+        <div class="control-label">연출 설정</div>
+        <div class="toggles-grid">
+          <div class="toggle-container">
+            <label for="pov-toggle">1인칭 시점</label>
+            <input type="checkbox" id="pov-toggle" data-key="pov_first_person" checked>
+          </div>
+          <div class="toggle-container">
+            <label for="monologue-toggle">속마음 표시</label>
+            <input type="checkbox" id="monologue-toggle" data-key="show_monologue" checked>
+          </div>
+          <div class="toggle-container">
+            <label for="acquainted-toggle">지인 모드</label>
+            <input type="checkbox" id="acquainted-toggle" data-key="acquainted">
+          </div>
+          <div class="toggle-container">
+            <label for="adult-mode-toggle">성인 모드</label>
+            <input type="checkbox" id="adult-mode-toggle" data-key="adult_mode">
+          </div>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">연출 스타일 미세 조정</div>
+        <div class="toggles-grid" style="grid-template-columns: 1fr;">
+          <div class="slider-container" style="display: flex; flex-direction: column; gap: 5px;">
+            <label for="narration-ratio-slider">대화 ↔ 나레이션 비중</label>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 12px;">대화</span>
+              <input type="range" id="narration-ratio-slider" data-key="narration_ratio" min="0" max="100" value="40" style="flex-grow: 1;">
+              <span style="font-size: 12px;">나레이션</span>
+              <span id="narration-ratio-value" style="font-weight: bold; min-width: 30px;">40%</span>
+            </div>
+          </div>
+          <div class="slider-container" style="display: flex; flex-direction: column; gap: 5px;">
+            <label for="tempo-slider">서사 진행 속도</label>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 12px;">느긋하게</span>
+              <input type="range" id="tempo-slider" data-key="tempo" min="1" max="9" value="5" style="flex-grow: 1;">
+              <span style="font-size: 12px;">빠르게</span>
+              <span id="tempo-value" style="font-weight: bold; min-width: 30px;">5</span>
+            </div>
+          </div>
+          <div class="slider-container" style="display: flex; flex-direction: column; gap: 5px;">
+            <label for="description-focus-slider">묘사 밀도</label>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 12px;">간결하게</span>
+              <input type="range" id="description-focus-slider" data-key="description_focus" min="1" max="9" value="5" style="flex-grow: 1;">
+              <span style="font-size: 12px;">상세하게</span>
+              <span id="description-focus-value" style="font-weight: bold; min-width: 30px;">5</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    <div class="control-group">
+      <div class="control-label">장르 프리셋</div>
+      <div id="genre-preset-tags" class="genre-tags-container" data-key="genre_preset">
+        <button data-value="auto" class="active">자동 (균형)</button>
+        <button data-value="slice_of_life">일상 (힐링)</button>
+        <button data-value="romance">로맨스</button>
+        <button data-value="comedy">코미디</button>
+        <button data-value="fantasy">판타지</button>
+        <button data-value="mystery">미스터리</button>
+        <button data-value="thriller">스릴러 & 서스펜스</button>
+        <button data-value="horror">호러</button>
+        <button data-value="sci-fi">SF (사이버펑크)</button>
+        <button data-value="historical">시대극</button>
+        <button data-value="noir">느와르 & 하드보일드</button>
+        <button data-value="wuxia">무협</button>
+        <button data-value="adventure">액션 & 어드벤처</button>
+        <button data-value="dark_fantasy">다크 판타지</button>
+        <button data-value="soap_opera">막장 드라마</button>
+      </div>
+    </div>
+    </div>
+    <div id="chat-log" class="chat-log"></div>
+
+    <form id="chat-form" class="chat-form">
+      <textarea id="user-input" placeholder="이곳에 메시지를 입력하세요." rows="1"></textarea>
+      <button type="submit" id="chat-submit-btn">시작</button>
+    </form>
+  </div>
+
+  <div id="novel-modal-overlay" class="modal-overlay modal-hidden">
+      <div class="novel-container">
+          <div class="novel-header">
+              <h2 id="novel-title">아뜨리에 북</h2>
+              <button id="novel-close-btn" class="modal-close-btn">&times;</button>
+          </div>
+          <div id="novel-content" class="novel-body genre-default"></div>
+          <div id="novel-footer" class="novel-footer">
+              <button id="novel-footer-toggle">메뉴 보기</button>
+              <div id="novel-actions" class="novel-actions">
+                  <button id="generate-novel-btn">소설 쓰기 / 업데이트</button>
+                  <button id="view-shared-novel-btn" class="secondary">공유 책 불러오기</button>
+                  <button id="back-to-my-novel-btn" class="secondary modal-hidden">내 소설로 돌아가기</button>
+              </div>
+              <div id="novel-share-container" class="novel-share-info modal-hidden">이 책 공유하기:
+                  <input type="text" id="novel-share-code" readonly>
+                  <button id="copy-share-code-btn">복사</button>
+              </div>
+          </div>
+      </div>
+  </div>
+  <div id="novel-options-modal" class="modal-overlay modal-hidden">
+      <div class="modal-content" style="max-width: 500px;">
+          <div class="modal-header">
+              <h2>📖 소설 쓰기 옵션</h2>
+              <button id="novel-options-close-btn" class="modal-close-btn">&times;</button>
+          </div>
+          <div class="modal-body" style="display: flex; flex-direction: column; gap: 20px;">
+              <div class="control-section">
+                  <div class="label">디렉터 메모 (AI 작가에게 특별 요청사항)</div>
+                  <textarea id="novel-director-memo" placeholder="예: 주인공의 감정을 더 절절하게 묘사해줘. 이번 장면은 좀 더 어둡고 무거운 톤으로 부탁해." style="width: 100%; min-height: 80px; padding: 10px; border-radius: 5px; background-color: #2c2c2c; color: #fff; border: 1px solid #555; resize: vertical;"></textarea>
+              </div>
+              <div class="panel-actions" style="border-top: none; padding-top: 0;">
+                  <button id="novel-generate-append-btn" class="panel-button">➡️ 마지막부터 이어 쓰기</button>
+                  <button id="novel-generate-rewrite-btn" class="panel-button" style="background-color: #c82333;">🔄 처음부터 새로 쓰기</button>
+              </div>
+          </div>
+      </div>
+  </div>
+
+
+  <!-- Session Modal -->
+  <div id="session-modal" class="modal-overlay modal-hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>이야기 이어하기 / 새로하기</h2>
+        <button class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="section-title">현재 세션</div>
+        <div class="control-group">
+          <div class="control-flex">
+            <input type="text" id="current-save-code" readonly placeholder="세션이 시작되면 코드가 표시됩니다.">
+            <button id="copy-code-in-modal" class="btn btn-primary" type="button">복사</button>
+          </div>
+          <div class="small">코드를 복사해 두면 나중에 이어서 플레이할 수 있어요.</div>
+        </div>
+
+        <div class="section-title">불러오기</div>
+        <div class="control-group">
+          <div class="control-flex">
+            <input type="text" id="load-code-input" placeholder="저장 코드 입력...">
+            <button id="session-load-btn" class="btn btn-primary" type="button">이어하기</button>
+          </div>
+        </div>
+
+        <div class="section-title">최근 세션</div>
+        <div id="recent-list" class="recent-list"></div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button id="clear-recents-btn" class="btn btn-ghost" type="button">최근 목록 지우기</button>
+        </div>
+
+        <div class="section-title">새로하기</div>
+        <button id="session-reset-btn" class="btn btn-danger" style="width:100%;" type="button">모든 기록 지우고 새로 시작</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // --- Elements & State ---
+      const $ = id => document.getElementById(id);
+      const el = {
+        trafficLight: $('traffic-light'), statusText: $('status-text'),
+        saveCodeDisplay: $('save-code-display'), copySaveCodeBtn: $('copy-save-code-btn'),
+        sessionMenuBtn: $('session-menu-btn'), headerGif: $('header-gif'), headerCharName: $('header-character-name'),
+        participantsDisplay: $('participants-display'), toggleScenePanelBtn: $('toggle-scene-panel'),
+        toggleDirectorPanelBtn: $('toggle-director-panel'), scenePanel: $('scene-panel'), directorPanel: $('director-panel'),
+        playerNameInput: $('player-name-input'), setPlayerNameBtn: $('set-player-name-btn'), characterSelector: $('character-selector'),
+        chatLog: $('chat-log'), chatForm: $('chat-form'), userInput: $('user-input'), submitBtn: $('chat-submit-btn'),
+        sessionModal: $('session-modal'), loadCodeInput: $('load-code-input'), sessionLoadBtn: $('session-load-btn'),
+        sessionResetBtn: $('session-reset-btn'), currentSaveCode: $('current-save-code'), copyCodeInModal: $('copy-code-in-modal'),
+        recentList: $('recent-list'), clearRecentsBtn: $('clear-recents-btn'),
+        novelModalOverlay: $('novel-modal-overlay'),
+        novelTitle: $('novel-title'),
+        novelContent: $('novel-content'),
+        novelCloseBtn: $('novel-close-btn'),
+        generateNovelBtn: $('generate-novel-btn'),
+        viewSharedNovelBtn: $('view-shared-novel-btn'),
+        backToMyNovelBtn: $('back-to-my-novel-btn'),
+        novelShareContainer: $('novel-share-container'),
+        novelShareCode: $('novel-share-code'),
+        copyShareCodeBtn: $('copy-share-code-btn'),
+        novelOptionsModal: $('novel-options-modal'),
+        novelOptionsCloseBtn: $('novel-options-close-btn'),
+        novelDirectorMemo: $('novel-director-memo'),
+        novelGenerateAppendBtn: $('novel-generate-append-btn'),
+        novelGenerateRewriteBtn: $('novel-generate-rewrite-btn'),
+        openNovelBtn: $('open-novel-btn'),
+        novelFooterToggle: $('novel-footer-toggle'),
+        novelActions: $('novel-actions'),
+      };
+      const directorToggles = document.querySelectorAll('#director-panel input, #director-panel select');
+      let STAGED_ON_SCREEN = new Set();
+      let PLAYER_ON = true; // ✅ 플레이어 기본 참여
+      let STATE = {};
+      // 레거시 코드가 window.player_name을 참조해도 터지지 않도록 전역을 정의
+      window.player_name = '';    // 초기 정의(없으면 ReferenceError)
+      let characterProfiles = [];
+      let nameToEng = {}; // 한글명 -> 영문 슬러그 매핑
+      let isBootstrapped = false;
+      let pollTimer = null;
+      // [PATCH-UI-A] Typewriter + 폴백 컬러
+      let LAST_TURN_ID = 0;
+      const TYPEWRITER = { enabled: true, cps: 22 }; // 느리게: 18~24
+
+      function typeText(el, text){
+        return new Promise(res=>{
+          const chat = document.getElementById('chat-log');
+          if (!TYPEWRITER.enabled) {
+            el.textContent = text || "";
+            if (chat) chat.scrollTop = chat.scrollHeight;
+            return res();
+          }
+          let i = 0; el.textContent = "";
+          (function tick(){
+            if (i >= (text || "").length) return res();
+            el.textContent += text[i++];
+            if (chat) chat.scrollTop = chat.scrollHeight;
+            setTimeout(tick, 1000 / TYPEWRITER.cps);
+          })();
+        });
+      }
+
+      // 이름 기반 HSL 폴백(프로필 색 없을 때)
+      function colorFromName(name){
+        let h=0; for (let i=0;i<String(name||"").length;i++) h=(h*31+name.charCodeAt(i))>>>0;
+        return `hsl(${h%360} 70% 55%)`;
+      }
+
+      function makePlayerBtn(name){
+        // 기존 플레이어 버튼 제거 후 생성
+        document.querySelectorAll('.char-btn.player-btn').forEach(b => b.remove());
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'char-btn player-btn';
+        b.dataset.charName = name;
+        b.textContent = name;
+
+        // 초기 상태 반영
+        b.classList.toggle('active', PLAYER_ON);
+
+        b.addEventListener('click', () => {
+          // 처리중엔 잠금
+          if (isBootstrapped && STATE?.traffic_light !== 'GREEN') return;
+          PLAYER_ON = !PLAYER_ON;
+          b.classList.toggle('active', PLAYER_ON);
+          renderParticipantsPreview();
+        });
+
+        el.characterSelector.prepend(b);
+      }
+
+
+          function updatePrestartParticipants(){
+            if (isBootstrapped) return;
+            renderParticipantsPreview();
+          }
+
+      // ✅ 교체: 선택 즉시 반영되는 미리보기
+      function renderParticipantsPreview() {
+        const player =
+          (document.getElementById('current-player-name')?.textContent || '사용자').trim();
+        const $out = document.getElementById('participants-list-display');
+
+        // 부트스트랩 전: 버튼의 active 상태를 그대로 미리보기
+        if (!isBootstrapped) {
+          const actives = Array.from(
+            el.characterSelector.querySelectorAll('.char-btn.active:not(.player-btn)')
+          ).map(b => b.dataset.charName);
+
+          const list = (PLAYER_ON ? [player] : []).concat(actives);
+          $out.textContent = list.length ? Array.from(new Set(list)).join(', ') : '없음';
+          return;
+        }
+
+        // 부트스트랩 후: 서버 커밋 전이라도 STAGED_ON_SCREEN을 표시
+        const staged = Array.from(STAGED_ON_SCREEN);
+        const list = (PLAYER_ON ? [player] : []).concat(staged);
+        $out.textContent = list.length ? list.join(', ') : '없음';
+      }
+
+
+
+      // B-7: R02 폴더 구조 기반 헤더 GIF 세터
+      function setHeaderGif(character, emotion) {
+        const eng = nameToEng[character] || String(character || '').toLowerCase();
+        const file = emotionToWebpFile(emotion || 'subtle smile');
+
+        // 기본 배너(원하면 /static/gifs/common/default-header.webp 등 로컬 경로로 교체 가능)
+        const DEFAULT_HEADER = 'https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier';
+
+        const src = eng ? `/static/gifs/${eng}/${file}` : DEFAULT_HEADER;
+
+        // 부드러운 페이드
+        el.headerGif.style.opacity = '0.6';
+
+        // 파일 없으면 Subtle Smile로 폴백(한 번만 시도)
+        el.headerGif.onerror = () => {
+          el.headerGif.onerror = null; // 무한루프 방지
+          if (eng) el.headerGif.src = `/static/gifs/${eng}/Subtle%20Smile.webp`; // 공백 URL 인코딩 주의
+          else     el.headerGif.src = DEFAULT_HEADER;
+        };
+
+        el.headerGif.onload = () => { el.headerGif.style.opacity = '0.85'; };
+        el.headerGif.src = src;
+
+        el.headerCharName.textContent = character || '';
+      }
+
+      // --- LocalStorage: Recent Sessions ---
+      const RECENTS_KEY = 'sarura_recent_sessions';
+      function loadRecents() {
+        try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]'); } catch { return []; }
+      }
+      function saveRecents(list) {
+        try { localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, 10))); } catch {}
+      }
+      function addRecent(id) {
+        if (!id) return;
+        const list = loadRecents().filter(x => x.id !== id);
+        list.unshift({ id, ts: Date.now() });
+        saveRecents(list);
+        renderRecentList();
+      }
+      function removeRecent(id) {
+        const list = loadRecents().filter(x => x.id !== id);
+        saveRecents(list);
+        renderRecentList();
+      }
+      function clearRecents() { saveRecents([]); renderRecentList(); }
+
+      function renderRecentList() {
+        const list = loadRecents();
+        el.recentList.innerHTML = '';
+        if (!list.length) {
+          el.recentList.innerHTML = '<div class="small">최근 세션이 없습니다.</div>';
+          return;
+        }
+        list.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'recent-item';
+          const left = document.createElement('div');
+          left.className = 'recent-id';
+          const date = new Date(item.ts);
+          left.title = date.toLocaleString();
+          left.textContent = item.id;
+          const right = document.createElement('div');
+          right.style.display = 'flex'; right.style.gap = '6px';
+
+          const loadBtn = document.createElement('button');
+          loadBtn.className = 'btn btn-primary'; loadBtn.textContent = '불러오기';
+          loadBtn.addEventListener('click', async () => {
+            try {
+              const res = await POST('/bootstrap', { save_code: item.id });
+              if (res && res.state) {
+                renderUIFromState(res.state);
+                closeModal(el.sessionModal);
+              } else { alert('세션 로드 실패'); }
+            } catch { alert('세션 로드 실패'); }
+          });
+
+          const delBtn = document.createElement('button');
+          delBtn.className = 'btn btn-ghost'; delBtn.textContent = '삭제';
+          delBtn.addEventListener('click', () => removeRecent(item.id));
+
+          right.appendChild(loadBtn); right.appendChild(delBtn);
+          row.appendChild(left); row.appendChild(right);
+          el.recentList.appendChild(row);
+        });
+      }
+
+      // --- HTTP helpers ---
+      const GET = async (endpoint) => {
+        const r = await fetch(endpoint);
+        if (!r.ok) throw new Error(`GET ${endpoint} -> ${r.status}`);
+        return r.json();
+      };
+
+      const POST = async (endpoint, body) => {
+          try {
+              const r = await fetch(endpoint, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  // [수정] 세션 유지를 위한 쿠키 전송 옵션 추가
+                  credentials: "include",
+                  body: JSON.stringify(body || {})
+              });
+
+              const data = await r.json().catch(() => ({})); // JSON 파싱 실패 시 빈 객체 반환
+
+              // [수정] 서버 에러 발생 시 UI 멈춤 방지를 위한 명시적 에러 처리
+              if (!r.ok) {
+                  // 서버가 보낸 에러 메시지가 있으면 사용, 없으면 HTTP 상태 코드를 사용
+                  const errorMsg = data.message || `서버 요청 실패 (상태: ${r.status})`;
+                  throw new Error(errorMsg);
+              }
+              return data;
+          } catch (err) {
+              console.error(`POST ${endpoint} 실패:`, err);
+              // UI에 에러를 표시할 수 있도록 에러를 다시 던짐
+              throw err;
+          }
+      };
+
+      // B-6: 감정/파일 유틸 + [emotion] 태그 파서
+      const EMOTION_ALIASES = {
+        // EN → Canonical
+        'amusement':'playful teasing',
+        'interest':'curiosity',
+        'surprise':'curiosity',
+        'happiness':'ecstatic joy',
+        'joy':'ecstatic joy',
+        'anger':'explosive anger',
+        'sadness':'welling sorrow',
+        'love':'warm affection',
+        'smile':'subtle smile',
+        // KR → Canonical
+        '경멸':'cold disdain',
+        '즐거움':'ecstatic joy',
+        '기대':'curiosity',
+        '당황':'shyness',
+        '부끄러움':'shyness',
+        '웃음':'subtle smile',
+        '미소':'subtle smile',
+        '분노':'explosive anger',
+        '슬픔':'welling sorrow',
+        '사랑':'warm affection',
+        '흥미':'curiosity',
+        '재미':'playful teasing',
+        '기쁨':'ecstatic joy',
+        '긴장':'nervous tension',
+        '의심':'skeptical doubt',
+        '무표정':'neutral',
+        '평온':'calm serenity'
+      };
+
+      // 예외 파일명(Title Case 규칙에서 어긋나는 케이스 보정)
+       const EMOTION_FILE_OVERRIDES = {
+        'confident assertion': 'Confident assertion',
+        // ⬇️ ADD: Neutral은 실제 파일이 없어 Subtle Smile로 바로 매핑
+        'neutral': 'Subtle Smile',
+      };
+      // 감정 키 -> 파일명 변환 (Title Case + .webp)
+      function emotionToWebpFile(emotion) {
+        const raw = normalizeEmotion(emotion) || 'subtle smile';
+        const canonical = EMOTION_ALIASES[raw] || raw; // 별칭 치환
+        const base = EMOTION_FILE_OVERRIDES[canonical] ||
+          canonical.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        return `${base}.webp`;
+      }
+
+      // "[curiosity] 이런 식 문장"에서 태그 떼고 { cleaned, tag } 반환
+      function cleanEmotionTagFromText(text) {
+        const str = String(text || '');
+        const m = str.match(/^\s*\[([^\]]+)\]\s*/i);
+        if (!m) return { cleaned: str, tag: null };
+        return { cleaned: str.slice(m[0].length), tag: m[1] };
+      }
+
+      // 감정 표준화 (소문자/트리밍)
+      function normalizeEmotion(tag) {
+        return String(tag || '').toLowerCase().trim();
+      }
+
+      // --- UI helpers ---
+      const updateTrafficLight = (status, text) => {
+        el.trafficLight.className = `traffic-light ${status}`;
+        el.statusText.textContent = text;
+      };
+
+      // [PATCH-UI-B] 마지막 턴만 타자기 적용을 위해 async
+      const addMessageToLog = async (wrapper, type, data) => {
+        const msgWrapper = document.createElement('div');
+        const msg = document.createElement('div');
+        msg.className = 'message';
+
+        if (type === 'narration') {
+          msg.className = 'narration-message';
+            wrapper.appendChild(msg);               // 1) 먼저 DOM에 붙이고
+            await typeText(msg, data.content || ''); // 2) 그리고 타자기
+          return;
+        }
+
+        if (type === 'user') {
+          msgWrapper.className = 'user-message-wrapper';
+          msg.classList.add('user-message');
+          msg.textContent = data.content || '';
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+          return;
+        }
+
+        if (type === 'dialogue') {
+          msgWrapper.className = 'character-message-wrapper';
+          msg.classList.add('character-message');
+
+          // 이름(색상)
+          const profile = characterProfiles.find(p => p.name === data.character);
+          const nameEl = document.createElement('div');
+          nameEl.className = 'character-name';
+          nameEl.textContent = data.character;
+          nameEl.style.color = (profile && profile.color) ? profile.color : colorFromName(data.character || '?');
+
+          // 감정 추출 + 헤더 webp
+          const cleaned = cleanEmotionTagFromText(data.content || "");
+          let emotion = data.emotion ? normalizeEmotion(data.emotion) : null;
+          if (!emotion && cleaned.tag) emotion = normalizeEmotion(cleaned.tag);
+          if (emotion) emotion = EMOTION_ALIASES[emotion] || emotion;
+          setHeaderGif(data.character, emotion);
+
+          const contentEl = document.createElement('div');
+          // 1) 구조 먼저 붙임
+          msg.appendChild(nameEl);
+          msg.appendChild(contentEl);
+
+          // 👇 기본값: show_monologue가 undefined면 true로 간주
+          const wantMono = (STATE?.ui_settings?.show_monologue ?? true);
+          if (data.monologue && wantMono) {
+            const monologueEl = document.createElement('div');
+            monologueEl.className = 'monologue';
+            monologueEl.textContent = data.monologue || "";
+            msg.appendChild(monologueEl);
+          }
+
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+
+          // 2) 이제 타자기 시작
+          await typeText(contentEl, cleaned.cleaned || "");
+          return;
+        }
+
+        // === [PATCH A] Standalone monologue 지원] ===
+        if (type === 'monologue') {
+          msgWrapper.className = 'character-message-wrapper';
+          msg.classList.add('character-message');
+
+          const who = data.character || (STATE?.player_name || '속마음');
+          const profile = (characterProfiles || []).find(p => p.name === who);
+
+          const nameEl = document.createElement('div');
+          nameEl.className = 'character-name';
+          nameEl.textContent = who;
+          nameEl.style.color = (profile && profile.color) ? profile.color : colorFromName(who);
+
+          const contentEl = document.createElement('div');
+          contentEl.className = 'monologue';
+
+          msg.appendChild(nameEl);
+          msg.appendChild(contentEl);
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+
+          // 타자기 적용
+          await typeText(contentEl, data.content || "");
+          return;
+        }
+
+        // 안전망
+        msg.className = 'narration-message';
+        msg.textContent = (data && data.content) ? data.content : '(unknown block)';
+        wrapper.appendChild(msg);
+      };
+
+        
+
+        // === [PATCH B1] 이 턴에 모놀로그가 없으면 한 줄 보강 ===
+      function ensureMonologueForTurn(turn) {
+        const blocks = Array.isArray(turn?.script) ? [...turn.script] : [];
+        const want = !!(STATE?.ui_settings?.show_monologue ?? true);
+        if (!want) return blocks;
+
+        const hasInline = blocks.some(b => b.type === 'dialogue' && b.monologue && b.monologue.trim());
+        const hasStandalone = blocks.some(b => b.type === 'monologue' && b.content && b.content.trim());
+        if (hasInline || hasStandalone) return blocks;
+
+        // ▼ 간단 합성(클라 안전망): 마지막 대사/감정 힌트 사용
+        const lastDlg = [...blocks].reverse().find(b => b.type === 'dialogue');
+        const emo = (lastDlg?.emotion || "").toLowerCase();
+        const who = STATE?.player_name || '나';
+
+        let line = '';
+        if (emo.includes('curiosity') || emo.includes('흥미')) {
+          line = '나는 굳이 끼어들지 않고 분위기를 가늠한다.';
+        } else if (emo.includes('shyness') || emo.includes('부끄')) {
+          line = '말끝을 삼키며 눈치만 본다.';
+        } else if (emo.includes('anger') || emo.includes('분노')) {
+          line = '속으론 씁쓸하게 웃고 만다.';
+        } else {
+          line = '짧게 숨을 고르며 다음 말을 떠올린다.';
+        }
+
+        blocks.push({
+          type: 'monologue',
+          character: who,
+          content: line
+        });
+        return blocks;
+      }
+
+      const renderUIFromState = async (newState) => {
+          STATE = newState;
+
+          const isBusy = STATE?.traffic_light === 'YELLOW';
+          const isReady = STATE?.traffic_light === 'GREEN';
+          isBootstrapped = !!(STATE && STATE.session_id);
+
+          el.submitBtn.disabled = !isReady && isBootstrapped;
+          el.submitBtn.textContent = isReady ? '전송' : '처리 중…';
+          directorToggles.forEach(t => t.disabled = isBusy);
+          el.characterSelector.querySelectorAll('.char-btn').forEach(btn => {
+            btn.disabled = isBootstrapped && !isReady;
+          });
+          el.setPlayerNameBtn.disabled = isBootstrapped;
+
+          if (!isBootstrapped) {
+            updateTrafficLight('red', '대기 중');
+            el.saveCodeDisplay.textContent = '새로운 이야기';
+            el.currentSaveCode.value = '';
+            el.chatLog.innerHTML = '<div class="narration-message">새로운 이야기를 시작하세요.</div>';
+            setHeaderGif(null, null);
+            el.submitBtn.textContent = '시작';
+            el.submitBtn.disabled = false;
+            return;
+          }
+
+          const sid = STATE.session_id;
+          el.saveCodeDisplay.textContent = `저장: ${sid}`;
+          el.currentSaveCode.value = sid;
+          addRecent(sid);
+
+          const lightMap = { RED:'red', GREEN:'green', YELLOW:'yellow' };
+          const textMap  = { RED:'대기 중', GREEN:'입력 가능', YELLOW:'처리 중' };
+          updateTrafficLight(lightMap[STATE.traffic_light] || 'red', textMap[STATE.traffic_light] || '오류');
+
+          const player = STATE.player_name || '사용자';
+          el.playerNameInput.value = player;
+          document.getElementById('current-player-name').textContent = player;
+          window.player_name = player;
+
+          const onScreenAll = Array.isArray(STATE?.on_screen) ? STATE.on_screen.slice() : [];
+          PLAYER_ON = onScreenAll.includes(player);
+          el.characterSelector.querySelectorAll('.char-btn:not(.player-btn)').forEach(btn => {
+            const charName = btn.dataset.charName;
+            btn.classList.toggle('active', onScreenAll.includes(charName));
+          });
+          const pbtn = el.characterSelector.querySelector('.char-btn.player-btn');
+          if (pbtn) pbtn.classList.toggle('active', PLAYER_ON);
+          STAGED_ON_SCREEN = new Set(onScreenAll.filter(n => n !== player));
+          renderParticipantsPreview();
+
+          el.chatLog.innerHTML = '';
+          const turns = STATE.turns || [];
+          for (let i = 0; i < turns.length; i++) {
+            const turn = turns[i];
+            const wrap = document.createElement('div');
+            wrap.className = 'turn-wrapper';
+            
+            const isLastTurn = i === turns.length - 1;
+            if (isBootstrapped && !isLastTurn) {
+                const branchBtn = document.createElement('button');
+                branchBtn.textContent = '↪️';
+                branchBtn.title = `이 시점(${i+1}턴)에서 이야기 분기 만들기`;
+                branchBtn.style.cssText = `position: absolute; top: 5px; right: 5px; font-size: 12px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center;`;
+                wrap.style.position = 'relative';
+                branchBtn.onclick = () => handleBranchFromTurn(i);
+                wrap.appendChild(branchBtn);
+            }
+
+            el.chatLog.appendChild(wrap);
+            TYPEWRITER.enabled = isLastTurn;
+
+            if (turn.user_input) await addMessageToLog(wrap, 'user', { content: turn.user_input });
+            const scriptBlocks = ensureMonologueForTurn(turn);
+            for (const b of scriptBlocks) {
+              await addMessageToLog(wrap, b.type, b);
+            }
+          }
+          if (turns.length > 0) LAST_TURN_ID = turns[turns.length - 1].turn_id;
+          TYPEWRITER.enabled = true;
+          
+          requestAnimationFrame(() => {
+            el.chatLog.scrollTop = el.chatLog.scrollHeight;
+          });
+
+          el.submitBtn.textContent = '전송';
+
+          const ui = STATE?.ui_settings || {};
+          document.querySelectorAll('#director-panel [data-key]').forEach(elem => {
+              const key = elem.dataset.key;
+              if (ui[key] === undefined) return;
+
+              if (elem.type === 'checkbox') {
+                  elem.checked = ui[key];
+              } else if (elem.id === 'genre-preset-tags' || elem.classList.contains('genre-tags-container')) {
+                  elem.querySelectorAll('button').forEach(btn => {
+                      btn.classList.toggle('active', btn.dataset.value === String(ui[key]));
+                  });
+              } else {
+                  // ✅ [최종 보강] 값을 대입할 때 명시적으로 문자열로 변환하여 안정성 강화
+                  elem.value = String(ui[key]);
+                  const valueDisplayId = (elem.id || '').replace('-slider', '-value');
+                  const valueDisplay = valueDisplayId ? document.getElementById(valueDisplayId) : null;
+                  if (valueDisplay) {
+                      valueDisplay.textContent = elem.id === 'narration-ratio-slider' ? `${elem.value}%` : elem.value;
+                  }
+              }
+          });
+
+          if (STATE.traffic_light === 'YELLOW') startPolling(); else stopPolling();
+        };
+
+      const startPolling = () => {
+        stopPolling();
+        pollTimer = setInterval(async () => {
+          try {
+            const data = await GET('/get-session-data');
+            if (data.status === 'ok') {
+              renderUIFromState(data.state);
+              if (data.state.traffic_light !== 'YELLOW') stopPolling();
+            }
+          } catch {}
+        }, 1200);
+      };
+      const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+
+      // --- Actions ---
+      
+       function appendUserGhost(text){
+          if (!text) return;
+          const wrap = document.createElement('div');
+          wrap.className = 'turn-wrapper';
+          addMessageToLog(wrap, 'user', { content: text });
+          el.chatLog.appendChild(wrap);
+          el.chatLog.scrollTop = el.chatLog.scrollHeight;
+        }
+
+        async function waitForGreen(maxMs = 20000){
+          const start = Date.now();
+          while (Date.now() - start < maxMs){
+            const d = await GET('/get-session-data').catch(()=>null);
+            if (d?.status === 'ok' && d.state?.traffic_light === 'GREEN') return;
+            await new Promise(r => setTimeout(r, 900));
+          }
+          throw new Error('timeout waiting GREEN');
+        }
+
+        // ✅ handleBranchFromTurn 함수 바로 위에 이 코드 블록 전체를 추가하세요.
+      
+      let doesNovelExist = false;
+
+      const displayNovel = (data, mode = 'my-novel') => {
+          const { novel_title, novel_text, novel_share_code } = data || {};
+          const { novelTitle, novelContent, novelShareContainer, novelShareCode, generateNovelBtn, viewSharedNovelBtn, backToMyNovelBtn } = el;
+          
+          doesNovelExist = !!novel_text;
+
+          if (mode === 'my-novel') {
+              novelTitle.textContent = novel_title || "아뜨리에 북";
+              novelContent.innerHTML = novel_text ? htmlDecode(novel_text).replace(/\n/g, '<br>') : `<strong>당신의 이야기를 한 편의 소설로 엮어보세요.</strong><br><br>- <strong>[소설 쓰기 / 업데이트]</strong> 버튼을 눌러 시작하세요.<br>- 처음 만들 때는 전체 이야기가 소설로 변환됩니다.<br>- 기존 소설이 있다면, 전체를 <strong>새로 쓰거나</strong> 뒷이야기를 <strong>이어 쓸지</strong> 선택할 수 있습니다.<br><br><em>소설 생성 후에는 하단에 <strong>공유 코드</strong>가 나타납니다. 코드를 복사해서 친구에게 당신의 이야기를 공유해 보세요!</em>`;
+              generateNovelBtn.classList.remove('modal-hidden');
+              viewSharedNovelBtn.classList.remove('modal-hidden');
+              backToMyNovelBtn.classList.add('modal-hidden');
+              if (novel_share_code) {
+                  novelShareCode.value = novel_share_code;
+                  novelShareContainer.classList.remove('modal-hidden');
+              } else {
+                  novelShareContainer.classList.add('modal-hidden');
+              }
+          } else { // shared-novel mode
+              novelTitle.textContent = novel_title || "공유된 이야기";
+              novelContent.innerHTML = (novel_text ? htmlDecode(novel_text).replace(/\n/g, '<br>') : "공유된 책을 찾고 있습니다...");
+              generateNovelBtn.classList.add('modal-hidden');
+              viewSharedNovelBtn.classList.add('modal-hidden');
+              backToMyNovelBtn.classList.remove('modal-hidden');
+              novelShareContainer.classList.add('modal-hidden');
+          }
+          openModal(el.novelModalOverlay);
+      };
+      
+      const openMyNovel = async () => {
+          displayNovel({ novel_text: "당신의 책을 펼치는 중입니다..." }, 'my-novel');
+          try {
+              const result = await POST('/get-my-novel');
+              displayNovel(result.status === 'success' ? result.data : {}, 'my-novel');
+          } catch (error) {
+              displayNovel({ novel_text: `책을 불러오는 데 실패했습니다. (${error.message})`}, 'my-novel');
+          }
+      };
+
+      const handleNovelGeneration = async (mode) => {
+          closeModal(el.novelOptionsModal);
+          const { novelContent, generateNovelBtn } = el;
+          const directorMemo = el.novelDirectorMemo.value.trim();
+
+          generateNovelBtn.disabled = true;
+          generateNovelBtn.textContent = "생성 중...";
+          novelContent.innerHTML = "<strong>AI 작가가 당신의 이야기를 멋진 소설로 엮고 있습니다... ✍️</strong><br><br><em>대화가 길 경우 몇 분 정도 소요될 수 있습니다.</em>";
+
+          try {
+              const result = await POST('/novelize', { mode, director_memo: directorMemo });
+              if (result.status === 'success') {
+                  displayNovel(result.data, 'my-novel');
+              } else {
+                  throw new Error(result.message || '알 수 없는 오류');
+              }
+          } catch (error) {
+              novelContent.textContent = `소설 생성에 실패했어요. (${error.message})`;
+          } finally {
+              generateNovelBtn.disabled = false;
+              generateNovelBtn.textContent = "소설 쓰기 / 업데이트";
+              el.novelDirectorMemo.value = '';
+          }
+      };
+      
+      const htmlDecode = (input) => {
+        const doc = new DOMParser().parseFromString(input, "text/html");
+        return doc.documentElement.textContent;
+      }
+
+// ⬇️ 기존 handleFormSubmit 함수를 지우고 아래 코드로 통째로 교체하세요.
+const handleBranchFromTurn = async (turnIndex) => {
+        if (!STATE?.session_id) return;
+        if (confirm(`현재 턴(${turnIndex + 1})에서 새로운 이야기 분기를 만드시겠습니까?\n이후의 대화는 사라지고, 이 시점부터 새로운 선택을 할 수 있습니다.`)) {
+          try {
+            updateTrafficLight('yellow', '분기 생성 중...');
+            el.submitBtn.disabled = true;
+
+            const res = await POST('/branch_from_turn', { turn_index: turnIndex });
+            
+            if (res.status === 'ok' && res.state) {
+              await renderUIFromState(res.state);
+              // 성공 알림은 renderUIFromState가 트래픽 라이트를 green으로 바꾸므로 생략
+            } else {
+              throw new Error(res.message || '분기 생성에 실패했습니다.');
+            }
+          } catch (err) {
+            console.error(err);
+            alert(`오류: ${err.message}`);
+            // 실패 시 UI 원상 복구
+            updateTrafficLight('green', '입력 가능');
+            el.submitBtn.disabled = false;
+          }
+        }
+      };
+
+
+const handleFormSubmit = async (e) => {
+        e.preventDefault();
+        if (el.submitBtn.disabled) return;
+
+        const text = el.userInput.value.trim();
+        el.submitBtn.disabled = true;
+        el.userInput.value = '';
+
+        const getCurrentDirectorSettings = () => {
+        const settings = {};
+        document.querySelectorAll('#director-panel [data-key]').forEach(el => {
+          const key = el.dataset.key;
+
+          // ✅ [최종 보강] ID 또는 클래스명으로 장르 컨테이너를 식별하여 안정성 강화
+          if (el.id === 'genre-preset-tags' || el.classList.contains('genre-tags-container')) {
+            const active = el.querySelector('button.active');
+            if (active && active.dataset.value) {
+              settings[key] = active.dataset.value;
+            }
+            return;
+          }
+
+          if (el.type === 'checkbox') {
+            settings[key] = el.checked;
+          } else if (el.type === 'range' || el.type === 'number') {
+            settings[key] = Number(el.value);
+          } else {
+            settings[key] = el.value;
+          }
+        });
+        return settings;
+      };
+
+        try {
+            if (!isBootstrapped) {
+                // --- [1] 첫 '시작' 버튼: Bootstrap 처리 ---
+                updateTrafficLight('yellow', '이야기 준비 중...');
+                el.submitBtn.textContent = '시작 중…';
+
+                const selectedNPCs = Array.from(el.characterSelector.querySelectorAll('.char-btn.active:not(.player-btn)'))
+                    .map(btn => btn.dataset.charName);
+                const playerName = el.playerNameInput.value.trim() || '사용자';
+
+                const bootPayload = {
+                    player_name: playerName,
+                    on_screen_names: selectedNPCs,
+                    seed_text: text,
+                    // ✅ [핵심 보강] 시작 시점의 감독 설정을 함께 보냅니다.
+                    ui_settings: getCurrentDirectorSettings()
+                };
+
+                const bootResponse = await POST('/bootstrap', bootPayload);
+                
+                if (bootResponse && bootResponse.state) {
+                    await renderUIFromState(bootResponse.state);
+                } else {
+                    throw new Error(bootResponse.message || '이야기 시작 데이터가 올바르지 않습니다.');
+                }
+
+            } else {
+                // --- [2] 두 번째 이후의 '전송' 버튼: Execute-turn 처리 ---
+                updateTrafficLight('yellow', '요청 중...');
+                el.submitBtn.textContent = '처리 중…';
+
+                const start = await POST('/execute-turn', {
+                    user_text: text,
+                    // ✅ [핵심 보강] 현재 턴의 감독 설정을 함께 보냅니다.
+                    ui_settings: { ...getCurrentDirectorSettings(), force_player_on_scene: PLAYER_ON },
+                    on_screen_names: Array.from(STAGED_ON_SCREEN)
+                });
+
+                if (start.status !== 'processing' || !start.task_id) {
+                    throw new Error(start.message || '작업 시작에 실패했습니다.');
+                }
+
+                // --- [3] 'execute-turn' 결과 폴링 및 실패 처리 ---
+                const poll = async () => {
+                    try {
+                        const response = await fetch(`/get-turn-result/${start.task_id}`);
+                        const result = await response.json().catch(() => ({}));
+
+                        if (result.status === 'processing') {
+                            setTimeout(poll, 1000);
+                            return;
+                        }
+
+                        if (response.ok && result.status === 'ok' && result.state) {
+                            await renderUIFromState(result.state);
+                            return;
+                        }
+                        
+                        const statusCode = response.status;
+                        const errorMsg = result.message || '턴 생성 중 알 수 없는 오류가 발생했습니다.';
+                        
+                        const error = new Error(errorMsg);
+                        error.status = statusCode;
+                        throw error;
+
+                    } catch (err) {
+                        console.error(err);
+                        updateTrafficLight('red', '생성 실패');
+
+                        let errorMessage = `❌ 생성 실패. [재시도] 버튼을 눌러주세요.`;
+                        const statusCode = err.status || 0;
+                        const errorString = (err.message || '').toLowerCase();
+
+                        if (statusCode === 409 || errorString.includes("no available npcs")) {
+                            errorMessage = '❌ 대화 가능한 NPC가 없습니다. [씬 설정]에서 참여자를 추가해주세요.';
+                        } else if (statusCode === 503 || errorString.includes("timed out")) {
+                            errorMessage = '❌ AI 서버 응답이 지연되고 있습니다. 잠시 후 [재시도] 버튼을 눌러주세요.';
+                        }
+
+                        await addMessageToLog(el.chatLog, 'narration', { content: errorMessage });
+                        el.submitBtn.disabled = false;
+                        el.submitBtn.textContent = '재시도';
+                    }
+                };
+                setTimeout(poll, 800);
+            }
+
+        } catch (err) {
+            console.error(err);
+            updateTrafficLight('red', '생성 실패');
+            let errorMessage = `❌ 생성 실패. [${isBootstrapped ? '재시도' : '다시 시도'}] 버튼을 눌러주세요.`;
+            const errorString = (err.message || '').toLowerCase();
+            if (errorString.includes("409")) {
+                errorMessage = '❌ 대화 가능한 NPC가 없습니다. [씬 설정]에서 참여자를 추가해주세요.';
+            } else if (errorString.includes("503")) {
+                errorMessage = '❌ AI 서버 응답이 지연되고 있습니다. 잠시 후 [다시 시도] 버튼을 눌러주세요.';
+            }
+            await addMessageToLog(el.chatLog, 'narration', { content: errorMessage });
+            el.submitBtn.disabled = false;
+            el.submitBtn.textContent = isBootstrapped ? '재시도' : '다시 시도';
+        }
+      };
+
+      const openModal = m => m.classList.remove('modal-hidden');
+      const closeModal = m => m.classList.add('modal-hidden');
+
+      function copyText(text) {
+        if (!text) return;
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(() => updateTrafficLight('green', '코드 복사됨'));
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+          updateTrafficLight('green', '코드 복사됨');
+        }
+        setTimeout(() => {
+          // 상태 텍스트 원복
+          const map = { RED:'대기 중', GREEN:'입력 가능', YELLOW:'처리 중' };
+          const light = STATE?.traffic_light || 'RED';
+          updateTrafficLight(light.toLowerCase(), map[light] || '상태');
+        }, 900);
+      }
+
+// ✅ [최종] init 함수 전체를 이 코드로 교체하세요.
+      (async function init(){
+          // --- 캐릭터 목록 ---
+          try {
+            const profiles = await GET('/get-character-profiles');
+            characterProfiles = Array.isArray(profiles) ? profiles : [];
+            nameToEng = {};
+            el.characterSelector.innerHTML = '';
+
+            characterProfiles.forEach(p => {
+              nameToEng[p.name] = p.eng || p.name.toLowerCase();
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'char-btn';
+              btn.dataset.charName = p.name;
+              btn.textContent = p.name;
+              if (p.color) btn.style.setProperty('--c', p.color);
+              btn.addEventListener('click', () => {
+                if (isBootstrapped && STATE?.traffic_light !== 'GREEN') return;
+                btn.classList.toggle('active');
+                const name = btn.dataset.charName;
+                if (btn.classList.contains('active')) STAGED_ON_SCREEN.add(name);
+                else STAGED_ON_SCREEN.delete(name);
+                renderParticipantsPreview();
+              });
+              el.characterSelector.appendChild(btn);
+            });
+
+            makePlayerBtn(el.playerNameInput.value.trim() || '사용자');
+            updatePrestartParticipants();
+          } catch (e) { console.error('캐릭터 프로필 로드 실패', e); }
+
+          // --- 기존 세션 상태 ---
+          try {
+              const data = await GET('/get-session-data');
+              if (data.status === 'ok' && data.state) {
+                  await renderUIFromState(data.state);
+              } else {
+                  await renderUIFromState(null);
+              }
+          } catch (e) { await renderUIFromState(null); }
+          
+          renderRecentList();
+          
+          // --- Events ---
+          el.chatForm.addEventListener('submit', handleFormSubmit);
+          
+          document.querySelectorAll('#director-panel input[type="range"]').forEach(slider => {
+            const valueDisplayId = slider.id.replace('-slider', '-value');
+            const valueDisplay = document.getElementById(valueDisplayId);
+            if (valueDisplay) {
+              slider.addEventListener('input', () => {
+                let displayValue = slider.value;
+                if (slider.id === 'narration-ratio-slider') displayValue += '%';
+                valueDisplay.textContent = displayValue;
+              });
+            }
+          });
+          // ✅ init() 함수 내부 Events 섹션에 추가하세요.
+          
+          el.openNovelBtn.addEventListener('click', openMyNovel);
+          el.novelCloseBtn.addEventListener('click', () => closeModal(el.novelModalOverlay));
+          el.novelOptionsCloseBtn.addEventListener('click', () => closeModal(el.novelOptionsModal));
+
+          el.generateNovelBtn.addEventListener('click', () => {
+            el.novelGenerateAppendBtn.style.display = doesNovelExist ? 'block' : 'none';
+            openModal(el.novelOptionsModal);
+          });
+          
+          el.novelGenerateAppendBtn.addEventListener('click', () => handleNovelGeneration('append'));
+          el.novelGenerateRewriteBtn.addEventListener('click', () => {
+            if (doesNovelExist) {
+                if (confirm("정말로 기존 소설을 지우고 전체 이야기를 처음부터 새로 쓸까요?")) {
+                    handleNovelGeneration('rewrite');
+                }
+            } else {
+                handleNovelGeneration('rewrite');
+            }
+          });
+          
+          el.viewSharedNovelBtn.addEventListener('click', async () => {
+            const code = prompt("불러올 소설의 공유 코드를 입력하세요:");
+            if (code) {
+                try {
+                    const result = await POST('/get-shared-novel', { novel_share_code: code });
+                    if(result.status === 'success') {
+                        displayNovel(result.data, 'shared-novel');
+                    } else {
+                        alert(`소설 불러오기 실패: ${result.message}`);
+                    }
+                } catch(e) { alert('오류가 발생했습니다: ' + e.message); }
+            }
+          });
+          
+          el.backToMyNovelBtn.addEventListener('click', openMyNovel);
+          el.copyShareCodeBtn.addEventListener('click', () => copyText(el.novelShareCode.value));
+          // ✅ [핵심 추가] 장르 태그 버튼 클릭 이벤트 처리
+          const genreTagsContainer = document.getElementById('genre-preset-tags');
+          genreTagsContainer.addEventListener('click', (e) => {
+            if (e.target.tagName === 'BUTTON') {
+              genreTagsContainer.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+              e.target.classList.add('active');
+            }
+          });
+
+          document.querySelectorAll('#director-panel input[type="range"]').forEach(slider => {
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+
+          el.userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (!el.submitBtn.disabled) el.chatForm.requestSubmit();
+            }
+          });
+          el.playerNameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              el.setPlayerNameBtn.click();
+            }
+          });
+          document.querySelector('.header').addEventListener('click', () => {
+              document.querySelector('.header').classList.toggle('collapsed');
+          });
+          const closePanels = () => {
+              el.scenePanel.style.display = 'none';
+              el.directorPanel.style.display = 'none';
+          };
+          el.toggleScenePanelBtn.addEventListener('click', () => {
+              const willOpen = el.scenePanel.style.display !== 'block';
+              closePanels();
+              if (willOpen) el.scenePanel.style.display = 'block';
+          });
+          el.toggleDirectorPanelBtn.addEventListener('click', () => {
+              const willOpen = el.directorPanel.style.display !== 'block';
+              closePanels();
+              if (willOpen) el.directorPanel.style.display = 'block';
+          });
+          el.setPlayerNameBtn.addEventListener('click', () => {
+              if(isBootstrapped) return;
+              const n = el.playerNameInput.value.trim() || '사용자';
+              document.getElementById('current-player-name').textContent = n;
+              makePlayerBtn(n);
+              updatePrestartParticipants();
+              window.player_name = n;
+          });
+          el.sessionMenuBtn.addEventListener('click', () => {
+              el.currentSaveCode.value = STATE?.session_id || '';
+              openModal(el.sessionModal);
+          });
+          el.sessionModal.querySelector('.modal-close-btn').addEventListener('click', () => closeModal(el.sessionModal));
+          el.sessionLoadBtn.addEventListener('click', async () => {
+              const code = el.loadCodeInput.value.trim();
+              if (!code) return;
+              try {
+                  const res = await POST('/bootstrap', { save_code: code });
+                  if (res && res.state) {
+                      await renderUIFromState(res.state);
+                      closeModal(el.sessionModal);
+                  } else alert('세션 로드 실패');
+              } catch { alert('세션 로드 실패'); }
+          });
+          el.sessionResetBtn.addEventListener('click', async () => {
+              if (confirm('정말로 모든 기록을 지우고 새로 시작할까요?')) {
+                  try {
+                      await GET('/reset-session'); 
+                      localStorage.removeItem(RECENTS_KEY); 
+                      window.location.reload(); 
+                  } catch (err) {
+                      console.error("세션 초기화 실패:", err);
+                      alert("세션 초기화에 실패했습니다. 페이지를 수동으로 새로고침 해주세요.");
+                  }
+              }
+          });
+          el.copySaveCodeBtn.addEventListener('click', () => copyText(STATE?.session_id || ''));
+          el.copyCodeInModal.addEventListener('click', () => copyText(el.currentSaveCode.value));
+          el.clearRecentsBtn.addEventListener('click', clearRecents);
+          // ✅ (선택) 소설 뷰어의 '메뉴 보기' 버튼에 토글 기능을 추가합니다.
+          el.novelFooterToggle?.addEventListener('click', () => {
+              el.novelShareContainer.classList.toggle('modal-hidden');
+              el.novelActions.classList.toggle('modal-hidden');
+          });
+      })();
+    });
+  </script>
+
+<script>
+/* ===== Method-Acting Unified Patch v1 (frontend-only, idempotent) =====
+   - Non-invasive: monkey-patches window.fetch for /execute-turn only
+   - Injects schema_hint, npc_initiative (separate from offer_interactive_choices)
+   - Ensures CORE4 (energy, intoxication, stress, pain) + status_tags on dynamic_state
+   - Derives cognitive_weights from OCEAN if missing (on-screen only) and ships in payload.overrides
+   - Appends compact prompt rules for DIMA/MAESTRO ("method acting" engine)
+   - Adds hidden meta HUD + world context nodes (kept off-screen per design)
+*/
+(function(){
+  if (window.__METHOD_ACTING_PATCH_V1__) return; // idempotent
+  window.__METHOD_ACTING_PATCH_V1__ = true;
+
+  const CORE4_DEFAULTS = { energy: 70, intoxication: 0, stress: 10, pain: 0 };
+  const PROMPT_RULES = {
+    dima_append:
+`[METHOD ACTING — 3-STEP COGNITIVE MODEL]
+1) PERCEPTION: Use latest log, status_tags, dynamic_state, relationship hints.
+2) INTERPRETATION: Weight info by persona (OCEAN/social_tuning). Different characters value rules, emotion, memory, or context differently.
+3) ACTION: Define a momentary Inner Goal, then pick a Tactic to pursue it. Output both DIALOGUE (conscious) and NARRATED ACTION (can subtly contradict dialogue to reveal inner state). Reflect status_tags (e.g., slight slur if "[술기운 오름]"). Avoid meta or ordering the player to act.`,
+    maestro_append:
+`[SCENE OBJECTIVE — TACTICAL FORM]
+- Choose NPC-only leader + tactic + supporting reactions, guided by each persona (not a single competition pattern).
+- Structure (conceptually): lead_character, lead_tactic, supporting_reactions{npc: brief}.
+- Update physical/appearance status_tags when events occur (drinking, hair down, torn clothes, etc.).`
+  };
+
+  function safeParseJSON(body) {
+    try { return JSON.parse(body); } catch(e) { return null; }
+  }
+  function toJSON(obj) {
+    try { return JSON.stringify(obj); } catch(e) { return null; }
+  }
+
+  function ensureCore4(ds) {
+    if (!ds.core4) ds.core4 = {};
+    for (const k of ["energy","intoxication","stress","pain"]) {
+      if (typeof ds.core4[k] !== "number") {
+        // legacy map from physical_condition if present
+        if (ds.physical_condition) {
+          if (k === "intoxication" && typeof ds.physical_condition.intoxication === "number")
+            ds.core4.intoxication = ds.physical_condition.intoxication;
+          else if (k === "energy" && typeof ds.physical_condition.fatigue === "number")
+            ds.core4.energy = Math.max(0, 100 - ds.physical_condition.fatigue);
+          else
+            ds.core4[k] = CORE4_DEFAULTS[k];
+        } else {
+          ds.core4[k] = CORE4_DEFAULTS[k];
+        }
+      }
+    }
+    if (!Array.isArray(ds.status_tags)) ds.status_tags = [];
+  }
+
+  function oceanToWeights(o) {
+    // Minimal mapping; values 0..1. If data is 0..100 or -1..1, normalize heuristically.
+    const norm = (v)=> {
+      if (v == null) return 0.5;
+      if (v >= 0 && v <= 1) return v;
+      if (v >= 0 && v <= 100) return v/100;
+      if (v >= -1 && v <= 1) return (v+1)/2;
+      return 0.5;
+    };
+    const O = {
+      O: norm(o.openess || o.openness || o.O),
+      C: norm(o.conscientiousness || o.C),
+      E: norm(o.extraversion || o.E),
+      A: norm(o.agreeableness || o.A),
+      N: norm(o.neuroticism || o.N)
+    };
+    // Heuristic weights that sum ~1:
+    // rules/ethics ~ C; emotion salience ~ (E + A)/2; memory/history ~ (C + N*0.5); external context ~ O; social risk ~ (E - N)
+    const weights = {
+      social_rules: clamp(O.C * 0.45 + (1-O.N)*0.05, 0, 1),
+      emotion: clamp((O.E + O.A)/2 * 0.45 + O.N * 0.05, 0, 1),
+      memory: clamp(O.C*0.25 + O.N*0.20, 0, 1),
+      external_context: clamp(O.O*0.40 + (1-O.C)*0.05, 0, 1),
+      social_risk: clamp((O.E - O.N)*0.40 + O.O*0.05, 0, 1)
+    };
+    // normalize to sum ~1
+    const s = Object.values(weights).reduce((a,b)=>a+b,0) || 1;
+    for (const k in weights) weights[k] = +(weights[k]/s).toFixed(3);
+    return weights;
+  }
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+  function deriveCognitiveWeights(char) {
+    // Use char.personality?.ocean if present, else return undefined.
+    const p = char && (char.personality || char.persona || {});
+    const ocean = p.ocean || p.OCEAN || p.ocean_score || char.ocean;
+    if (!ocean) return undefined;
+    return oceanToWeights(ocean);
+  }
+
+  function enrichCharactersInState(state) {
+    if (!state || !state.character_states) return;
+    for (const [name, st] of Object.entries(state.character_states)) {
+      if (!st.dynamic_state) st.dynamic_state = {};
+      ensureCore4(st.dynamic_state);
+      // Attach cognitive_weights hint if persona exists and weights missing
+      if (!st.cognitive_weights) {
+        const w = deriveCognitiveWeights(st) || deriveCognitiveWeights(st.persona);
+        if (w) st.cognitive_weights = w;
+      }
+    }
+  }
+
+  function buildRuntimeOverrides(payload) {
+    // Build non-invasive overrides bag the backend can choose to read.
+    const overrides = payload.overrides || {};
+    if (!overrides.prompts) overrides.prompts = {};
+    if (!overrides.prompts.dima_append) overrides.prompts.dima_append = PROMPT_RULES.dima_append;
+    if (!overrides.prompts.maestro_append) overrides.prompts.maestro_append = PROMPT_RULES.maestro_append;
+    return overrides;
+  }
+
+  function patchExecuteTurnBody(payload) {
+    if (!payload || payload.__method_acting_patched) return payload;
+    payload.__method_acting_patched = true;
+    if (!payload.schema_hint) payload.schema_hint = "method-acting-v1";
+
+    // ui_settings separation: npc_initiative vs offer_interactive_choices
+    payload.ui_settings = payload.ui_settings || {};
+    if (typeof payload.ui_settings.npc_initiative === "undefined") {
+      // If there is any legacy flag named similar to "initiative", use it; else default true
+      const legacy = payload.ui_settings.initiative || payload.ui_settings.character_initiative;
+      payload.ui_settings.npc_initiative = typeof legacy === "boolean" ? legacy : true;
+    }
+
+    // Enrich state for on-screen characters (idempotent)
+    if (payload.state) enrichCharactersInState(payload.state);
+    if (payload.session_state) enrichCharactersInState(payload.session_state);
+
+    payload.overrides = buildRuntimeOverrides(payload);
+    payload.meta = Object.assign({}, payload.meta || {}, {
+      patch: "method-acting-v1",
+      ts: Date.now()
+    });
+    return payload;
+  }
+
+  // Monkey-patch fetch
+  const __origFetch = window.fetch.bind(window);
+  window.fetch = async function(input, init) {
+    try {
+      const url = (typeof input === "string") ? input : input && input.url || "";
+      if (url && url.includes("/execute-turn") && init && init.body && typeof init.body === "string") {
+        const pl = safeParseJSON(init.body);
+        if (pl) {
+          const patched = patchExecuteTurnBody(pl);
+          const newBody = toJSON(patched) || init.body;
+          const headers = new Headers(init.headers || {});
+          if (!headers.get("Content-Type")) headers.set("Content-Type", "application/json");
+          const newInit = Object.assign({}, init, { body: newBody, headers });
+          return __origFetch(input, newInit);
+        }
+      }
+      return __origFetch(input, init);
+    } catch (err) {
+      console.warn("[MethodActingPatch] fetch patch warning:", err);
+      return __origFetch(input, init);
+    }
+  };
+
+  // Hidden meta HUD + world context mounts (not displayed)
+  function ensureHiddenMount(id){
+    if (document.getElementById(id)) return;
+    const n = document.createElement("div");
+    n.id = id;
+    n.style.display = "none"; // keep hidden per product decision
+    document.body.appendChild(n);
+  }
+  ensureHiddenMount("meta-hud");
+  ensureHiddenMount("world-context-card");
+
+  console.log("%cMethod-Acting Unified Patch v1 loaded (frontend)","color:#3aa;");
+})();
+</script>
+
+
+
+  <script>
+  // Load character DB once and cache on window
+  ;(function(){
+    async function loadCharDB(){
+      try{
+        const res = await fetch('characters.json', {cache:'no-store'});
+        if(!res.ok) return;
+        window.__CHAR_DB__ = await res.json();
+      }catch(e){}
+    }
+    if(!window.__CHAR_DB__) loadCharDB();
+  })();
+  </script>
+
+
+  <script>
+  ;(function(){
+    // local in-memory scene variables (can be set by other panels if present)
+    window.__SCENE_OBJECTIVE__ = window.__SCENE_OBJECTIVE__ || '';
+    window.__SCENE_OBJECTS__ = window.__SCENE_OBJECTS__ || [];
+
+    // Provide a default npc_initiative flag if the UI toggle is absent
+    function getNPCInitiative(){
+      try {
+        const el = document.querySelector('[data-key="npc_initiative"]');
+        if(el) return !!el.checked;
+      } catch(e){}
+      // fallback to localStorage or default true
+      try{
+        const v = localStorage.getItem('npc_initiative');
+        if(v === 'true' || v === 'false') return v === 'true';
+      }catch(e){}
+      return true;
+    }
+
+    // Core-4 defaults per character (session-local)
+    window.__CORE4__ = window.__CORE4__ || {};
+    function ensureCore4For(name){
+      if(!window.__CORE4__[name]){
+        window.__CORE4__[name] = { energy:80, intoxication:0, stress:20, pain:0, status_tags:[] };
+      }
+      return window.__CORE4__[name];
+    }
+    // Public helpers to update tags without exposing HUD
+    window.__applyStatusTag = function(name, tag){
+      const s = ensureCore4For(name);
+      if(!s.status_tags.includes(tag)) s.status_tags.push(tag);
+      // keep hidden HUD DOM in sync (invisible)
+      try{
+        const hud = document.getElementById('state-hud');
+        if(hud){
+          hud.dataset[name] = JSON.stringify(s);
+        }
+      }catch(e){}
+    };
+
+    const __origFetch = window.fetch;
+    window.fetch = async function(resource, init){
+      try {
+        if(typeof resource === 'string' && resource.includes('/execute-turn') && init && init.body){
+          const body = JSON.parse(init.body);
+
+          // ui_settings
+          body.ui_settings = body.ui_settings || {};
+          if(typeof body.ui_settings.npc_initiative === 'undefined'){
+            body.ui_settings.npc_initiative = getNPCInitiative();
+          }
+          body.ui_settings.method_acting = Object.assign(
+            { enabled:true, use_inner_goal:true, use_nonverbal:true, three_step_cognitive:true },
+            body.ui_settings.method_acting || {}
+          );
+
+          // scene objective/objects
+          body.scene_objective = body.scene_objective || window.__SCENE_OBJECTIVE__ || '';
+          body.scene_context = body.scene_context || {};
+          if(!Array.isArray(body.scene_context.scene_objects)){
+            body.scene_context.scene_objects = Array.isArray(window.__SCENE_OBJECTS__) ? window.__SCENE_OBJECTS__ : [];
+          }
+
+          // cognitive weights per on-screen NPC
+          if(Array.isArray(body.on_screen) && window.__CHAR_DB__){
+            body.cognitive_overrides = body.cognitive_overrides || {};
+            body.method_acting_overrides = body.method_acting_overrides || {};
+            body.on_screen.forEach(name=>{
+              const c = window.__CHAR_DB__[name];
+              if(c){
+                if(c.cognitive_weights) body.cognitive_overrides[name] = c.cognitive_weights;
+                if(c.method_acting) body.method_acting_overrides[name] = c.method_acting;
+              }
+              // Attach CORE-4 state
+              body.character_states = body.character_states || {};
+              body.character_states[name] = body.character_states[name] || {};
+              body.character_states[name].dynamic_state = body.character_states[name].dynamic_state || {};
+              const core4 = ensureCore4For(name);
+              body.character_states[name].dynamic_state.physical_condition = {
+                energy: core4.energy, intoxication: core4.intoxication, stress: core4.stress, pain: core4.pain
+              };
+              body.character_states[name].dynamic_state.status_tags = core4.status_tags.slice(0);
+            });
+          }
+
+          // hidden HUD update for location, if provided elsewhere
+          if(body.world_state && body.world_state.current_location){
+            const locHud = document.getElementById('current-location-hud');
+            if(locHud){ locHud.textContent = body.world_state.current_location; }
+          }
+          init.body = JSON.stringify(body);
+        }
+      } catch(e) {
+        console.warn('augment /execute-turn payload failed', e);
+      }
+      return __origFetch.apply(this, arguments);
+    };
+  })();
+  </script>
+
+</body>
+</html>

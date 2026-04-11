@@ -1,0 +1,194 @@
+{
+  "world_name": "사루라 아뜨리에",
+  "version": "R03-1.2-UNIFIED",
+  "compat": { "base_version_required": "R03-1.1" },
+
+  "core_concept": {
+    "summary": "각자의 상처와 비밀을 가진 인물들이 '사루라 기숙사'라는 따뜻한 성역에 모여, 유쾌하게 부딪히고 서로를 위로하며 하나의 공동체를 이루는 이야기.",
+    "genre": "일상 판타지 시트콤, 멀티 장르",
+    "themes": ["숨겨진 과거", "운명과 선택", "구원과 성장", "만들어진 가족", "반전 매력"]
+  },
+
+  "system_overrides": {
+    "rules_are_advisory_only": true,
+    "soft_constraints_to_dialogue": true,
+    "description": "모든 규칙은 '안내/연출' 용도이며, 시스템 차단은 하지 않는다. 예외 입장은 서사/대사로 합리화한다."
+  },
+
+  "runtime_extensions": {
+    "allow_ad_hoc_realms": true,
+    "allow_ad_hoc_locations": true,
+    "allow_rule_overrides": true,
+    "notes": "플레이 중 즉석으로 세계/장소를 창설해도 무방. 캐릭터가 인지하고 대사/행동으로 반영."
+  },
+
+  "presence_hint": {
+    "supports_remote": true,
+    "common_mediums": ["전화", "무전", "메신저", "스피커/확성기", "환영/투영(마법)", "원격 드론(테크)"],
+    "ui_text_examples": { "nearby": "같은 장소", "remote": "원격 참여", "offscene": "대기" }
+  },
+
+  "realms": [
+    { "id": "saurura", "name": "사루라 월드(본편)", "default": true, "era": "중세풍/근대 혼합", "tech_level": "마법·증기 혼합" },
+    { "id": "modern_urban", "name": "현대 도시", "default": false, "era": "현대", "tech_level": "디지털/IoT" },
+    { "id": "space_opera", "name": "성간(星間) 우주", "default": false, "era": "원거리 미래", "tech_level": "FTL/우주공학" },
+    { "id": "dreamscape", "name": "드림스케이프(꿈/환상)", "default": false, "era": "비선형", "tech_level": "메타포/상징" },
+    { "id": "parallel_dark", "name": "평행 세계(다크 판타지)", "default": false, "era": "중세 암흑기", "tech_level": "저마력/폐허" }
+  ],
+
+  "main_stage": {
+    "name": "사루라 기숙사",
+    "full_name": "사루라 왕립 여자학교 17호관 그레마일",
+    "background": "루크가 막대한 체납 세금을 갚기 위해 저택을 기숙사로 개조했으며, 크래더의 협상으로 학교의 공식 허가를 받았다.",
+    "staff": {
+      "founder_manager": "루크",
+      "security_chief_self_proclaimed": "크래더",
+      "school_supervisor": "라이니"
+    },
+    "locations": [
+      { "name": "라운지", "description": "낡았지만 푹신한 소파와 따뜻한 벽난로가 있는 기숙사의 심장. 항상 은은한 커피 향과 빵 냄새가 감도는, 모두가 자연스럽게 모여드는 공간.", "tags": ["공용공간", "휴식", "사교", "메인"] },
+      { "name": "주방", "description": "레베카의 성역. 그녀의 허락 없이는 출입이 어렵지만, 그녀가 만든 요리는 기숙사 최고의 행복을 선사한다.", "tags": ["요리", "레베카", "제한구역"] },
+      { "name": "지하 노천탕", "description": "기숙사의 자랑. 김이 모락모락 피어오르는 온천수는 심신의 피로를 풀어주는 치유의 공간. (원칙적으로 남성 출입 금지)", "tags": ["휴식", "치유", "여성전용"] },
+      { "name": "령의 연구실", "description": "온갖 기계 부품과 설계도로 가득 찬 혼돈의 공간. 가끔 작은 폭발음이 들려온다.", "tags": ["연구", "령", "위험"] },
+      { "name": "옥상 정원", "description": "세리카가 가꾸는 작은 정원. 라벤더와 들꽃들이 피어있으며, 고민이 있는 자들이 조언을 구하기 위해 그녀를 찾아오는 장소.", "tags": ["휴식", "비밀이야기", "세리카"] },
+      { "name": "다락방 서재", "description": "삐걱거리는 나무 계단 끝에 있는 비밀스러운 공간. 먼지 쌓인 고서들과 별을 볼 수 있는 작은 천창이 있어, 조용히 연구하거나 비밀스러운 대화를 나누기에 좋다.", "tags": ["비밀장소", "연구", "학문"] },
+      { "name": "캐릭터 개인실", "description": "각 캐릭터의 성격과 비밀이 묻어나는 개인적인 공간. (예: 루크의 방은 소박하고 깔끔하며, 라이니의 방은 화려하고 값비싼 물건으로 가득 차 있다.)", "tags": ["개인공간", "일상", "캐릭터성"] },
+
+      { "id": "saurura_boiler_room", "name": "보일러·온천 설비실", "description": "온천과 난방을 책임지는 심장부. 뜨거운 증기와 금속 냄새. 루크가 가장 자주 드나드는 정비 구역.", "tags": ["정비", "루크", "설비", "안전점검"], "entry_policy": { "mode": "advisory", "notes": "관계자 권고 구역. 필요시 동행/허가로 입장 가능." }, "ambient_sfx": ["steam_hiss", "metal_clank"] },
+      { "id": "saurura_infirmary", "name": "간이 의무실", "description": "상비약과 간단한 치료 도구가 정돈된 작은 방. 세리카와 테피가 번갈아 상담을 봐주기도 한다.", "tags": ["치유", "상담", "세리카", "테피"], "entry_policy": { "mode": "advisory" }, "ambient_sfx": ["soft_breeze", "paper_rustle"] },
+      { "id": "saurura_music_room", "name": "음악실(피아노·하프)", "description": "낡은 업라이트 피아노와 하프, 작은 오르골. 세리카의 잊힌 멜로디가 가끔 흘러나온다.", "tags": ["음악", "세리카", "비밀단서"], "entry_policy": { "mode": "advisory" }, "ambient_sfx": ["piano_soft", "wind_chime"] },
+      { "id": "saurura_inner_courtyard", "name": "안뜰(중정)", "description": "라벤더와 들꽃이 피어있는 작은 중정. 낮에는 새소리, 밤에는 별빛.", "tags": ["휴식", "대화", "세리카", "마리"], "entry_policy": { "mode": "advisory" }, "ambient_sfx": ["birds_day", "crickets_night"] },
+      { "id": "saurura_attic_hidden_passage", "name": "다락 비밀통로", "description": "서재 책장 뒤로 이어지는 좁은 복도. 오래된 초와 낡은 그림들. 과거의 흔적.", "tags": ["비밀장소", "탐험", "미스터리"], "entry_policy": { "mode": "advisory", "notes": "감독자 동행 권고." }, "ambient_sfx": ["floor_creak", "distant_whisper"] },
+      { "id": "saurura_rooftop_observatory", "name": "옥상 소천문대", "description": "소형 망원경과 별자리 지도. 밤마다 하늘을 올려다보며 마음을 고른다.", "tags": ["야경", "명상", "령", "네르", "세리카"], "entry_policy": { "mode": "advisory" }, "ambient_sfx": ["night_wind", "distant_city"] },
+      { "id": "saurura_courts", "name": "운동장·코트", "description": "간이 배드민턴/펜싱/체조가 가능한 넓은 마당. 체니의 고음이 자주 울려 퍼진다.", "tags": ["훈련", "승부", "체니", "네르"], "entry_policy": { "mode": "advisory" }, "ambient_sfx": ["shouts_far", "leaves_rustle"] },
+      { "id": "saurura_garden_shed", "name": "정원 창고", "description": "원예도구와 잡동사니가 가득한 작은 창고. 라벨 없는 상자에서 과거의 단서가 나올지도.", "tags": ["창고", "단서", "잡동사니"], "entry_policy": { "mode": "advisory", "notes": "관계자 권고." }, "ambient_sfx": ["key_jingle", "dust_mote"] }
+    ]
+  },
+
+  "external_locations": {
+    "city_name": "레기스 시(市)",
+    "locations": [
+      { "name": "밀라이노 마법도구점", "description": "테피가 운영하는 신비로운 가게. 기묘한 약초와 마법 스크롤, 반짝이는 아티팩트로 가득. 샐리가 자주 놀러 와 카운터에서 낮잠.", "tags": ["상점", "마법", "테피", "샐리"] },
+      { "name": "시끌벅적한 시장", "description": "신선한 식재료부터 수상한 밀수품까지 모든 것이 거래되는 활기찬 장소. 새로운 만남과 정보, 그리고 소매치기를 조심.", "tags": ["사교", "정보", "상업지구"] },
+      { "name": "오래된 대성당", "description": "레기스 시 외곽의 고요한 성당. 스테인드글라스 사이로 빛이 스며드는 성스러운 분위기. 네르 수련/세리카 명상에 적합.", "tags": ["종교", "수련", "네르", "세리카"] },
+      { "name": "뒷골목의 선술집 '녹슨 톱니바퀴'", "description": "용병과 정보상들이 모이는 소란스러운 술집. 크래더와 샐리의 최애 장소. 돈만 주면 어떤 정보든 산다는 소문.", "tags": ["유흥", "정보", "크래더", "샐리"] },
+
+      { "id": "regis_school_main", "name": "사루라 여학교 본관", "description": "겉은 웅장, 내부는 오래된 설비가 많은 학교의 중심동. 규율과 전통의 상징.", "tags": ["학교", "규율", "라이니"], "entry_policy": { "mode": "advisory" } },
+      { "id": "regis_grand_library", "name": "대도서관", "description": "고대 언어·마법 논문이 보관된 지하 열람실로 유명. 어떤 장서는 스스로 목차를 펼친다.", "tags": ["연구", "비밀장소", "세리카", "테피"], "entry_policy": { "mode": "advisory", "notes": "감독자 동행 권고." } },
+      { "id": "regis_tram_stop", "name": "전차 정류장(그레마일 앞)", "description": "사루라 전차 노선의 소박한 정류장. 시장과 항만으로 이어진다.", "tags": ["교통", "이동", "시민"], "entry_policy": { "mode": "advisory" } },
+      { "id": "regis_riverside_walk", "name": "강가 산책로", "description": "석양이 길게 드리운다. 고민 상담과 데이트의 명소.", "tags": ["휴식", "대화", "로맨스"], "entry_policy": { "mode": "advisory" } },
+      { "id": "regis_cafe_row", "name": "카페 거리", "description": "각자의 사연이 모이는 소도시의 명물 거리. 소문과 가십이 빠르게 돈다.", "tags": ["사교", "정보", "샐리"], "entry_policy": { "mode": "advisory" } },
+      { "id": "regis_port_docks", "name": "항만 부두", "description": "외지인과 물자가 드나드는 관문. 때때로 수상한 화물이 하역된다.", "tags": ["상업", "정보", "모험"], "entry_policy": { "mode": "advisory" } },
+      { "id": "regis_rail_station", "name": "철도역", "description": "멀리서 온 편지와 사람이 만나는 곳. 새로운 장의 시작점.", "tags": ["교통", "만남", "이별"], "entry_policy": { "mode": "advisory" } },
+      { "id": "regis_cathedral_ruin", "name": "외곽 폐성당", "description": "드물게 종이 울린다는 소문. 네르가 수련하기 좋은 고요한 장소.", "tags": ["종교", "수련", "미스터리"], "entry_policy": { "mode": "advisory" } }
+    ]
+  },
+
+  "world_rules": {
+    "magic_and_tech": [
+      { "name": "성기사단의 권능", "description": "신에 대한 강한 믿음을 기반으로 신체 능력을 강화하거나 검에 신성한 기운을 담아 방출하는 기술." },
+      { "name": "마녀 연합의 규칙", "description": "마녀는 '사랑'에 빠지면 마력을 잃거나 생명이 위험해질 수 있으며, 대마녀는 후계자에게 지위를 넘겨주는 순간 소멸한다." }
+    ],
+    "social_rules": [
+      { "name": "실제 나이 서열", "description": "캐릭터들은 실제 나이에 따른 상호작용을 중요하게 생각한다. 서열: (어림) 체니 < 레베카/령/네르 < 루크/마리/세리카 < 샐리/테피 < 라이니 < 크래더 (많음)" },
+      { "name": "호칭 규칙", "description": "기본적으로 '외견상 나이'를 기준으로 상대를 대하지만, 관계가 발전하면 실제 나이나 지위에 맞는 호칭으로 점차 변화한다." }
+    ]
+  },
+
+  "secret_lore": [
+    { "topic": "크래더와 루크의 관계", "content": "크래더의 모든 행동은 멸망한 쿠르드 왕국의 마지막 여왕 세리카의 아들인 루크를 지키라는 유언을 따르는 데 있다." },
+    { "topic": "세리카와 루크의 관계", "content": "세리카는 루크가 자신의 아들이라는 사실을 모르지만, 그에게 본능적인 모성애를 느낀다. 루크 역시 세리카에게서 꿈에서 본 어머니의 모습을 느끼며 신비로운 안정감을 느낀다." },
+    { "topic": "크래더, 테피, 샐리의 관계", "content": "세 사람은 마녀의 숲에서 함께 자란 소꿉친구 같은 사이이다. 테피는 크래더를 오랫동안 짝사랑해왔으며, 샐리는 그런 테피를 구박하면서도 가장 아끼는 둘도 없는 친구이다." }
+  ],
+
+  "presets": {
+    "entry_policies": {
+      "female_bath_advisory": {
+        "gender": "female_only",
+        "mode": "advisory",
+        "notes": "원칙적으로 여성 전용. 상황에 따라 예외 허용(수리/안전/의무).",
+        "exceptions": [
+          { "who_hint": ["루크", "크래더", "플레이어"], "reason": "수리/안전 점검/응급", "token": "maintenance_pass" }
+        ]
+      },
+      "staff_only_advisory": { "role": "staff_only", "mode": "advisory", "notes": "관계자 외 출입 자제 권고. 필요시 동행/허가로 입장." },
+      "restricted_research_advisory": { "role": "researchers_or_escort", "mode": "advisory", "notes": "위험/보안 구역. 감독자 동행 권고." },
+      "public_open": { "mode": "advisory", "notes": "누구나 자유롭게 방문 가능." }
+    }
+  },
+
+  "realm_locations": {
+    "modern_urban": [
+      { "id": "modern_city_center", "name": "신시가지 광장", "description": "거대한 LED 스크린과 분수가 있는 도심의 허브.", "tags": ["도시", "사교", "정보"], "entry_policy": { "mode": "advisory" } },
+      { "id": "modern_subway_hub", "name": "메트로 환승센터", "description": "언제나 붐비는 지하 세계. 잃어버린 물건과 소문이 모인다.", "tags": ["교통", "소문", "군중"], "entry_policy": { "mode": "advisory" } },
+      { "id": "modern_hospital", "name": "도시 종합병원", "description": "미묘한 밤의 기척이 느껴지는 응급실과 옥상 헬리패드.", "tags": ["치유", "긴급", "비밀"], "entry_policy": { "mode": "advisory" } },
+      { "id": "modern_vr_arcade", "name": "VR 아케이드 'NEXUS'", "description": "오락과 연구가 공존하는 공간. 가상과 현실의 경계가 흐릿해진다.", "tags": ["오락", "테크", "실험"], "entry_policy": { "mode": "advisory" } }
+    ],
+    "space_opera": [
+      { "id": "space_calliope_station", "name": "궤도정거장 '칼리오페'", "description": "도킹 베이와 네온 간판이 어우러진 환승 허브. 모든 행성의 이야기가 모인다.", "tags": ["우주", "환승", "모험"], "entry_policy": { "mode": "advisory" }, "ambient_sfx": ["station_hum", "comms_chatter"] },
+      { "id": "space_ftl_bridge", "name": "FTL 함선 함교", "description": "별빛이 선형으로 늘어지는 순간, 모든 결정이 무게를 가진다.", "tags": ["지휘", "결정", "중압감"], "entry_policy": { "mode": "advisory" } },
+      { "id": "space_zero_g_garden", "name": "무중력 정원", "description": "떠다니는 물방울과 공중의 잎사귀. 조용한 고백이 어울리는 공간.", "tags": ["휴식", "로맨스", "명상"], "entry_policy": { "mode": "advisory" } }
+    ],
+    "dreamscape": [
+      { "id": "dream_loop_corridor", "name": "루프의 꿈길", "description": "같은 문을 통과해도 매번 다른 장면이 펼쳐진다.", "tags": ["비선형", "상징", "자아"], "entry_policy": { "mode": "advisory" } },
+      { "id": "dream_mirror_library", "name": "거울의 도서관", "description": "책장이 스스로 질문한다. '무엇을 잊고 싶니?'", "tags": ["기억", "선택", "비밀"], "entry_policy": { "mode": "advisory" } }
+    ],
+    "parallel_dark": [
+      { "id": "dark_shattered_keep", "name": "부서진 성채", "description": "검은 안개와 꺼지지 않는 횃불. 과거가 맴돈다.", "tags": ["폐허", "위험", "서사"], "entry_policy": { "mode": "advisory" } },
+      { "id": "dark_mausoleum", "name": "묘실 미궁", "description": "한 걸음마다 기억을 잃는다. 두 걸음마다 진실에 다가선다.", "tags": ["미스터리", "공포", "의식"], "entry_policy": { "mode": "advisory" } }
+    ]
+  },
+
+  "travel_graph": {
+    "notes": "차단용이 아니라 장면 전환 시간/수단 연출 힌트.",
+    "edges": [
+      { "from": "라운지", "to": "전차 정류장(그레마일 앞)", "method": "도보", "approx_time_min": 6 },
+      { "from": "전차 정류장(그레마일 앞)", "to": "카페 거리", "method": "전차", "approx_time_min": 10 },
+      { "from": "카페 거리", "to": "항만 부두", "method": "도보", "approx_time_min": 12 },
+      { "from": "라운지", "to": "대도서관", "method": "도보", "approx_time_min": 15 },
+      { "from": "라운지", "to": "지하 노천탕", "method": "내부 통로", "approx_time_min": 3 }
+    ]
+  },
+
+  "event_seeds": [
+    { "id": "daily_bread_oven", "title": "빵 굽는 날", "beats": ["레베카가 대량의 반죽을 준비한다", "체니가 장난치다 반죽 폭발 위기", "루크와 플레이어가 오븐 수리/운반 지원", "마지막 한 판에서 과거의 향기가 떠오른다(세리카 단서)"], "tones": ["힐링", "소동", "미상기억"] },
+    { "id": "mystery_whisper", "title": "책장 속 속삭임", "beats": ["다락 비밀통로에서 낮게 울리는 속삭임", "령이 기록장치를 설치", "네르가 순찰을 강화", "속삭임은 사실 오래된 자장가의 가사 조각"], "tones": ["미스터리", "노스텔지어"] },
+    { "id": "festival_night", "title": "레기스 축제의 밤", "beats": ["카페 거리 퍼레이드", "항만 불꽃놀이", "라이니의 ‘무작위 인터뷰’ 이벤트", "크래더의 수상한 경품 통(?)"], "tones": ["축제", "로맨스", "소동"] },
+    { "id": "crisis_leak", "title": "온천 밸브 누수", "beats": ["증기가 과하게 새어 나옴", "보일러실 긴급점검(예외 입장 합리화)", "테피의 응급 봉인/샐리의 현장 통제", "사건 뒤에 누군가 남긴 표식 발견"], "tones": ["긴장", "협동", "단서"] }
+  ],
+
+  "random_tables": {
+    "time_of_day": ["새벽", "아침", "한낮", "해질녘", "밤", "심야"],
+    "weather": ["맑음", "얕은 안개", "잔비", "소나기", "강풍", "첫눈"],
+    "ambient_sfx": ["벽난로 타닥", "머그잔 놓는 소리", "먼 발자국", "달빛 벌레소리", "멀리서 웃음소리"]
+  },
+
+  "items_and_tokens": [
+    {
+      "id": "maintenance_pass",
+      "name": "정비 허가패",
+      "kind": "token",
+      "grants_entry_exceptions": [
+        { "id_hint": "saurura_boiler_room" },
+        { "name_hint": "지하 노천탕" }
+      ],
+      "narrative_effects": ["예외 입장 대사를 합리화", "정비/안전 관련 역할 부여"]
+    },
+    {
+      "id": "dorm_master_key",
+      "name": "그레마일 마스터키",
+      "kind": "key",
+      "grants_entry_exceptions": [
+        { "id_hint": "saurura_attic_hidden_passage" },
+        { "id_hint": "saurura_garden_shed" }
+      ],
+      "narrative_effects": ["비밀장소 접근의 합리적 근거", "분실/회수 에피소드에 활용 가능"]
+    },
+    {
+      "id": "lullaby_music_box",
+      "name": "잊힌 자장가 오르골",
+      "kind": "artifact",
+      "narrative_effects": ["세리카/루크 기억 공명", "드림스케이프 진입 트리거"]
+    }
+  ]
+}
