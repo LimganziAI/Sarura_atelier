@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+flask_sessions/*
+!flask_sessions/.gitkeep
+sessions/*
+!sessions/.gitkeep
+shared_novels/*
+!shared_novels/.gitkeep
+*.egg-info/
+.env
