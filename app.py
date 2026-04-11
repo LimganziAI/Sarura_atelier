@@ -3,7 +3,7 @@ Sarura Atelier — Local Flask Backend (R03.11+ compatible)
 Uses google-genai SDK, matching the reference Colab backend architecture.
 """
 
-import os, json, re, uuid, copy, time, threading, logging
+import os, json, re, uuid, copy, time, threading, logging, random
 from pathlib import Path
 from datetime import datetime
 from collections import deque
@@ -153,8 +153,17 @@ def get_session_lock(sid: str) -> threading.RLock:
         return _session_locks[sid]
 
 
+def _sanitize_sid(sid: str) -> str:
+    """Sanitize session ID to prevent path traversal."""
+    return re.sub(r"[^a-zA-Z0-9_\-]", "", sid)
+
+
 def session_path(sid: str) -> Path:
-    return SESSIONS_DIR / f"{sid}.json"
+    safe_sid = _sanitize_sid(sid)
+    p = (SESSIONS_DIR / f"{safe_sid}.json").resolve()
+    if not p.is_relative_to(SESSIONS_DIR.resolve()):
+        raise ValueError("Invalid session ID")
+    return p
 
 
 def now_ts() -> str:
@@ -700,7 +709,6 @@ def bootstrap():
     final_cast = normalize_cast(user_selected, player_name)
 
     if not final_cast:
-        import random
         pool = [n for n in CHARACTERS_DB.keys() if n != player_name]
         if not pool:
             return jsonify({"status": "error", "message": "No available NPCs."}), 409
@@ -772,7 +780,6 @@ def execute_turn():
 
         me = get_player_name(s)
         if not s.get("on_screen"):
-            import random
             pool = [n for n in CHARACTERS_DB.keys() if n != me]
             if not pool:
                 return jsonify({"status": "error", "message": "사용 가능한 NPC가 없습니다."}), 409
