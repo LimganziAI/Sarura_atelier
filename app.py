@@ -509,7 +509,8 @@ def get_characters():
         chars = load_characters_db()
         return jsonify(chars)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"get_characters error: {e}")
+        return jsonify({"error": "캐릭터 데이터를 불러올 수 없습니다."}), 500
 
 
 @app.route("/api/world")
@@ -518,7 +519,8 @@ def get_world():
         world = load_world_db()
         return jsonify(world)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"get_world error: {e}")
+        return jsonify({"error": "세계관 데이터를 불러올 수 없습니다."}), 500
 
 
 @app.route("/api/start-session", methods=["POST"])
@@ -574,7 +576,7 @@ def start_session():
         return jsonify({"session_id": sid, "character": char, "session_data": session_data})
     except Exception as e:
         logging.error(f"start-session error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "세션을 시작할 수 없습니다."}), 500
 
 
 @app.route("/api/send-turn", methods=["POST"])
@@ -688,7 +690,7 @@ def send_turn():
         return jsonify(response_data)
     except Exception as e:
         logging.error(f"send-turn error: {e}")
-        return jsonify({"error": str(e), "dialogue": "(오류가 발생했습니다…)"}), 500
+        return jsonify({"error": "처리 중 오류가 발생했습니다.", "dialogue": "(오류가 발생했습니다…)"}), 500
 
 
 @app.route("/api/session-state")
@@ -710,7 +712,8 @@ def get_session_state():
         )
         return jsonify(data_copy)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"session-state error: {e}")
+        return jsonify({"error": "세션 상태를 불러올 수 없습니다."}), 500
 
 
 @app.route("/api/hot-swap", methods=["POST"])
@@ -741,7 +744,8 @@ def hot_swap():
             {"status": "ok", "core4": data["core4"], "relationship": data["relationship"]}
         )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"hot-swap error: {e}")
+        return jsonify({"error": "핫스왑 처리 중 오류가 발생했습니다."}), 500
 
 
 @app.route("/api/save-novel", methods=["POST"])
@@ -764,25 +768,34 @@ def save_novel():
 
         return jsonify({"novel_id": novel_id, "status": "saved"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"save-novel error: {e}")
+        return jsonify({"error": "소설 저장 중 오류가 발생했습니다."}), 500
 
 
 @app.route("/api/load-novel/<novel_id>")
 def load_novel(novel_id):
     try:
+        # Sanitize and validate novel_id
         novel_id = re.sub(r"[^a-zA-Z0-9_-]", "", novel_id)
-        novel_path = SHARED_NOVELS_DIR / f"{novel_id}.json"
+        if not novel_id:
+            return jsonify({"error": "유효하지 않은 소설 ID입니다."}), 400
+        novel_path = (SHARED_NOVELS_DIR / f"{novel_id}.json").resolve()
+        # Ensure the resolved path is still within SHARED_NOVELS_DIR
+        if not str(novel_path).startswith(str(SHARED_NOVELS_DIR.resolve())):
+            return jsonify({"error": "유효하지 않은 경로입니다."}), 400
         if not novel_path.exists():
             return jsonify({"error": "소설을 찾을 수 없습니다."}), 404
         data = json.loads(novel_path.read_text(encoding="utf-8"))
         return jsonify(data)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"load-novel error: {e}")
+        return jsonify({"error": "소설 불러오기 중 오류가 발생했습니다."}), 500
 
 
 @app.errorhandler(500)
 def internal_error(e):
-    return jsonify({"error": "서버 내부 오류", "details": str(e)}), 500
+    logging.error(f"Internal server error: {e}")
+    return jsonify({"error": "서버 내부 오류가 발생했습니다."}), 500
 
 
 if __name__ == "__main__":
