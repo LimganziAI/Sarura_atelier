@@ -1,0 +1,89 @@
+{
+  "world_name": "사루라 아뜨리에",
+  "core_concept": {
+    "summary": "기숙사 '사루라 아뜨리에'를 배경으로 한 판타지 비주얼 노벨. 다양한 개성의 거주자들이 얽히는 일상과 비밀.",
+    "genre": ["판타지", "슬라이스 오브 라이프", "로맨스", "미스터리"],
+    "themes": ["성장", "비밀과 신뢰", "왕국의 유산", "마법과 과학의 공존", "인연"]
+  },
+  "main_stage": {
+    "name": "사루라 기숙사",
+    "description": "레기스 시 외곽에 위치한 오래된 기숙사. 마법사, 기사, 상인, 학생 등 다양한 인물들이 거주.",
+    "locations": [
+      {"id": "lounge", "name_ko": "라운지", "description": "기숙사 1층 공용 휴게 공간. 낡은 소파와 벽난로가 있다."},
+      {"id": "kitchen", "name_ko": "주방", "description": "공용 주방. 루크가 자주 요리하는 공간."},
+      {"id": "hot_spring", "name_ko": "지하 노천탕", "description": "건물 지하의 온천. 성별 구분 없이 사용하는 혼탕이지만 시간대를 나눈다."},
+      {"id": "lab", "name_ko": "령의 연구실", "description": "령이 기계와 마법도구를 연구하는 비밀 공간."},
+      {"id": "rooftop_garden", "name_ko": "옥상 정원", "description": "옥상에 조성된 작은 정원. 테피가 허브를 키운다."},
+      {"id": "attic_library", "name_ko": "다락방 서재", "description": "오래된 책들이 가득한 다락방."},
+      {"id": "personal_rooms", "name_ko": "캐릭터 개인실", "description": "각 거주자의 개인 방."},
+      {"id": "boiler_room", "name_ko": "보일러실", "description": "크래더가 자주 숨어 있는 곳. 실제로는 무기 창고를 겸함."},
+      {"id": "infirmary", "name_ko": "간이 의무실", "description": "레베카가 관리하는 소규모 의무실."},
+      {"id": "music_room", "name_ko": "음악실", "description": "오래된 피아노와 악기들이 있는 방."},
+      {"id": "courtyard", "name_ko": "안뜰", "description": "기숙사 중앙의 안뜰. 체니가 운동하는 공간."},
+      {"id": "secret_passage", "name_ko": "다락 비밀통로", "description": "건물 내부를 연결하는 비밀 통로."},
+      {"id": "observatory", "name_ko": "옥상 소천문대", "description": "간이 망원경이 설치된 소형 관측소."},
+      {"id": "sports_field", "name_ko": "운동장", "description": "기숙사 옆의 작은 운동장."},
+      {"id": "garden_shed", "name_ko": "정원 창고", "description": "도구들이 보관된 정원 창고."}
+    ]
+  },
+  "external_locations": {
+    "city": "레기스 시",
+    "places": [
+      {"id": "magic_shop", "name_ko": "밀라이노 마법도구점", "description": "샐리가 운영하는 마법도구 상점."},
+      {"id": "market", "name_ko": "시장", "description": "레기스 시의 중앙 시장."},
+      {"id": "cathedral", "name_ko": "대성당", "description": "성기사단 본부가 위치한 대성당."},
+      {"id": "tavern", "name_ko": "선술집", "description": "크래더가 낮잠을 자는 단골 선술집."},
+      {"id": "school_main", "name_ko": "학교 본관", "description": "기숙사 학생들이 다니는 학교 본관."},
+      {"id": "library", "name_ko": "대도서관", "description": "레기스 시의 대형 도서관."},
+      {"id": "tram_stop", "name_ko": "전차 정류장", "description": "시내 전차 정류장."},
+      {"id": "riverside", "name_ko": "강가 산책로", "description": "조용한 강가 산책로."},
+      {"id": "cafe_street", "name_ko": "카페 거리", "description": "다양한 카페가 늘어선 거리."},
+      {"id": "harbor", "name_ko": "항만 부두", "description": "레기스 시의 항구. 레베카의 과거와 연결된다."},
+      {"id": "train_station", "name_ko": "철도역", "description": "도시 외곽으로 연결되는 철도역."},
+      {"id": "ruined_chapel", "name_ko": "외곽 폐성당", "description": "도시 외곽의 오래된 폐성당. 비밀 집회 장소."}
+    ]
+  },
+  "world_rules": {
+    "magic_and_tech": [
+      "성기사단의 권능: 기사들은 '각인'이라 불리는 마법 계약을 통해 특수 능력을 부여받는다.",
+      "마녀 연합의 규칙: 마녀들은 '계약의 서'에 의해 인간의 기억을 직접 조작할 수 없다.",
+      "마법과 증기기술이 공존하는 세계. 전차와 마법진이 함께 존재한다."
+    ],
+    "social_rules": [
+      "나이 서열: 어른을 경칭으로 부르는 문화가 강함.",
+      "호칭 규칙: 친밀도에 따라 이름, 별명, 경칭이 달라진다."
+    ]
+  },
+  "secret_lore": [
+    "크래더-루크 관계: 크래더는 죽은 쿠르트 왕국 왕비의 부탁으로 루크를 숨겨 키운 기사다.",
+    "세리카-루크 관계: 세리카는 기억을 잃은 쿠르트 왕국의 왕비이자 루크의 친어머니다.",
+    "크래더-테피-샐리 관계: 세 사람은 어린 시절 같은 마을 출신이며 테피의 크래더에 대한 짝사랑은 16년째다."
+  ],
+  "time_system": {"display": "1일차 오후", "day": 1, "hour": 14, "minute": 0},
+  "realms": [
+    {
+      "id": "modern_urban",
+      "name_ko": "현대 도시",
+      "description": "현대 한국 도시 배경 AU",
+      "locations": ["학교", "편의점", "카페", "공원", "지하철역"]
+    },
+    {
+      "id": "space_opera",
+      "name_ko": "우주 오페라",
+      "description": "우주선과 행성 간 여행이 있는 SF 배경 AU",
+      "locations": ["우주선 함교", "우주정거장", "행성 기지", "하이퍼스페이스"]
+    },
+    {
+      "id": "dreamscape",
+      "name_ko": "꿈의 세계",
+      "description": "꿈과 현실의 경계가 흐릿한 초현실 배경",
+      "locations": ["부유하는 섬", "뒤집힌 숲", "거울 미궁", "시간의 탑"]
+    },
+    {
+      "id": "parallel_dark",
+      "name_ko": "평행 암흑 세계",
+      "description": "같은 캐릭터들이 어둠에 물든 평행 세계",
+      "locations": ["폐허 도시", "지하 아레나", "마왕성", "금지된 연구소"]
+    }
+  ]
+}
