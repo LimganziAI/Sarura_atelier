@@ -222,6 +222,10 @@ input[type=range] { accent-color: #4a6; }
 </div>
 
 <script>
+// ===== Constants =====
+const TYPEWRITER_CPS = 22;
+const MAX_RECENT_SESSIONS = 5;
+
 // ===== State =====
 const state = {
   characters: [],
@@ -629,7 +633,7 @@ function appendCharMsg(char, dialogue, action, emotion, monologue, tags, typewri
   log.appendChild(wrapper);
 
   if (typewrite) {
-    typewriteEffect(dialogueEl, dialogue, 22);
+    typewriteEffect(dialogueEl, dialogue, TYPEWRITER_CPS);
   } else {
     dialogueEl.textContent = dialogue;
   }
@@ -732,7 +736,7 @@ async function loadNovel() {
 function saveToRecentSessions(sid, charName, scenario) {
   const recent = JSON.parse(localStorage.getItem('recentSessions') || '[]');
   recent.unshift({ id: sid, charName: charName, scenario: scenario, time: new Date().toLocaleString() });
-  localStorage.setItem('recentSessions', JSON.stringify(recent.slice(0, 5)));
+  localStorage.setItem('recentSessions', JSON.stringify(recent.slice(0, MAX_RECENT_SESSIONS)));
   loadRecentSessions();
 }
 

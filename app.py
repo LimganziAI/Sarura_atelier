@@ -25,6 +25,10 @@ MODEL_DIMA = "gemini-2.5-flash"
 MODEL_MAESTRO = "gemini-2.5-pro"
 MODEL_NANO = "gemini-2.5-flash-preview-04-17"
 
+MAX_HISTORY_LENGTH = 10
+MAX_CORE_PINS = 20
+MAESTRO_UPDATE_FREQUENCY = 4
+
 app = Flask(__name__)
 app.secret_key = os.urandom(32)
 app.config["SESSION_TYPE"] = "filesystem"
@@ -412,7 +416,7 @@ def maestro_background_task(sid, char, session_data_snapshot):
             if "new_core_pins" in result:
                 pins = data.get("core_pins", [])
                 pins.extend(result["new_core_pins"])
-                data["core_pins"] = pins[-20:]
+                data["core_pins"] = pins[-MAX_CORE_PINS:]
 
             save_session_file(sid, data)
     except Exception as e:
@@ -649,15 +653,15 @@ def send_turn():
                     "action": dima_result.get("action", ""),
                 }
             )
-            if len(history) > 10:
-                history = history[-10:]
+            if len(history) > MAX_HISTORY_LENGTH:
+                history = history[-MAX_HISTORY_LENGTH:]
             session_data["history"] = history
             session_data["turn_count"] = session_data.get("turn_count", 0) + 1
 
             save_session_file(sid, session_data)
 
         turn_count = session_data["turn_count"]
-        if turn_count % 4 == 0:
+        if turn_count % MAESTRO_UPDATE_FREQUENCY == 0:
             t = threading.Thread(
                 target=maestro_background_task,
                 args=(sid, char, dict(session_data)),
@@ -782,8 +786,8 @@ def load_novel(novel_id):
         # Build the path entirely from the safe id and resolve to detect traversal
         safe_dir = SHARED_NOVELS_DIR.resolve()
         novel_path = (safe_dir / (safe_id + ".json")).resolve()
-        # Parent must equal the novels directory exactly
-        if novel_path.parent != safe_dir:
+        # Use is_relative_to for robust traversal protection (Python 3.9+)
+        if not novel_path.is_relative_to(safe_dir):
             return jsonify({"error": "유효하지 않은 경로입니다."}), 400
         if not novel_path.exists():
             return jsonify({"error": "소설을 찾을 수 없습니다."}), 404
