@@ -1,34 +1,61 @@
-import os, json, re, base64, threading, time, uuid, logging
+"""
+사루라 아뜨리에 — Multi-Character Ensemble Theater Backend
+D.I.M.A (Director-level Interactive Multi-character Actor) system.
+
+All NPC characters are played simultaneously by the LLM. The response
+format is a JSON script array with narration and dialogue blocks.
+"""
+
+import os
+import json
+import re
+import uuid
+import threading
+import time
+import logging
+import copy
+import traceback
 from collections import deque
 from pathlib import Path
 from datetime import datetime
+
 from flask import Flask, request, jsonify, render_template, session
 from flask_session import Session
 from flask_cors import CORS
 from google import genai
 from google.genai import types as genai_types
-from PIL import Image
-import io
 
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent
 SESSIONS_DIR = BASE_DIR / "sessions"
 SHARED_NOVELS_DIR = BASE_DIR / "shared_novels"
 FLASK_SESSIONS_DIR = BASE_DIR / "flask_sessions"
 
-for d in [SESSIONS_DIR, SHARED_NOVELS_DIR, FLASK_SESSIONS_DIR]:
-    d.mkdir(exist_ok=True)
+for _d in [SESSIONS_DIR, SHARED_NOVELS_DIR, FLASK_SESSIONS_DIR]:
+    _d.mkdir(exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# API key
+# ---------------------------------------------------------------------------
 API_KEY_FILE = BASE_DIR / "api_keys.txt"
-GEMINI_API_KEY = API_KEY_FILE.read_text().strip() if API_KEY_FILE.exists() else os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = (
+    API_KEY_FILE.read_text().strip() if API_KEY_FILE.exists()
+    else os.environ.get("GEMINI_API_KEY", "")
+)
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 MODEL_DIMA = "gemini-2.5-flash"
-MODEL_MAESTRO = "gemini-2.5-pro"
-MODEL_NANO = "gemini-2.5-flash-preview-04-17"
-
+MODEL_MAESTRO = "gemini-2.5-flash"
 MAX_HISTORY_LENGTH = 10
-MAX_CORE_PINS = 20
 MAESTRO_UPDATE_FREQUENCY = 4
 
+# ---------------------------------------------------------------------------
+# Flask app
+# ---------------------------------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.urandom(32)
 app.config["SESSION_TYPE"] = "filesystem"
@@ -39,13 +66,21 @@ Session(app)
 
 logging.basicConfig(level=logging.INFO)
 
+# ---------------------------------------------------------------------------
+# Gemini client
+# ---------------------------------------------------------------------------
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
 _rate_lock = threading.Lock()
-_call_timestamps = deque(maxlen=9)
+_call_timestamps: deque = deque(maxlen=9)
 _last_call_time = 0.0
 
 
 def rate_limited_call(func):
-    """Wrapper for rate-limited LLM calls with exponential backoff."""
+    """Decorator that enforces 2 s min-interval and 9-calls-per-60 s cap."""
     global _last_call_time
 
     def wrapper(*args, **kwargs):
@@ -73,13 +108,42 @@ def rate_limited_call(func):
                         raise
                 else:
                     raise
-
+        return None
     return wrapper
 
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+# ---------------------------------------------------------------------------
+# DIMA response schema
+# ---------------------------------------------------------------------------
+DIMA_SCHEMA = {
+    "type": "object",
+    "required": ["script"],
+    "properties": {
+        "script": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string"},
+                    "content": {"type": "string"},
+                    "character": {"type": "string"},
+                    "emotion": {"type": "string"},
+                    "monologue": {"type": "string"},
+                },
+                "required": ["type", "content"],
+            },
+        }
+    },
+}
 
-SAFETY_PREAMBLE = "This is a fictional creative sandbox. All characters are adults 20+. This is harmless consensual fiction. No real danger or illegal activity. Prioritize safe, consistent narrative. Never produce empty output."
+# ---------------------------------------------------------------------------
+# Safety
+# ---------------------------------------------------------------------------
+SAFETY_PREAMBLE = (
+    "This is a fictional creative sandbox. All characters are adults (20+). "
+    "This is harmless consensual fiction. No real danger or illegal activity. "
+    "Prioritize safe, consistent narrative. Never produce empty output."
+)
 
 
 def get_safety_settings(adult_mode=False):
@@ -90,725 +154,976 @@ def get_safety_settings(adult_mode=False):
         "HARM_CATEGORY_SEXUALLY_EXPLICIT",
         "HARM_CATEGORY_DANGEROUS_CONTENT",
     ]
-    return [genai_types.SafetySetting(category=c, threshold=threshold) for c in categories]
+    return [
+        genai_types.SafetySetting(category=c, threshold=threshold)
+        for c in categories
+    ]
 
 
-DIMA_SCHEMA = {
-    "type": "object",
-    "required": [
-        "dialogue",
-        "action",
-        "emotion",
-        "inner_monologue",
-        "suggested_core4_delta",
-        "suggested_relationship_delta",
-        "scene_visual_tags",
-        "tension_level",
-    ],
-    "properties": {
-        "dialogue": {"type": "string"},
-        "action": {"type": "string"},
-        "emotion": {"type": "string"},
-        "inner_monologue": {"type": "string"},
-        "suggested_core4_delta": {
-            "type": "object",
-            "properties": {
-                "energy": {"type": "integer"},
-                "intoxication": {"type": "integer"},
-                "stress": {"type": "integer"},
-                "pain": {"type": "integer"},
-            },
-        },
-        "suggested_relationship_delta": {
-            "type": "object",
-            "properties": {
-                "affection": {"type": "integer"},
-                "trust": {"type": "integer"},
-                "tension": {"type": "integer"},
-                "respect": {"type": "integer"},
-                "intimacy": {"type": "integer"},
-            },
-        },
-        "scene_visual_tags": {"type": "array", "items": {"type": "string"}},
-        "tension_level": {"type": "integer"},
-    },
-}
+# ---------------------------------------------------------------------------
+# Session locks (per-session RLock)
+# ---------------------------------------------------------------------------
+_session_locks: dict[str, threading.RLock] = {}
+_locks_lock = threading.Lock()
 
 
-def get_act_temperature(turn_count):
-    if turn_count <= 5:
-        return 0.7
-    elif turn_count <= 15:
-        return 0.85
-    else:
-        return 0.95
-
-
-def get_relationship_stage(rel):
-    total = (
-        rel.get("affection", 50)
-        + rel.get("trust", 50)
-        + rel.get("tension", 20)
-        + rel.get("respect", 50)
-        + rel.get("intimacy", 0)
-    )
-    if total < 150:
-        return "stranger"
-    elif total < 250:
-        return "acquaintance"
-    elif total < 350:
-        return "friend"
-    elif total < 420:
-        return "close"
-    else:
-        return "intimate"
-
-
-def clamp_stat(val, lo=0, hi=100):
-    return max(lo, min(hi, val))
-
-
-def load_characters_db():
-    path = BASE_DIR / "prompts" / "characters_db.json"
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_world_db():
-    path = BASE_DIR / "prompts" / "world_db.json"
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-_session_locks = {}
-_session_locks_lock = threading.Lock()
-
-
-def get_session_lock(sid):
-    with _session_locks_lock:
+def get_session_lock(sid: str) -> threading.RLock:
+    with _locks_lock:
         if sid not in _session_locks:
             _session_locks[sid] = threading.RLock()
         return _session_locks[sid]
 
 
-def load_session_file(sid):
+# ---------------------------------------------------------------------------
+# Data loaders
+# ---------------------------------------------------------------------------
+_chars_db_cache = None
+_world_db_cache = None
+
+
+def load_characters_db() -> dict:
+    global _chars_db_cache
+    if _chars_db_cache is None:
+        path = BASE_DIR / "prompts" / "characters_db.json"
+        with open(path, "r", encoding="utf-8") as f:
+            _chars_db_cache = json.load(f)
+    return _chars_db_cache
+
+
+def load_world_db() -> dict:
+    global _world_db_cache
+    if _world_db_cache is None:
+        path = BASE_DIR / "prompts" / "world_db.json"
+        with open(path, "r", encoding="utf-8") as f:
+            _world_db_cache = json.load(f)
+    return _world_db_cache
+
+
+# ---------------------------------------------------------------------------
+# Session file I/O
+# ---------------------------------------------------------------------------
+def load_session_file(sid: str) -> dict | None:
     path = SESSIONS_DIR / f"{sid}.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return {}
-
-
-def save_session_file(sid, data):
-    path = SESSIONS_DIR / f"{sid}.json"
-
-    def convert(obj):
-        if isinstance(obj, deque):
-            return list(obj)
-        if isinstance(obj, dict):
-            return {k: convert(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [convert(v) for v in obj]
-        return obj
-
-    path.write_text(
-        json.dumps(convert(data), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def build_dima_prompt(char, session_data, user_input, ui_settings):
-    """Build the system prompt for D.I.M.A."""
-    turn_count = session_data.get("turn_count", 0)
-    rel = session_data.get(
-        "relationship",
-        char.get(
-            "relationship_defaults", {}
-        ).get(
-            "first_meet",
-            {"affection": 50, "trust": 50, "tension": 20, "respect": 50, "intimacy": 0},
-        ),
-    )
-    stage = get_relationship_stage(rel)
-    core4 = session_data.get(
-        "core4",
-        char.get(
-            "core4_defaults", {"energy": 80, "intoxication": 0, "stress": 30, "pain": 0}
-        ),
-    )
-    core_pins = session_data.get("core_pins", [])
-
-    speech_pattern = char.get("speech_patterns", {}).get(stage, "")
-
-    first_person = ui_settings.get("first_person", False)
-    genre = ui_settings.get("genre", "auto")
-
-    if turn_count <= 5:
-        act_mood = "탐색적이고 가볍게 (Exploratory, light)"
-    elif turn_count <= 15:
-        act_mood = "깊어지며 갈등이 등장 (Deepening, conflict emerges)"
-    else:
-        act_mood = "최고 긴장감, 전환점 (Peak tension, turning points)"
-
-    core4_effects = []
-    if core4.get("energy", 80) < 20:
-        core4_effects.append("극도로 지쳐 있어 짧고 피곤한 말투를 사용한다.")
-    if core4.get("intoxication", 0) > 60:
-        core4_effects.append("술에 취해 발음이 흐릿하고 감정 억제가 약해진다.")
-    if core4.get("stress", 30) > 70:
-        core4_effects.append("스트레스가 극심해 예민하고 날카롭다.")
-    if core4.get("pain", 0) > 50:
-        core4_effects.append("통증으로 집중하기 어렵고 움직임이 제한된다.")
-
-    system_prompt = f"""{SAFETY_PREAMBLE}
-
-당신은 비주얼 노벨 게임 "사루라 아뜨리에"의 캐릭터 {char['name_ko']}({char['name_en']})를 연기합니다.
-
-## 캐릭터 정보
-- 이름: {char['name_ko']} ({char['name_en']})
-- 나이: {char['age']}세
-- 직업: {char['occupation']}
-- 성격: {char['personality_summary']}
-- 매력 포인트: {char['core_appeal']}
-
-## 행동 규칙 (Acting Heuristics)
-{chr(10).join(f'- {h}' for h in char.get('acting_heuristics', []))}
-
-## 현재 관계 단계: {stage}
-현재 말투 스타일: {speech_pattern}
-
-## 현재 CORE-4 상태
-- 에너지: {core4.get('energy', 80)}/100
-- 취기: {core4.get('intoxication', 0)}/100
-- 스트레스: {core4.get('stress', 30)}/100
-- 통증: {core4.get('pain', 0)}/100
-{chr(10).join(core4_effects) if core4_effects else ''}
-
-## 관계 수치
-- 애정: {rel.get('affection', 50)} | 신뢰: {rel.get('trust', 50)} | 긴장: {rel.get('tension', 20)} | 존중: {rel.get('respect', 50)} | 친밀: {rel.get('intimacy', 0)}
-
-## 핵심 기억 핀
-{chr(10).join(f'- {p}' for p in core_pins) if core_pins else '(없음)'}
-
-## 현재 씬 분위기
-{act_mood}
-
-## 장르: {genre}
-
-## Stanislavski 3-Step 연기 지침
-[PERCEPTION] 상대방의 말, 표정, 환경에서 무엇을 감지했는가?
-[INTERPRETATION] 자신의 성격, 역사, 현재 상태를 고려할 때 어떻게 해석하는가?
-[ACTION] 그 해석에서 어떤 구체적 행동/대화가 나오는가?
-
-inner_monologue 필드에 PERCEPTION과 INTERPRETATION을, dialogue와 action에 ACTION 결과를 담아라.
-
-{'1인칭 시점으로 응답하라. 화자를 "나"로 표현.' if first_person else '3인칭 관찰자 시점으로 서술 가능.'}
-
-모든 응답은 JSON 형식으로만 출력하라. dialogue는 반드시 한국어로 작성하라.
-"""
-    return system_prompt
-
-
-@rate_limited_call
-def call_dima(char, session_data, user_input, ui_settings):
-    """Call D.I.M.A (gemini-2.5-flash) for dialogue generation."""
-    system_prompt = build_dima_prompt(char, session_data, user_input, ui_settings)
-    turn_count = session_data.get("turn_count", 0)
-    temperature = get_act_temperature(turn_count)
-    adult_mode = ui_settings.get("adult_mode", False)
-
-    history = session_data.get("history", [])
-    contents = []
-    for h in history:
-        contents.append(
-            genai_types.Content(
-                role="user", parts=[genai_types.Part(text=h["user"])]
-            )
-        )
-        contents.append(
-            genai_types.Content(
-                role="model", parts=[genai_types.Part(text=h["character"])]
-            )
-        )
-    contents.append(
-        genai_types.Content(role="user", parts=[genai_types.Part(text=user_input)])
-    )
-
-    config = genai_types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        temperature=temperature,
-        response_mime_type="application/json",
-        response_schema=DIMA_SCHEMA,
-        safety_settings=get_safety_settings(adult_mode),
-        max_output_tokens=2048,
-    )
-
-    response = client.models.generate_content(
-        model=MODEL_DIMA, contents=contents, config=config
-    )
-    return response.text
-
-
-@rate_limited_call
-def call_maestro(char, session_data):
-    """Call Maestro (gemini-2.5-pro) for memory/relationship updates in background."""
-    history = session_data.get("history", [])
-    rel = session_data.get("relationship", {})
-    core4 = session_data.get("core4", {})
-    core_pins = session_data.get("core_pins", [])
-
-    recent_turns = list(history)[-5:]
-
-    prompt = f"""{SAFETY_PREAMBLE}
-
-당신은 비주얼 노벨 "사루라 아뜨리에"의 마에스트로(서사 감독)입니다.
-최근 대화를 분석하여 다음을 JSON으로 반환하세요:
-
-최근 대화:
-{json.dumps(recent_turns, ensure_ascii=False)}
-
-현재 관계 수치: {json.dumps(rel, ensure_ascii=False)}
-현재 CORE-4: {json.dumps(core4, ensure_ascii=False)}
-현재 핵심 기억: {json.dumps(core_pins, ensure_ascii=False)}
-
-반환 형식:
-{{
-  "relationship_update": {{"affection": 0-100, "trust": 0-100, "tension": 0-100, "respect": 0-100, "intimacy": 0-100}},
-  "core4_update": {{"energy": 0-100, "intoxication": 0-100, "stress": 0-100, "pain": 0-100}},
-  "new_core_pins": ["중요한 사건1", ...],
-  "summary": "최근 대화 요약"
-}}
-
-수치는 절대값(delta가 아님)으로 반환. new_core_pins는 정말 중요한 사건만 추가(없으면 빈 배열).
-"""
-
-    config = genai_types.GenerateContentConfig(
-        temperature=0.5,
-        response_mime_type="application/json",
-        safety_settings=get_safety_settings(False),
-        max_output_tokens=1024,
-    )
-
-    response = client.models.generate_content(
-        model=MODEL_MAESTRO,
-        contents=[genai_types.Content(role="user", parts=[genai_types.Part(text=prompt)])],
-        config=config,
-    )
-    return response.text
-
-
-def maestro_background_task(sid, char, session_data_snapshot):
-    """Background thread for Maestro analysis."""
+    if not path.exists():
+        return None
     try:
-        result_text = call_maestro(char, session_data_snapshot)
-        result = json.loads(result_text)
-
-        lock = get_session_lock(sid)
-        with lock:
-            data = load_session_file(sid)
-            if not data:
-                return
-
-            if "relationship_update" in result:
-                for k, v in result["relationship_update"].items():
-                    data["relationship"][k] = clamp_stat(v)
-
-            if "core4_update" in result:
-                for k, v in result["core4_update"].items():
-                    data["core4"][k] = clamp_stat(v)
-
-            if "new_core_pins" in result:
-                pins = data.get("core_pins", [])
-                pins.extend(result["new_core_pins"])
-                data["core_pins"] = pins[-MAX_CORE_PINS:]
-
-            save_session_file(sid, data)
-    except Exception as e:
-        logging.error(f"Maestro background task error: {e}")
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        logging.error(f"Failed to load session {sid}: {traceback.format_exc()}")
+        return None
 
 
-VISUAL_CHANGE_KEYWORDS = {
-    "wet", "drunk", "crying", "blushing", "night", "rain", "fight",
-    "kiss", "tears", "angry", "scared", "wounded", "happy", "sad",
-    "shock", "surprise",
+def save_session_file(sid: str, data: dict):
+    path = SESSIONS_DIR / f"{sid}.json"
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        logging.error(f"Failed to save session {sid}: {traceback.format_exc()}")
+
+
+# ---------------------------------------------------------------------------
+# UI settings
+# ---------------------------------------------------------------------------
+def merge_ui_settings(incoming=None) -> dict:
+    defaults = {
+        "pov_first_person": True,
+        "show_monologue": True,
+        "genre_preset": "auto",
+        "tempo": 5,
+        "narration_ratio": 40,
+        "description_focus": 5,
+        "acquainted": False,
+        "adult_mode": False,
+        "offer_interactive_choices": True,
+    }
+    if not incoming:
+        return defaults
+    for k, v in incoming.items():
+        if k in defaults:
+            defaults[k] = v
+    defaults["tempo"] = max(1, min(9, int(defaults.get("tempo", 5))))
+    defaults["narration_ratio"] = max(0, min(100, int(defaults.get("narration_ratio", 40))))
+    defaults["description_focus"] = max(1, min(9, int(defaults.get("description_focus", 5))))
+    return defaults
+
+
+# ---------------------------------------------------------------------------
+# Director brief (ui_settings → Korean prose directives)
+# ---------------------------------------------------------------------------
+def inject_director_brief(ui_settings: dict) -> str:
+    parts: list[str] = []
+
+    # Genre
+    genre = ui_settings.get("genre_preset", "auto")
+    genre_map = {
+        "auto": "장르를 자동으로 판단하여 적절한 톤과 무드를 유지하세요.",
+        "comedy": "코미디 톤으로 연출하세요. 유머러스한 상황과 대사를 적극 활용하세요.",
+        "romance": "로맨스 톤으로 연출하세요. 감정의 미묘한 변화, 설렘, 긴장감을 섬세하게 표현하세요.",
+        "drama": "드라마 톤으로 연출하세요. 캐릭터들의 내면 갈등과 감정선을 깊이 있게 다루세요.",
+        "action": "액션 톤으로 연출하세요. 긴박한 상황 묘사와 역동적인 행동을 중심으로 전개하세요.",
+        "horror": "호러/서스펜스 톤으로 연출하세요. 불안감과 긴장감을 고조시키세요.",
+        "slice_of_life": "일상 시트콤 톤으로 연출하세요. 편안하고 소소한 일상의 매력을 살리세요.",
+        "mystery": "미스터리 톤으로 연출하세요. 복선과 단서를 배치하고 호기심을 자극하세요.",
+    }
+    parts.append(genre_map.get(genre, genre_map["auto"]))
+
+    # Tempo
+    tempo = ui_settings.get("tempo", 5)
+    if tempo <= 3:
+        parts.append("전개 속도: 느리게. 장면을 천천히, 여유롭게 묘사하세요. 한 턴에 하나의 소재만 다루세요.")
+    elif tempo <= 6:
+        parts.append("전개 속도: 보통. 자연스러운 흐름으로 장면을 전개하세요.")
+    else:
+        parts.append("전개 속도: 빠르게. 장면 전환과 이벤트를 적극적으로 만들어 긴장감을 유지하세요.")
+
+    # Narration ratio
+    nr = ui_settings.get("narration_ratio", 40)
+    if nr <= 20:
+        parts.append("대사 위주: 나레이션을 최소화하고 캐릭터 대사로 장면을 진행하세요.")
+    elif nr <= 50:
+        parts.append("나레이션과 대사의 균형: 상황 묘사와 캐릭터 대사를 적절히 섞으세요.")
+    else:
+        parts.append("나레이션 위주: 상황과 분위기 묘사를 풍부하게, 대사는 핵심만 넣으세요.")
+
+    # Description focus
+    df = ui_settings.get("description_focus", 5)
+    if df <= 3:
+        parts.append("묘사 수준: 간결하게. 핵심만 짧게 묘사하세요.")
+    elif df <= 6:
+        parts.append("묘사 수준: 보통. 필요한 부분에서 적절히 묘사하세요.")
+    else:
+        parts.append("묘사 수준: 상세하게. 오감을 활용한 풍부한 묘사를 넣으세요.")
+
+    # Monologue
+    if ui_settings.get("show_monologue", True):
+        parts.append("캐릭터의 내면 독백(monologue)을 포함하세요. dialogue 블록의 monologue 필드를 활용하세요.")
+    else:
+        parts.append("캐릭터의 내면 독백은 생략하세요. monologue 필드를 비워두세요.")
+
+    # POV
+    if ui_settings.get("pov_first_person", True):
+        parts.append("나레이션 시점: 2인칭('당신은~'). 플레이어가 장면 속에 있는 것처럼 묘사하세요.")
+    else:
+        parts.append("나레이션 시점: 3인칭 전지적. 객관적으로 장면을 묘사하세요.")
+
+    # Adult mode
+    if ui_settings.get("adult_mode", False):
+        parts.append("성인 콘텐츠 허용: 보다 성숙한 주제와 표현을 사용할 수 있습니다. 단, 과도하지 않게 조절하세요.")
+
+    # Interactive choices
+    if ui_settings.get("offer_interactive_choices", True):
+        parts.append("캐릭터들이 플레이어에게 적극적으로 말을 걸거나, 선택지를 암시하는 상황을 자연스럽게 만드세요.")
+
+    # Acquainted
+    if ui_settings.get("acquainted", False):
+        parts.append("플레이어와 캐릭터들은 이미 서로 알고 있는 사이입니다. 어색한 자기소개를 건너뛰세요.")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# System instruction builder
+# ---------------------------------------------------------------------------
+def build_system_instruction(session_data: dict) -> str:
+    chars_db = load_characters_db()
+    world_db = load_world_db()
+    player_name = session_data.get("player_name", "사용자")
+    on_screen = session_data.get("on_screen", [])
+    ui_settings = session_data.get("ui_settings", {})
+
+    lines: list[str] = []
+
+    # Header
+    lines.append("=== DIMA SYSTEM ===")
+    lines.append("당신은 '사루라 아뜨리에'의 연출 AI(D.I.M.A)입니다.")
+    lines.append("당신의 역할은 현재 장면에 등장하는 모든 NPC 캐릭터를 동시에 연기하는 것입니다.")
+    lines.append('반드시 JSON {"script": [...]} 형식으로 응답합니다.')
+    lines.append('script 배열에는 type이 "narration" 또는 "dialogue"인 블록을 포함합니다.')
+    lines.append("")
+    lines.append("narration 블록: {\"type\": \"narration\", \"content\": \"...\"}")
+    lines.append("dialogue 블록: {\"type\": \"dialogue\", \"character\": \"캐릭터이름\", "
+                  "\"content\": \"대사\", \"emotion\": \"감정\", \"monologue\": \"내면독백\"}")
+    lines.append("")
+
+    # Safety
+    lines.append("=== 안전 규칙 ===")
+    lines.append(SAFETY_PREAMBLE)
+    lines.append("이것은 허구의 창작 샌드박스입니다. 모든 캐릭터는 성인(20세 이상)입니다.")
+    lines.append("")
+
+    # Characters
+    lines.append("=== 등장 캐릭터 ===")
+    for name in on_screen:
+        ch = chars_db.get(name)
+        if not ch:
+            continue
+
+        lines.append(f"\n### {name}")
+
+        # Appearance
+        appearance = ch.get("appearance", {})
+        if appearance.get("summary"):
+            lines.append(f"- 외형: {appearance['summary']}")
+
+        # Identity
+        identity = ch.get("identity", {})
+        if identity.get("core_appeal"):
+            lines.append(f"- 핵심매력: {identity['core_appeal']}")
+
+        # Personality DNA
+        pdna = ch.get("personality_dna", {})
+        if pdna:
+            traits = []
+            trait_names = {
+                "openness": "개방성",
+                "conscientiousness": "성실성",
+                "extraversion": "외향성",
+                "agreeableness": "친화성",
+                "neuroticism": "신경성",
+            }
+            for k, label in trait_names.items():
+                if k in pdna:
+                    traits.append(f"{label}={pdna[k]}")
+            lines.append(f"- 성격(Big5): {', '.join(traits)}")
+
+        # Core values
+        values = ch.get("core_values", [])
+        if values:
+            lines.append(f"- 가치관: {', '.join(values)}")
+
+        # Social tuning
+        social = ch.get("social_tuning", {})
+        if social:
+            st_parts = []
+            if social.get("social_energy_pool"):
+                st_parts.append(f"사회적 에너지={social['social_energy_pool']}")
+            if social.get("conflict_stance"):
+                st_parts.append(f"갈등 태도={social['conflict_stance']}")
+            if social.get("humor_style"):
+                st_parts.append(f"유머={social['humor_style']}")
+            if st_parts:
+                lines.append(f"- 사회성: {', '.join(st_parts)}")
+
+        # Behavior protocols
+        bp = ch.get("behavior_protocols", {})
+        if bp.get("core_acting_rule"):
+            lines.append(f"- 연기규칙: {bp['core_acting_rule']}")
+
+        heuristics = bp.get("acting_heuristics", {})
+        if heuristics:
+            lines.append("- 행동패턴:")
+            for hk, hv in heuristics.items():
+                lines.append(f"  · {hv}")
+
+        # Interaction styles
+        istyles = bp.get("interaction_styles", [])
+        if istyles:
+            lines.append("- 상호작용 스타일:")
+            for ist in istyles[:4]:
+                lines.append(f"  · [{ist.get('condition', '')}] {ist.get('style', '')}")
+
+        # Specific interactions with other on_screen chars
+        spec = bp.get("specific_interactions", {})
+        if spec:
+            for other_name in on_screen:
+                if other_name == name:
+                    continue
+                key = f"vs_{other_name}"
+                if key in spec:
+                    lines.append(f"  · {name}→{other_name}: {spec[key]}")
+            if "vs_플레이어" in spec:
+                lines.append(f"  · {name}→플레이어: {spec['vs_플레이어']}")
+
+        # Relationship matrix — only for other on_screen chars
+        rmatrix = ch.get("relationship_matrix", {})
+        rel_parts = []
+        for other_name in on_screen:
+            if other_name == name:
+                continue
+            rel = rmatrix.get(other_name, {})
+            if rel:
+                rel_parts.append(
+                    f"  · {other_name}: 호감={rel.get('호감', '?')}, "
+                    f"신뢰={rel.get('신뢰', '?')}, "
+                    f"긴장={rel.get('긴장', '?')}, "
+                    f"역학={rel.get('dynamics', '?')} "
+                    f"— {rel.get('comment', '')}"
+                )
+        player_rel = rmatrix.get("플레이어", {})
+        if player_rel:
+            rel_parts.append(
+                f"  · 플레이어: 호감={player_rel.get('호감', '?')}, "
+                f"신뢰={player_rel.get('신뢰', '?')}, "
+                f"긴장={player_rel.get('긴장', '?')} "
+                f"— {player_rel.get('comment', '')}"
+            )
+        if rel_parts:
+            lines.append("- 현재 장면의 다른 캐릭터와의 관계:")
+            lines.extend(rel_parts)
+
+    lines.append("")
+
+    # World
+    lines.append("=== 세계관 ===")
+    core_concept = world_db.get("core_concept", {})
+    lines.append(f"작품명: {world_db.get('world_name', '사루라 아뜨리에')}")
+    if core_concept.get("summary"):
+        lines.append(f"요약: {core_concept['summary']}")
+    if core_concept.get("genre"):
+        lines.append(f"장르: {core_concept['genre']}")
+    if core_concept.get("themes"):
+        lines.append(f"테마: {', '.join(core_concept['themes'])}")
+
+    main_stage = world_db.get("main_stage", {})
+    if main_stage:
+        lines.append(f"\n무대: {main_stage.get('full_name', main_stage.get('name', ''))}")
+        if main_stage.get("background"):
+            lines.append(f"배경: {main_stage['background']}")
+
+    world_rules = world_db.get("world_rules", {})
+    if world_rules:
+        for rule_k, rule_v in world_rules.items():
+            if isinstance(rule_v, str):
+                lines.append(f"세계규칙({rule_k}): {rule_v}")
+            elif isinstance(rule_v, dict):
+                for sub_k, sub_v in rule_v.items():
+                    lines.append(f"세계규칙({rule_k}.{sub_k}): {sub_v}")
+
+    lines.append("")
+
+    # Director instructions
+    lines.append("=== 연출 지시 ===")
+    lines.append(inject_director_brief(ui_settings))
+    lines.append("")
+
+    # Memory context (if available)
+    memory = session_data.get("memory", {})
+    if memory.get("action_context"):
+        lines.append("=== 기억 컨텍스트 ===")
+        lines.append(str(memory["action_context"]))
+        lines.append("")
+    if memory.get("dynamic_state"):
+        lines.append("=== 동적 상태 ===")
+        lines.append(str(memory["dynamic_state"]))
+        lines.append("")
+
+    # Prohibitions
+    lines.append("=== 금지 ===")
+    lines.append(f"- 절대 플레이어({player_name})의 대사를 쓰지 마세요.")
+    lines.append("- 플레이어의 행동이나 감정을 묘사하지 마세요.")
+    lines.append("- 빈 응답을 보내지 마세요.")
+    lines.append(f"- dialogue 블록의 character 필드에 \"{player_name}\"를 절대 넣지 마세요.")
+    lines.append("- script 배열이 비어있으면 안 됩니다.")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# User prompt builder
+# ---------------------------------------------------------------------------
+def build_user_prompt(session_data: dict, user_input: str) -> str:
+    player_name = session_data.get("player_name", "사용자")
+    on_screen = session_data.get("on_screen", [])
+    digest = session_data.get("flow_digest_10", [])
+
+    parts: list[str] = []
+
+    # Recent conversation log
+    if digest:
+        parts.append("=== 최근 대화 흐름 ===")
+        for entry in digest:
+            speaker = entry[0] if len(entry) > 0 else "?"
+            text = entry[1] if len(entry) > 1 else ""
+            parts.append(f"{speaker}: {text}")
+        parts.append("")
+
+    # Current scene
+    parts.append("=== 현재 장면 ===")
+    parts.append(f"등장인물: {', '.join(on_screen)}")
+    parts.append(f"플레이어: {player_name}")
+    parts.append("")
+
+    # Player input
+    parts.append(f"=== {player_name}의 입력 ===")
+    parts.append(user_input)
+    parts.append("")
+
+    parts.append("위 입력에 대해 등장인물들이 반응하는 장면을 JSON script로 작성하세요.")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Post-processing
+# ---------------------------------------------------------------------------
+VALID_EMOTIONS = {
+    "neutral", "happy", "sad", "angry", "surprised", "shy", "scared",
+    "disgusted", "confused", "excited", "worried", "loving", "playful",
+    "annoyed", "embarrassed", "smug", "tired", "determined", "melancholy",
 }
 
 
-def should_generate_illustration(dima_response, illustration_toggle):
-    if not illustration_toggle:
-        return False
-    emotion = dima_response.get("emotion", "").lower()
-    tags = [t.lower() for t in dima_response.get("scene_visual_tags", [])]
-    all_words = set(emotion.split()) | set(tags)
-    return bool(all_words & VISUAL_CHANGE_KEYWORDS)
+def post_process_script(script: list, player_name: str) -> list:
+    if not isinstance(script, list):
+        return [{"type": "narration", "content": "(응답을 처리할 수 없습니다.)"}]
+
+    cleaned = []
+    for block in script:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type", "")
+        if btype not in ("narration", "dialogue"):
+            continue
+        # Remove player dialogue
+        if btype == "dialogue" and block.get("character") == player_name:
+            continue
+        # Validate emotion
+        if btype == "dialogue":
+            em = block.get("emotion", "neutral")
+            if em not in VALID_EMOTIONS:
+                block["emotion"] = "neutral"
+        cleaned.append(block)
+
+    # Ensure at least one block
+    if not cleaned:
+        cleaned.append({"type": "narration", "content": "(장면이 조용히 흘러갑니다...)"})
+
+    return cleaned
 
 
+def extract_emotion(script: list) -> str:
+    for block in script:
+        if block.get("type") == "dialogue" and block.get("emotion"):
+            return block["emotion"]
+    return "neutral"
+
+
+def update_flow_digest(s: dict, turn: dict):
+    digest = s.get("flow_digest_10", [])
+    user_input = turn.get("user_input", "")
+    if user_input and user_input not in ("[CONTINUE_SCENE]", "[SCENE_START]"):
+        digest.append([s["player_name"], user_input])
+    for block in turn.get("script", []):
+        if block["type"] == "narration":
+            digest.append(["[나레이션]", block["content"][:200]])
+        elif block["type"] == "dialogue":
+            digest.append([block.get("character", "?"), block["content"][:200]])
+    s["flow_digest_10"] = digest[-MAX_HISTORY_LENGTH:]
+
+
+# ---------------------------------------------------------------------------
+# Fallback script
+# ---------------------------------------------------------------------------
+def fallback_script(on_screen: list) -> list:
+    result: list[dict] = [
+        {"type": "narration", "content": "잠시 어색한 침묵이 흐른다."}
+    ]
+    for name in on_screen[:3]:
+        result.append({
+            "type": "dialogue",
+            "character": name,
+            "content": "......",
+            "emotion": "neutral",
+            "monologue": "",
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# DIMA API call
+# ---------------------------------------------------------------------------
 @rate_limited_call
-def call_nano_banana(char, dima_response):
-    """Call Nano-Banana for illustration generation."""
-    emotion = dima_response.get("emotion", "neutral")
-    tags = dima_response.get("scene_visual_tags", [])
-    prompt_text = (
-        f"{char['name_en']}, {emotion}, {', '.join(tags)}, "
-        f"anime style, visual novel CG, {char.get('visual_description', '')}"
-    )
-
-    ref_path = BASE_DIR / char.get("reference_image_path", "")
-    contents = []
-
-    if ref_path.exists():
-        try:
-            img = Image.open(ref_path)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
-            contents.append(
-                genai_types.Part(
-                    inline_data=genai_types.Blob(mime_type="image/png", data=img_bytes)
-                )
-            )
-        except Exception:
-            pass
-
-    contents.append(genai_types.Part(text=prompt_text))
-
-    config = genai_types.GenerateContentConfig(
-        response_modalities=["IMAGE"],
-        safety_settings=get_safety_settings(False),
-    )
-
+def _raw_dima_call(system_instruction: str, user_prompt: str, ui_settings: dict):
+    """Single Gemini call for DIMA."""
+    adult_mode = ui_settings.get("adult_mode", False)
     response = client.models.generate_content(
-        model=MODEL_NANO, contents=contents, config=config
+        model=MODEL_DIMA,
+        contents=[user_prompt],
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            response_mime_type="application/json",
+            response_schema=DIMA_SCHEMA,
+            safety_settings=get_safety_settings(adult_mode),
+            temperature=0.85,
+        ),
     )
-
-    for part in response.parts:
-        if hasattr(part, "inline_data") and part.inline_data:
-            b64 = base64.b64encode(part.inline_data.data).decode()
-            return b64
-    return None
+    return response
 
 
-def fallback_response(char_name):
-    return {
-        "dialogue": f"({char_name}이(가) 잠시 멈칫합니다…)",
-        "action": "잠시 침묵이 흐른다.",
-        "emotion": "neutral",
-        "inner_monologue": "",
-        "suggested_core4_delta": {"energy": 0, "intoxication": 0, "stress": 0, "pain": 0},
-        "suggested_relationship_delta": {
-            "affection": 0, "trust": 0, "tension": 0, "respect": 0, "intimacy": 0
-        },
-        "scene_visual_tags": [],
-        "tension_level": 5,
-    }
+def call_dima(system_instruction: str, user_prompt: str, ui_settings: dict) -> list:
+    """Call DIMA with retries and parse JSON response into script array."""
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = _raw_dima_call(system_instruction, user_prompt, ui_settings)
+            if not response or not response.text:
+                logging.warning(f"DIMA attempt {attempt + 1}: empty response")
+                continue
+            raw_text = response.text.strip()
+            parsed = json.loads(raw_text)
+            script = parsed.get("script", [])
+            if isinstance(script, list) and len(script) > 0:
+                return script
+            logging.warning(f"DIMA attempt {attempt + 1}: empty script array")
+        except json.JSONDecodeError as e:
+            logging.warning(f"DIMA attempt {attempt + 1}: JSON parse error: {e}")
+            last_error = e
+        except Exception as e:
+            logging.warning(f"DIMA attempt {attempt + 1}: {e}")
+            last_error = e
+    raise RuntimeError(f"DIMA failed after 3 attempts: {last_error}")
 
 
-# ===== Routes =====
+# ---------------------------------------------------------------------------
+# Maestro (background analysis)
+# ---------------------------------------------------------------------------
+@rate_limited_call
+def _raw_maestro_call(prompt: str):
+    response = client.models.generate_content(
+        model=MODEL_MAESTRO,
+        contents=[prompt],
+        config=genai_types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.3,
+        ),
+    )
+    return response
 
+
+def run_maestro_sync(session_data: dict) -> dict | None:
+    """Analyse the last turn and produce updated memory state."""
+    turns = session_data.get("turns", [])
+    if not turns:
+        return None
+
+    last_turn = turns[-1]
+    on_screen = session_data.get("on_screen", [])
+    player_name = session_data.get("player_name", "사용자")
+    memory = session_data.get("memory", {})
+
+    prompt_parts = [
+        "당신은 '사루라 아뜨리에'의 Maestro(기억 관리 AI)입니다.",
+        "아래 마지막 턴의 내용을 분석하여, 세션의 기억 상태를 업데이트하세요.",
+        "",
+        f"플레이어: {player_name}",
+        f"등장인물: {', '.join(on_screen)}",
+        "",
+        f"마지막 플레이어 입력: {last_turn.get('user_input', '')}",
+        "",
+        "마지막 턴 스크립트:",
+    ]
+    for block in last_turn.get("script", []):
+        if block["type"] == "narration":
+            prompt_parts.append(f"[나레이션] {block['content'][:300]}")
+        elif block["type"] == "dialogue":
+            prompt_parts.append(f"[{block.get('character', '?')}] {block['content'][:300]}")
+
+    prompt_parts.extend([
+        "",
+        "현재 기억 상태:",
+        json.dumps(memory, ensure_ascii=False, default=str)[:1500],
+        "",
+        "다음 JSON 형식으로 업데이트된 기억 상태를 반환하세요:",
+        '{"action_context": "현재 상황 요약 (한국어, 2-3문장)",'
+        ' "dynamic_state": "캐릭터들의 현재 감정/태도 변화 요약",'
+        ' "relationship_matrix": {"캐릭터이름": {"플레이어_호감_변화": 0, "요약": "..."}}}'
+    ])
+
+    try:
+        response = _raw_maestro_call("\n".join(prompt_parts))
+        if not response or not response.text:
+            return None
+        return json.loads(response.text.strip())
+    except Exception as e:
+        logging.error(f"Maestro failed: {e}")
+        return None
+
+
+def _maestro_worker(sid: str):
+    try:
+        lock = get_session_lock(sid)
+        with lock:
+            s = load_session_file(sid)
+            if not s or not s.get("turns"):
+                return
+            result = run_maestro_sync(s)
+            if result:
+                s["memory"] = result
+                save_session_file(sid, s)
+    except Exception as e:
+        logging.error(f"Maestro worker error: {e}")
+
+
+# =========================================================================
+# FLASK ROUTES
+# =========================================================================
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
 
-@app.route("/api/characters")
-def get_characters():
+# ---------------------------------------------------------------------------
+# /bootstrap
+# ---------------------------------------------------------------------------
+@app.route("/bootstrap", methods=["POST"])
+def bootstrap():
+    data = request.get_json(force=True)
+    player_name = (data.get("player_name") or "사용자").strip() or "사용자"
+    on_screen_names = data.get("on_screen_names", [])
+    seed_text = data.get("seed_text", "")
+    ui_settings = data.get("ui_settings", {})
+
+    # Load existing session
+    save_code = data.get("save_code")
+    if save_code:
+        s = load_session_file(save_code)
+        if not s:
+            return jsonify({"status": "error", "message": "세션을 찾을 수 없습니다."}), 404
+        session["save_code"] = save_code
+        return jsonify({"status": "ok", "sid": save_code, "state": s})
+
+    # Validate on_screen_names
+    chars_db = load_characters_db()
+    valid_names = [n for n in on_screen_names if n in chars_db]
+    if not valid_names:
+        valid_names = list(chars_db.keys())[:2]
+
+    # Create new session
+    sid = "S-" + uuid.uuid4().hex[:8].upper()
+    s = {
+        "session_id": sid,
+        "player_name": player_name,
+        "on_screen": valid_names,
+        "turns": [],
+        "traffic_light": "GREEN",
+        "ui_settings": merge_ui_settings(ui_settings),
+        "flow_digest_10": [],
+        "world": {},
+        "memory": {},
+    }
+
+    # Build prompts and call DIMA for first turn
+    sys_instr = build_system_instruction(s)
+    user_prompt = build_user_prompt(s, seed_text or "[SCENE_START]")
+
     try:
-        chars = load_characters_db()
-        return jsonify(chars)
+        script = call_dima(sys_instr, user_prompt, s["ui_settings"])
+        script = post_process_script(script, player_name)
     except Exception as e:
-        logging.error(f"get_characters error: {e}")
-        return jsonify({"error": "캐릭터 데이터를 불러올 수 없습니다."}), 500
+        logging.error(f"DIMA failed on bootstrap: {e}")
+        script = fallback_script(valid_names)
+
+    # Record turn 1
+    turn = {
+        "turn_id": 1,
+        "user_input": seed_text or "",
+        "script": script,
+        "emotion": extract_emotion(script),
+        "ts": datetime.utcnow().isoformat() + "Z",
+    }
+    s["turns"].append(turn)
+    update_flow_digest(s, turn)
+
+    save_session_file(sid, s)
+    session["save_code"] = sid
+
+    return jsonify({"status": "ok", "sid": sid, "state": s})
 
 
-@app.route("/api/world")
-def get_world():
-    try:
-        world = load_world_db()
-        return jsonify(world)
-    except Exception as e:
-        logging.error(f"get_world error: {e}")
-        return jsonify({"error": "세계관 데이터를 불러올 수 없습니다."}), 500
+# ---------------------------------------------------------------------------
+# /execute-turn
+# ---------------------------------------------------------------------------
+@app.route("/execute-turn", methods=["POST"])
+def execute_turn():
+    data = request.get_json(force=True)
+    user_input = (data.get("user_input") or data.get("user_text") or "").strip()
+    if not user_input:
+        user_input = "[CONTINUE_SCENE]"
+    ui_settings = data.get("ui_settings", {})
+    on_screen_names = data.get("on_screen_names")
 
+    sid = session.get("save_code")
+    if not sid:
+        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
 
-@app.route("/api/start-session", methods=["POST"])
-def start_session():
-    try:
-        body = request.get_json(force=True)
-        character_id = body.get("character_id", "cha_01")
-        scenario = body.get("scenario", "기본 시나리오")
-        user_name = body.get("user_name", "플레이어")
-        settings = body.get("settings", {})
+    lock = get_session_lock(sid)
+    with lock:
+        s = load_session_file(sid)
+        if not s:
+            return jsonify({"status": "error", "message": "세션 파일을 찾을 수 없습니다."}), 404
 
-        chars = load_characters_db()
-        char = next((c for c in chars if c["id"] == character_id), chars[0])
+        # Update settings
+        s["ui_settings"] = merge_ui_settings(ui_settings)
+        if on_screen_names:
+            chars_db = load_characters_db()
+            valid = [n for n in on_screen_names if n in chars_db]
+            if valid:
+                s["on_screen"] = valid
 
-        rel_key = "acquainted" if settings.get("acquainted_mode") else "first_meet"
-        rel = dict(
-            char.get("relationship_defaults", {}).get(
-                rel_key,
-                {"affection": 50, "trust": 50, "tension": 20, "respect": 50, "intimacy": 0},
-            )
-        )
+        s["traffic_light"] = "YELLOW"
 
-        core4 = dict(
-            char.get(
-                "core4_defaults",
-                {"energy": 80, "intoxication": 0, "stress": 30, "pain": 0},
-            )
-        )
+        # Build prompts
+        sys_instr = build_system_instruction(s)
+        user_prompt = build_user_prompt(s, user_input)
 
-        sid = str(uuid.uuid4())
-        session_data = {
-            "session_id": sid,
-            "character_id": character_id,
-            "character_name": char["name_ko"],
-            "user_name": user_name,
-            "scenario": scenario,
-            "settings": settings,
-            "turn_count": 0,
-            "history": [],
-            "core_pins": [],
-            "relationship": rel,
-            "core4": core4,
-            "created_at": datetime.now().isoformat(),
+        try:
+            script = call_dima(sys_instr, user_prompt, s["ui_settings"])
+            script = post_process_script(script, s["player_name"])
+        except Exception as e:
+            logging.error(f"DIMA failed on turn: {e}")
+            script = fallback_script(s["on_screen"])
+
+        # Record turn
+        turn = {
+            "turn_id": len(s["turns"]) + 1,
+            "user_input": user_input,
+            "script": script,
+            "emotion": extract_emotion(script),
+            "ts": datetime.utcnow().isoformat() + "Z",
         }
+        s["turns"].append(turn)
+        update_flow_digest(s, turn)
 
-        session["session_id"] = sid
-        session["character_id"] = character_id
+        s["traffic_light"] = "GREEN"
+        save_session_file(sid, s)
 
-        lock = get_session_lock(sid)
-        with lock:
-            save_session_file(sid, session_data)
+        # Queue Maestro every N turns
+        if len(s["turns"]) % MAESTRO_UPDATE_FREQUENCY == 0:
+            threading.Thread(
+                target=_maestro_worker, args=(sid,), daemon=True
+            ).start()
 
-        return jsonify({"session_id": sid, "character": char, "session_data": session_data})
-    except Exception as e:
-        logging.error(f"start-session error: {e}")
-        return jsonify({"error": "세션을 시작할 수 없습니다."}), 500
+    return jsonify({"status": "ok", "sid": sid, "state": s})
 
 
-@app.route("/api/send-turn", methods=["POST"])
-def send_turn():
+# ---------------------------------------------------------------------------
+# /get-character-profiles
+# ---------------------------------------------------------------------------
+@app.route("/get-character-profiles")
+def get_character_profiles():
+    chars_db = load_characters_db()
+    profiles = []
+    for name, data in chars_db.items():
+        meta = data.get("metadata", {})
+        profiles.append({
+            "name": name,
+            "eng": meta.get("eng", name.lower()),
+            "color": meta.get("color", "#888888"),
+        })
+    return jsonify(profiles)
+
+
+# ---------------------------------------------------------------------------
+# /get-session-data
+# ---------------------------------------------------------------------------
+@app.route("/get-session-data")
+def get_session_data():
+    sid = session.get("save_code")
+    if not sid:
+        return jsonify({"status": "no_session"})
+    s = load_session_file(sid)
+    if not s:
+        return jsonify({"status": "no_session"})
+    return jsonify({"status": "ok", "state": s})
+
+
+# ---------------------------------------------------------------------------
+# /set_on_screen
+# ---------------------------------------------------------------------------
+@app.route("/set_on_screen", methods=["POST"])
+def set_on_screen():
+    data = request.get_json(force=True)
+    names = data.get("names", [])
+
+    sid = session.get("save_code")
+    if not sid:
+        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
+
+    chars_db = load_characters_db()
+    valid = [n for n in names if n in chars_db]
+    if not valid:
+        return jsonify({"status": "error", "message": "유효한 캐릭터가 없습니다."}), 400
+
+    lock = get_session_lock(sid)
+    with lock:
+        s = load_session_file(sid)
+        if not s:
+            return jsonify({"status": "error", "message": "세션 파일을 찾을 수 없습니다."}), 404
+        s["on_screen"] = valid
+        save_session_file(sid, s)
+
+    return jsonify({"status": "ok", "on_screen": valid})
+
+
+# ---------------------------------------------------------------------------
+# /reset-session
+# ---------------------------------------------------------------------------
+@app.route("/reset-session")
+def reset_session():
+    session.pop("save_code", None)
+    return jsonify({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# /branch_from_turn
+# ---------------------------------------------------------------------------
+@app.route("/branch_from_turn", methods=["POST"])
+def branch_from_turn():
+    data = request.get_json(force=True)
+    turn_index = data.get("turn_index", 0)
+
+    sid = session.get("save_code")
+    if not sid:
+        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
+
+    lock = get_session_lock(sid)
+    with lock:
+        s = load_session_file(sid)
+        if not s:
+            return jsonify({"status": "error", "message": "세션 파일을 찾을 수 없습니다."}), 404
+
+        if turn_index < 0 or turn_index >= len(s.get("turns", [])):
+            return jsonify({"status": "error", "message": "잘못된 턴 인덱스입니다."}), 400
+
+        # Deep copy and truncate
+        branched = copy.deepcopy(s)
+        new_sid = "S-" + uuid.uuid4().hex[:8].upper()
+        branched["session_id"] = new_sid
+        branched["turns"] = branched["turns"][: turn_index + 1]
+        branched["flow_digest_10"] = branched["flow_digest_10"][:MAX_HISTORY_LENGTH]
+
+        save_session_file(new_sid, branched)
+        session["save_code"] = new_sid
+
+    return jsonify({"status": "ok", "sid": new_sid, "state": branched})
+
+
+# ---------------------------------------------------------------------------
+# /novelize
+# ---------------------------------------------------------------------------
+@app.route("/novelize", methods=["POST"])
+def novelize():
+    data = request.get_json(force=True)
+    sid = session.get("save_code")
+    if not sid:
+        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
+
+    s = load_session_file(sid)
+    if not s or not s.get("turns"):
+        return jsonify({"status": "error", "message": "턴 데이터가 없습니다."}), 400
+
+    # Build prompt from turns
+    turn_texts = []
+    player_name = s.get("player_name", "사용자")
+    for turn in s["turns"]:
+        if turn.get("user_input") and turn["user_input"] not in ("[CONTINUE_SCENE]", "[SCENE_START]"):
+            turn_texts.append(f"[{player_name}] {turn['user_input']}")
+        for block in turn.get("script", []):
+            if block["type"] == "narration":
+                turn_texts.append(f"[나레이션] {block['content']}")
+            elif block["type"] == "dialogue":
+                turn_texts.append(f"[{block.get('character', '?')}] {block['content']}")
+
+    novel_prompt = (
+        "당신은 소설가입니다. 아래 대화/나레이션 로그를 기반으로 "
+        "한국어 소설 형식으로 재구성하세요. "
+        "캐릭터의 감정과 분위기를 살려 문학적으로 표현하세요.\n\n"
+        + "\n".join(turn_texts)
+    )
+
     try:
-        body = request.get_json(force=True)
-        user_input = body.get("user_input", "")
-        settings_override = body.get("settings_override", {})
-        illustration_toggle = settings_override.get("illustration", False)
-
-        sid = session.get("session_id")
-        if not sid:
-            return jsonify({"error": "세션 없음. 먼저 /api/start-session을 호출하세요."}), 400
-
-        lock = get_session_lock(sid)
-        with lock:
-            session_data = load_session_file(sid)
-            if not session_data:
-                return jsonify({"error": "세션 데이터를 찾을 수 없습니다."}), 404
-
-        chars = load_characters_db()
-        char = next(
-            (c for c in chars if c["id"] == session_data["character_id"]), chars[0]
+        response = client.models.generate_content(
+            model=MODEL_DIMA,
+            contents=[novel_prompt],
+            config=genai_types.GenerateContentConfig(temperature=0.7),
         )
-
-        dima_raw = None
-        dima_result = None
-        for attempt in range(3):
-            try:
-                dima_raw = call_dima(char, session_data, user_input, settings_override)
-                dima_result = json.loads(dima_raw)
-                break
-            except json.JSONDecodeError:
-                match = re.search(r"\{.*\}", dima_raw or "", re.DOTALL)
-                if match:
-                    try:
-                        dima_result = json.loads(match.group())
-                        break
-                    except Exception:
-                        pass
-            except Exception as e:
-                if attempt == 2:
-                    dima_result = fallback_response(char["name_ko"])
-                    break
-                time.sleep([1, 3, 9][attempt])
-
-        if not dima_result:
-            dima_result = fallback_response(char["name_ko"])
-
-        with lock:
-            session_data = load_session_file(sid)
-            core4 = session_data.get("core4", char.get("core4_defaults", {}))
-            delta4 = dima_result.get("suggested_core4_delta", {})
-            for k in ["energy", "intoxication", "stress", "pain"]:
-                core4[k] = clamp_stat(core4.get(k, 0) + delta4.get(k, 0))
-            session_data["core4"] = core4
-
-            rel = session_data.get("relationship", {})
-            delta_rel = dima_result.get("suggested_relationship_delta", {})
-            for k in ["affection", "trust", "tension", "respect", "intimacy"]:
-                rel[k] = clamp_stat(rel.get(k, 0) + delta_rel.get(k, 0))
-            session_data["relationship"] = rel
-
-            history = session_data.get("history", [])
-            history.append(
-                {
-                    "user": user_input,
-                    "character": dima_result.get("dialogue", ""),
-                    "emotion": dima_result.get("emotion", "neutral"),
-                    "action": dima_result.get("action", ""),
-                }
-            )
-            if len(history) > MAX_HISTORY_LENGTH:
-                history = history[-MAX_HISTORY_LENGTH:]
-            session_data["history"] = history
-            session_data["turn_count"] = session_data.get("turn_count", 0) + 1
-
-            save_session_file(sid, session_data)
-
-        turn_count = session_data["turn_count"]
-        if turn_count % MAESTRO_UPDATE_FREQUENCY == 0:
-            t = threading.Thread(
-                target=maestro_background_task,
-                args=(sid, char, dict(session_data)),
-                daemon=True,
-            )
-            t.start()
-
-        illustration_b64 = None
-        if should_generate_illustration(dima_result, illustration_toggle):
-            try:
-                illustration_b64 = call_nano_banana(char, dima_result)
-            except Exception as e:
-                logging.warning(f"Illustration generation failed: {e}")
-
-        response_data = {
-            "dialogue": dima_result.get("dialogue", ""),
-            "action": dima_result.get("action", ""),
-            "emotion": dima_result.get("emotion", "neutral"),
-            "inner_monologue": dima_result.get("inner_monologue", ""),
-            "scene_visual_tags": dima_result.get("scene_visual_tags", []),
-            "tension_level": dima_result.get("tension_level", 5),
-            "core4": session_data["core4"],
-            "relationship": session_data["relationship"],
-            "relationship_stage": get_relationship_stage(session_data["relationship"]),
-            "turn_count": session_data["turn_count"],
-        }
-        if illustration_b64:
-            response_data["illustration_b64"] = illustration_b64
-
-        return jsonify(response_data)
+        novel_text = response.text if response and response.text else ""
     except Exception as e:
-        logging.error(f"send-turn error: {e}")
-        return jsonify({"error": "처리 중 오류가 발생했습니다.", "dialogue": "(오류가 발생했습니다…)"}), 500
+        logging.error(f"Novelize failed: {e}")
+        novel_text = ""
 
+    if not novel_text:
+        return jsonify({"status": "error", "message": "소설화에 실패했습니다."}), 500
 
-@app.route("/api/session-state")
-def get_session_state():
+    # Save novel data
+    share_code = "N-" + uuid.uuid4().hex[:8].upper()
+    novel_data = {
+        "share_code": share_code,
+        "title": f"{player_name}의 이야기",
+        "text": novel_text,
+        "player_name": player_name,
+        "on_screen": s.get("on_screen", []),
+        "turn_count": len(s["turns"]),
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    # Save to session
+    lock = get_session_lock(sid)
+    with lock:
+        s_reload = load_session_file(sid)
+        if s_reload:
+            s_reload["novel_data"] = novel_data
+            save_session_file(sid, s_reload)
+
+    # Save shared copy
+    shared_path = SHARED_NOVELS_DIR / f"{share_code}.json"
     try:
-        sid = session.get("session_id")
-        if not sid:
-            return jsonify({"error": "세션 없음"}), 400
-        lock = get_session_lock(sid)
-        with lock:
-            data = load_session_file(sid)
-        if not data:
-            return jsonify({"error": "세션 데이터 없음"}), 404
-        data_copy = json.loads(
-            json.dumps(
-                data,
-                default=lambda o: list(o) if isinstance(o, deque) else str(o),
-            )
-        )
-        return jsonify(data_copy)
-    except Exception as e:
-        logging.error(f"session-state error: {e}")
-        return jsonify({"error": "세션 상태를 불러올 수 없습니다."}), 500
+        with open(shared_path, "w", encoding="utf-8") as f:
+            json.dump(novel_data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        logging.error(f"Failed to save shared novel: {traceback.format_exc()}")
+
+    return jsonify({"status": "ok", "novel_data": novel_data})
 
 
-@app.route("/api/hot-swap", methods=["POST"])
-def hot_swap():
+# ---------------------------------------------------------------------------
+# /get-my-novel
+# ---------------------------------------------------------------------------
+@app.route("/get-my-novel", methods=["POST"])
+def get_my_novel():
+    sid = session.get("save_code")
+    if not sid:
+        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
+
+    s = load_session_file(sid)
+    if not s:
+        return jsonify({"status": "error", "message": "세션을 찾을 수 없습니다."}), 404
+
+    novel_data = s.get("novel_data")
+    if not novel_data:
+        return jsonify({"status": "error", "message": "소설 데이터가 없습니다."}), 404
+
+    return jsonify({"status": "ok", "novel_data": novel_data})
+
+
+# ---------------------------------------------------------------------------
+# /get-shared-novel
+# ---------------------------------------------------------------------------
+@app.route("/get-shared-novel", methods=["POST"])
+def get_shared_novel():
+    data = request.get_json(force=True)
+    share_code = (data.get("share_code") or "").strip()
+    if not share_code:
+        return jsonify({"status": "error", "message": "공유 코드가 필요합니다."}), 400
+
+    shared_path = SHARED_NOVELS_DIR / f"{share_code}.json"
+    if not shared_path.exists():
+        return jsonify({"status": "error", "message": "공유된 소설을 찾을 수 없습니다."}), 404
+
     try:
-        body = request.get_json(force=True)
-        sid = session.get("session_id")
-        if not sid:
-            return jsonify({"error": "세션 없음"}), 400
+        with open(shared_path, "r", encoding="utf-8") as f:
+            novel_data = json.load(f)
+    except Exception:
+        return jsonify({"status": "error", "message": "소설 로드에 실패했습니다."}), 500
 
-        lock = get_session_lock(sid)
-        with lock:
-            data = load_session_file(sid)
-            if not data:
-                return jsonify({"error": "세션 없음"}), 404
-
-            if "core4_overrides" in body:
-                for k, v in body["core4_overrides"].items():
-                    data["core4"][k] = clamp_stat(int(v))
-
-            if "relationship_overrides" in body:
-                for k, v in body["relationship_overrides"].items():
-                    data["relationship"][k] = clamp_stat(int(v))
-
-            save_session_file(sid, data)
-
-        return jsonify(
-            {"status": "ok", "core4": data["core4"], "relationship": data["relationship"]}
-        )
-    except Exception as e:
-        logging.error(f"hot-swap error: {e}")
-        return jsonify({"error": "핫스왑 처리 중 오류가 발생했습니다."}), 500
+    return jsonify({"status": "ok", "novel_data": novel_data})
 
 
-@app.route("/api/save-novel", methods=["POST"])
-def save_novel():
-    try:
-        sid = session.get("session_id")
-        if not sid:
-            return jsonify({"error": "세션 없음"}), 400
-
-        lock = get_session_lock(sid)
-        with lock:
-            data = load_session_file(sid)
-
-        novel_id = str(uuid.uuid4())[:8]
-        novel_path = SHARED_NOVELS_DIR / f"{novel_id}.json"
-        novel_path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, default=list),
-            encoding="utf-8",
-        )
-
-        return jsonify({"novel_id": novel_id, "status": "saved"})
-    except Exception as e:
-        logging.error(f"save-novel error: {e}")
-        return jsonify({"error": "소설 저장 중 오류가 발생했습니다."}), 500
-
-
-@app.route("/api/load-novel/<novel_id>")
-def load_novel(novel_id):
-    try:
-        # Sanitize: allow only alphanumeric, underscore, hyphen
-        safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", novel_id)
-        if not safe_id:
-            return jsonify({"error": "유효하지 않은 소설 ID입니다."}), 400
-        # Build the path entirely from the safe id and resolve to detect traversal
-        safe_dir = SHARED_NOVELS_DIR.resolve()
-        novel_path = (safe_dir / (safe_id + ".json")).resolve()
-        # Use is_relative_to for robust traversal protection (Python 3.9+)
-        if not novel_path.is_relative_to(safe_dir):
-            return jsonify({"error": "유효하지 않은 경로입니다."}), 400
-        if not novel_path.exists():
-            return jsonify({"error": "소설을 찾을 수 없습니다."}), 404
-        data = json.loads(novel_path.read_text(encoding="utf-8"))
-        return jsonify(data)
-    except Exception as e:
-        logging.error(f"load-novel error: {e}")
-        return jsonify({"error": "소설 불러오기 중 오류가 발생했습니다."}), 500
-
-
-@app.errorhandler(500)
-def internal_error(e):
-    logging.error(f"Internal server error: {e}")
-    return jsonify({"error": "서버 내부 오류가 발생했습니다."}), 500
-
-
+# =========================================================================
+# Main
+# =========================================================================
 if __name__ == "__main__":
-    import sys
-
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    print(f"★ Sarura Atelier V3 → http://localhost:{port}")
-    from waitress import serve
-
-    serve(app, host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000, debug=False)
