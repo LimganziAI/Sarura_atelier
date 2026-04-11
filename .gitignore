@@ -9,3 +9,4 @@ shared_novels/*
 !shared_novels/.gitkeep
 *.egg-info/
 .env
+api_keys.txt
