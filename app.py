@@ -84,6 +84,7 @@ def rate_limited_call(func):
     global _last_call_time
 
     def wrapper(*args, **kwargs):
+        last_error: Exception | None = None
         for attempt in range(3):
             try:
                 with _rate_lock:
@@ -100,6 +101,7 @@ def rate_limited_call(func):
                     _last_call_time = time.time()
                 return func(*args, **kwargs)
             except Exception as e:
+                last_error = e
                 err_str = str(e)
                 if "429" in err_str or "500" in err_str:
                     wait = [1, 3, 9][attempt]
@@ -108,7 +110,7 @@ def rate_limited_call(func):
                         raise
                 else:
                     raise
-        raise RuntimeError("rate_limited_call: all retries exhausted")
+        raise RuntimeError(f"rate_limited_call: all retries exhausted. Last error: {last_error}")
     return wrapper
 
 
@@ -205,17 +207,19 @@ def load_world_db() -> dict:
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
-def _safe_filename(name: str) -> str:
-    """Sanitise an identifier so it cannot escape the target directory."""
+def _safe_path(directory: Path, name: str) -> Path:
+    """Build a safe file path inside *directory*, rejecting traversal."""
     base = Path(name).name  # strip any directory components
     if not _SAFE_ID_RE.match(base):
         raise ValueError(f"Invalid identifier: {name!r}")
-    return base
+    resolved = (directory / f"{base}.json").resolve()
+    if not str(resolved).startswith(str(directory.resolve())):
+        raise ValueError(f"Path escapes target directory: {name!r}")
+    return resolved
 
 
 def load_session_file(sid: str) -> dict | None:
-    safe = _safe_filename(sid)
-    path = SESSIONS_DIR / f"{safe}.json"
+    path = _safe_path(SESSIONS_DIR, sid)
     if not path.exists():
         return None
     try:
@@ -227,8 +231,7 @@ def load_session_file(sid: str) -> dict | None:
 
 
 def save_session_file(sid: str, data: dict):
-    safe = _safe_filename(sid)
-    path = SESSIONS_DIR / f"{safe}.json"
+    path = _safe_path(SESSIONS_DIR, sid)
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1123,11 +1126,10 @@ def get_shared_novel():
         return jsonify({"status": "error", "message": "공유 코드가 필요합니다."}), 400
 
     try:
-        safe_code = _safe_filename(share_code)
+        shared_path = _safe_path(SHARED_NOVELS_DIR, share_code)
     except ValueError:
         return jsonify({"status": "error", "message": "잘못된 공유 코드입니다."}), 400
 
-    shared_path = SHARED_NOVELS_DIR / f"{safe_code}.json"
     if not shared_path.exists():
         return jsonify({"status": "error", "message": "공유된 소설을 찾을 수 없습니다."}), 404
 
