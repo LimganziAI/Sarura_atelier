@@ -775,13 +775,15 @@ def save_novel():
 @app.route("/api/load-novel/<novel_id>")
 def load_novel(novel_id):
     try:
-        # Sanitize and validate novel_id
-        novel_id = re.sub(r"[^a-zA-Z0-9_-]", "", novel_id)
-        if not novel_id:
+        # Sanitize: allow only alphanumeric, underscore, hyphen
+        safe_id = re.sub(r"[^a-zA-Z0-9_-]", "", novel_id)
+        if not safe_id:
             return jsonify({"error": "유효하지 않은 소설 ID입니다."}), 400
-        novel_path = (SHARED_NOVELS_DIR / f"{novel_id}.json").resolve()
-        # Ensure the resolved path is still within SHARED_NOVELS_DIR
-        if not str(novel_path).startswith(str(SHARED_NOVELS_DIR.resolve())):
+        # Build the path entirely from the safe id and resolve to detect traversal
+        safe_dir = SHARED_NOVELS_DIR.resolve()
+        novel_path = (safe_dir / (safe_id + ".json")).resolve()
+        # Parent must equal the novels directory exactly
+        if novel_path.parent != safe_dir:
             return jsonify({"error": "유효하지 않은 경로입니다."}), 400
         if not novel_path.exists():
             return jsonify({"error": "소설을 찾을 수 없습니다."}), 404
