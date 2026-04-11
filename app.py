@@ -108,7 +108,7 @@ def rate_limited_call(func):
                         raise
                 else:
                     raise
-        return None
+        raise RuntimeError("rate_limited_call: all retries exhausted")
     return wrapper
 
 
@@ -202,8 +202,20 @@ def load_world_db() -> dict:
 # ---------------------------------------------------------------------------
 # Session file I/O
 # ---------------------------------------------------------------------------
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _safe_filename(name: str) -> str:
+    """Sanitise an identifier so it cannot escape the target directory."""
+    base = Path(name).name  # strip any directory components
+    if not _SAFE_ID_RE.match(base):
+        raise ValueError(f"Invalid identifier: {name!r}")
+    return base
+
+
 def load_session_file(sid: str) -> dict | None:
-    path = SESSIONS_DIR / f"{sid}.json"
+    safe = _safe_filename(sid)
+    path = SESSIONS_DIR / f"{safe}.json"
     if not path.exists():
         return None
     try:
@@ -215,7 +227,8 @@ def load_session_file(sid: str) -> dict | None:
 
 
 def save_session_file(sid: str, data: dict):
-    path = SESSIONS_DIR / f"{sid}.json"
+    safe = _safe_filename(sid)
+    path = SESSIONS_DIR / f"{safe}.json"
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1109,7 +1122,12 @@ def get_shared_novel():
     if not share_code:
         return jsonify({"status": "error", "message": "공유 코드가 필요합니다."}), 400
 
-    shared_path = SHARED_NOVELS_DIR / f"{share_code}.json"
+    try:
+        safe_code = _safe_filename(share_code)
+    except ValueError:
+        return jsonify({"status": "error", "message": "잘못된 공유 코드입니다."}), 400
+
+    shared_path = SHARED_NOVELS_DIR / f"{safe_code}.json"
     if not shared_path.exists():
         return jsonify({"status": "error", "message": "공유된 소설을 찾을 수 없습니다."}), 404
 
