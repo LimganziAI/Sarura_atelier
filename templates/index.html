@@ -2,781 +2,1015 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>사루라 아뜨리에 V3</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>사루라 아뜨리에</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Noto Sans KR', sans-serif; background: #1a1a1a; color: #e0e0e0; min-height: 100vh; }
-#app { max-width: 700px; margin: 0 auto; display: flex; flex-direction: column; height: 100vh; }
+:root {
+  --bg-darkest:#1a1a1a;--bg-dark:#2c2c2c;--bg-medium:#3a3a3a;--bg-light:#4a4a4a;
+  --text-light:#e0e0e0;--text-medium:#a0a0a0;--accent-gold:#ffdd57;--accent-blue:#007bff;
+  --status-red:#dc3545;--status-green:#28a745;--status-yellow:#ffc107;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;overflow:hidden;}
+body{font-family:'Noto Sans KR',sans-serif;background:var(--bg-darkest);color:var(--text-light);font-size:14px;line-height:1.6;}
 
-/* Top bar */
-#top-bar { display: flex; align-items: center; padding: 8px 12px; background: #111; border-bottom: 1px solid #333; gap: 8px; }
-.traffic-light { display: flex; gap: 4px; }
-.tl-dot { width: 12px; height: 12px; border-radius: 50%; }
-.tl-red { background: #ff5f57; }
-.tl-yellow { background: #febc2e; }
-.tl-green { background: #28c840; }
-#top-title { flex: 1; text-align: center; font-size: 13px; color: #888; }
-.icon-btn { background: none; border: 1px solid #444; color: #ccc; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-.icon-btn:hover { border-color: #888; color: #fff; }
+/* ─── App Container ─── */
+.app-container{display:flex;flex-direction:column;max-width:700px;margin:0 auto;height:100dvh;position:relative;}
 
-/* Header: character portrait */
-#char-header { background: #2c2c2c; border-bottom: 1px solid #333; overflow: hidden; transition: max-height 0.3s; max-height: 200px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-#char-header.collapsed { max-height: 0; }
-#char-portrait { width: 100%; max-height: 180px; object-fit: contain; object-position: top; display: none; }
-#char-portrait-placeholder { width: 100%; height: 120px; display: flex; align-items: center; justify-content: center; color: #555; font-size: 40px; }
+/* ─── Top Bar ─── */
+.top-bar{display:flex;align-items:center;padding:6px 12px;background:#111;border-bottom:1px solid #333;gap:8px;flex-shrink:0;min-height:40px;}
+.traffic-light{display:flex;align-items:center;gap:4px;cursor:default;}
+.tl-dot{width:11px;height:11px;border-radius:50%;opacity:.3;transition:opacity .3s;}
+.tl-dot.on{opacity:1;}
+.tl-red{background:#ff5f57;}
+.tl-yellow{background:#febc2e;}
+.tl-green{background:#28c840;}
+.top-session-id{font-size:11px;color:#666;flex:1;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.icon-btn{background:none;border:1px solid #444;color:#ccc;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:12px;transition:all .2s;}
+.icon-btn:hover{border-color:#888;color:#fff;}
 
-/* Info bar */
-#info-bar { display: flex; align-items: center; padding: 6px 12px; background: #222; border-bottom: 1px solid #333; gap: 8px; flex-wrap: wrap; }
-#player-name-display { font-size: 12px; color: #aaa; }
-#participants-list { flex: 1; font-size: 12px; color: #ccc; }
-.toggle-btn { background: #333; border: 1px solid #555; color: #ccc; padding: 4px 10px; border-radius: 12px; cursor: pointer; font-size: 12px; transition: background 0.2s; }
-.toggle-btn.active { background: #4a6; border-color: #4a6; color: #fff; }
+/* ─── Info Bar ─── */
+.info-bar{display:flex;align-items:center;padding:5px 12px;background:#222;border-bottom:1px solid #333;gap:6px;flex-wrap:wrap;flex-shrink:0;}
+.participants-preview{flex:1;font-size:12px;color:var(--text-medium);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.participants-preview .p-name{font-weight:500;}
+.toggle-panel-btn{background:#333;border:1px solid #555;color:#ccc;padding:3px 10px;border-radius:12px;cursor:pointer;font-size:11px;transition:all .2s;}
+.toggle-panel-btn.active{background:var(--accent-blue);border-color:var(--accent-blue);color:#fff;}
 
-/* Scene & Director panels */
-.settings-panel { background: #2a2a2a; border-bottom: 1px solid #333; padding: 12px; display: none; }
-.settings-panel.open { display: block; }
-.panel-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; align-items: center; }
-.panel-row label { font-size: 12px; color: #aaa; min-width: 80px; }
-input[type=text] { background: #1a1a1a; border: 1px solid #444; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
-input[type=range] { accent-color: #4a6; }
+/* ─── Panels ─── */
+.settings-panel{background:#252525;border-bottom:1px solid #333;padding:0;max-height:0;overflow:hidden;transition:max-height .35s ease,padding .35s ease;flex-shrink:0;}
+.settings-panel.open{padding:12px;max-height:600px;overflow-y:auto;}
+.panel-title{font-size:13px;font-weight:500;color:var(--accent-gold);margin-bottom:8px;}
+.panel-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center;}
+.panel-row label{font-size:12px;color:#aaa;min-width:90px;}
+.panel-row input[type=text]{background:var(--bg-darkest);border:1px solid #444;color:var(--text-light);padding:5px 8px;border-radius:4px;font-size:13px;flex:1;min-width:0;font-family:inherit;}
+.panel-row input[type=text]:focus{outline:none;border-color:var(--accent-blue);}
 
 /* Character selector */
-#char-selector { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.char-btn { padding: 4px 10px; border-radius: 16px; border: 2px solid var(--c, #555); background: transparent; color: #ccc; cursor: pointer; font-size: 12px; transition: all 0.2s; }
-.char-btn:hover { background: var(--c, #555); color: #fff; }
-.char-btn.selected { background: var(--c, #555); color: #fff; }
+.char-selector{display:flex;flex-wrap:wrap;gap:6px;}
+.char-btn{padding:4px 12px;border-radius:16px;border:2px solid var(--c,#555);background:transparent;color:#999;cursor:pointer;font-size:12px;transition:all .2s;font-family:inherit;}
+.char-btn:hover{color:#fff;background:color-mix(in srgb,var(--c,#555) 30%,transparent);}
+.char-btn.active{background:var(--c,#555);color:#fff;border-color:var(--c,#555);}
+.player-btn{--c:var(--accent-blue);}
 
-/* Director toggles */
-#director-toggles { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.dir-toggle { padding: 4px 10px; border-radius: 12px; border: 1px solid #555; background: #333; color: #ccc; cursor: pointer; font-size: 12px; }
-.dir-toggle.on { background: #2a5a3a; border-color: #4a6; color: #8f8; }
+/* Toggles */
+.toggle-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;}
+.toggle-item{display:flex;align-items:center;gap:4px;font-size:12px;color:#bbb;cursor:pointer;}
+.toggle-item input[type=checkbox]{accent-color:var(--accent-gold);cursor:pointer;}
 
-/* Genre presets */
-#genre-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.genre-tag { padding: 3px 8px; border-radius: 10px; border: 1px solid #444; background: #333; color: #bbb; cursor: pointer; font-size: 11px; }
-.genre-tag.active { background: #4466aa; border-color: #6688cc; color: #fff; }
+/* Range sliders */
+.slider-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.slider-row label{font-size:12px;color:#aaa;min-width:90px;}
+.slider-row input[type=range]{flex:1;accent-color:var(--accent-gold);cursor:pointer;}
+.slider-val{font-size:11px;color:var(--accent-gold);min-width:30px;text-align:right;}
 
-/* CORE-4 sliders */
-#core4-section { padding: 8px 0; }
-.stat-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.stat-label { font-size: 11px; color: #888; width: 60px; }
-.stat-val { font-size: 11px; color: #aaa; width: 25px; text-align: right; }
+/* Genre tags */
+.genre-tags{display:flex;flex-wrap:wrap;gap:6px;}
+.genre-tag{padding:3px 10px;border-radius:12px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;font-size:11px;transition:all .2s;font-family:inherit;}
+.genre-tag:hover{border-color:#888;color:#ddd;}
+.genre-tag.active{background:var(--accent-gold);border-color:var(--accent-gold);color:#111;font-weight:500;}
 
-/* Chat log */
-#chat-log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-.msg-narration { font-style: italic; color: #888; font-size: 13px; text-align: center; padding: 4px 8px; }
-.msg-user { align-self: flex-end; background: #1a4a8a; color: #e0eeff; padding: 8px 12px; border-radius: 12px 12px 2px 12px; max-width: 80%; font-size: 14px; }
-.msg-char { align-self: flex-start; max-width: 85%; }
-.msg-char-bubble { background: #2c2c2c; border-left: 3px solid var(--char-color, #4a6); padding: 8px 12px; border-radius: 2px 12px 12px 2px; font-size: 14px; }
-.msg-char-name { font-size: 11px; color: var(--char-color, #4a6); margin-bottom: 4px; font-weight: 500; }
-.msg-char-action { font-size: 12px; color: #888; font-style: italic; margin-top: 4px; }
-.msg-monologue { font-size: 11px; color: #666; font-style: italic; margin-top: 4px; border-top: 1px solid #333; padding-top: 4px; }
-.msg-illustration { margin-top: 8px; }
-.msg-illustration img { max-width: 100%; border-radius: 8px; opacity: 0; transition: opacity 0.5s; }
-.msg-illustration img.loaded { opacity: 1; }
-.branch-btn { font-size: 10px; color: #555; background: none; border: none; cursor: pointer; margin-top: 4px; padding: 2px 4px; }
-.branch-btn:hover { color: #888; }
+/* ─── Chat Log ─── */
+.chat-log{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:4px;scroll-behavior:smooth;}
+.chat-log::-webkit-scrollbar{width:4px;}
+.chat-log::-webkit-scrollbar-thumb{background:#444;border-radius:2px;}
 
-/* Chat form */
-#chat-form { display: flex; gap: 8px; padding: 10px 12px; background: #111; border-top: 1px solid #333; }
-#user-input { flex: 1; background: #2c2c2c; border: 1px solid #444; color: #e0e0e0; padding: 8px 12px; border-radius: 8px; font-family: inherit; font-size: 14px; resize: none; min-height: 48px; max-height: 120px; }
-#user-input:focus { outline: none; border-color: #666; }
-#send-btn { background: #2a5a3a; border: none; color: #fff; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-#send-btn:hover { background: #3a6a4a; }
-#send-btn:disabled { background: #333; cursor: default; }
+/* Turn wrapper */
+.turn-wrapper{margin-bottom:8px;position:relative;}
+.turn-divider{display:flex;align-items:center;gap:8px;margin:8px 0 4px;font-size:10px;color:#555;}
+.turn-divider::before,.turn-divider::after{content:'';flex:1;height:1px;background:#333;}
+.branch-btn{background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;opacity:.4;transition:opacity .2s;}
+.branch-btn:hover{opacity:1;}
 
-/* Modal */
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; display: none; align-items: center; justify-content: center; }
-.modal-overlay.open { display: flex; }
-.modal { background: #2c2c2c; border: 1px solid #444; border-radius: 12px; padding: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; }
-.modal h3 { margin-bottom: 12px; color: #eee; }
-.modal input[type=text] { width: 100%; margin-bottom: 8px; }
-.modal-btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; }
-.modal-btn-primary { background: #2a5a3a; color: #fff; }
-.modal-btn-secondary { background: #444; color: #ccc; }
-.modal-close { float: right; background: none; border: none; color: #888; cursor: pointer; font-size: 18px; }
+/* Message bubbles */
+.user-message{align-self:flex-end;background:var(--accent-blue);color:#fff;padding:8px 14px;border-radius:16px 16px 4px 16px;max-width:85%;font-size:13px;white-space:pre-wrap;word-break:break-word;margin:2px 0;}
+.narration-message{align-self:center;color:var(--text-medium);font-style:italic;font-size:13px;padding:6px 10px;max-width:95%;text-align:center;white-space:pre-wrap;word-break:break-word;line-height:1.7;}
+.dialogue-message{align-self:flex-start;background:var(--bg-dark);border-left:3px solid var(--c,#888);padding:8px 12px;border-radius:4px 12px 12px 4px;max-width:85%;margin:2px 0;white-space:pre-wrap;word-break:break-word;}
+.dialogue-name{font-size:12px;font-weight:700;margin-bottom:2px;}
+.dialogue-content{font-size:13px;line-height:1.6;}
+.dialogue-monologue{font-size:12px;color:#777;font-style:italic;margin-top:6px;padding-top:6px;border-top:1px solid #444;}
 
-/* Status bar */
-#status-bar { height: 3px; background: transparent; }
-#status-bar.loading { background: linear-gradient(90deg, #4a6 0%, #66aaff 50%, #4a6 100%); background-size: 200%; animation: loading-bar 1s linear infinite; }
-@keyframes loading-bar { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* System message */
+.system-message{align-self:center;font-size:11px;color:#666;padding:4px 12px;background:#222;border-radius:8px;margin:4px 0;}
 
-@media (max-width: 480px) { #app { max-width: 100%; } }
+/* ─── Chat Form ─── */
+.chat-form{display:flex;align-items:flex-end;gap:8px;padding:10px 12px;background:#111;border-top:1px solid #333;flex-shrink:0;}
+.chat-textarea{flex:1;background:var(--bg-dark);border:1px solid #444;color:var(--text-light);padding:10px 12px;border-radius:12px;font-size:14px;font-family:inherit;resize:none;line-height:1.5;min-height:42px;max-height:120px;overflow-y:auto;transition:border-color .2s;}
+.chat-textarea:focus{outline:none;border-color:var(--accent-blue);}
+.chat-textarea::placeholder{color:#666;}
+.submit-btn{background:var(--accent-blue);color:#fff;border:none;padding:10px 18px;border-radius:12px;font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap;font-family:inherit;transition:background .2s,opacity .2s;min-height:42px;}
+.submit-btn:hover{background:#0069d9;}
+.submit-btn:disabled{opacity:.5;cursor:not-allowed;}
+.submit-btn.retry{background:var(--status-red);}
+
+/* ─── Modals ─── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:none;align-items:center;justify-content:center;padding:20px;}
+.modal-overlay.show{display:flex;}
+.modal{background:var(--bg-dark);border:1px solid #444;border-radius:12px;padding:20px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;position:relative;}
+.modal-close{position:absolute;top:10px;right:14px;background:none;border:none;color:#888;font-size:20px;cursor:pointer;}
+.modal-close:hover{color:#fff;}
+.modal h2{font-size:16px;font-weight:600;margin-bottom:14px;color:var(--accent-gold);}
+.modal-section{margin-bottom:16px;}
+.modal-section h3{font-size:13px;color:#aaa;margin-bottom:6px;}
+.modal-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;}
+.modal-input{flex:1;background:var(--bg-darkest);border:1px solid #444;color:var(--text-light);padding:8px 10px;border-radius:6px;font-size:13px;font-family:inherit;}
+.modal-input:focus{outline:none;border-color:var(--accent-blue);}
+.modal-btn{background:var(--accent-blue);color:#fff;border:none;padding:8px 14px;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit;transition:background .2s;white-space:nowrap;}
+.modal-btn:hover{background:#0069d9;}
+.modal-btn.danger{background:var(--status-red);}
+.modal-btn.danger:hover{background:#c82333;}
+.modal-btn.gold{background:var(--accent-gold);color:#111;}
+.copy-code{font-family:monospace;background:var(--bg-darkest);padding:6px 10px;border-radius:4px;font-size:13px;color:var(--accent-gold);cursor:pointer;user-select:all;display:inline-block;border:1px solid #444;}
+.copy-code:hover{border-color:var(--accent-gold);}
+.recent-list{list-style:none;max-height:150px;overflow-y:auto;}
+.recent-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #333;font-size:12px;color:#bbb;cursor:pointer;transition:background .2s;}
+.recent-item:hover{background:var(--bg-medium);}
+
+/* Novel modal */
+.novel-content{background:var(--bg-darkest);border:1px solid #444;border-radius:8px;padding:16px;font-size:13px;line-height:1.8;max-height:50vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-top:10px;}
+.novel-title{font-size:15px;font-weight:600;text-align:center;margin-bottom:6px;color:var(--accent-gold);}
+.novel-share{text-align:center;margin-top:10px;}
+
+/* Utility */
+.hidden{display:none!important;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+.fade-in{animation:fadeIn .25s ease;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+.pulsing{animation:pulse 1.2s infinite;}
 </style>
 </head>
 <body>
-<div id="app">
-  <div id="top-bar">
-    <div class="traffic-light">
-      <div class="tl-dot tl-red" id="conn-dot"></div>
-      <div class="tl-dot tl-yellow"></div>
-      <div class="tl-dot tl-green"></div>
+<div class="app-container">
+
+  <!-- ─── Top Bar ─── -->
+  <div class="top-bar">
+    <div class="traffic-light" id="trafficLight" title="상태">
+      <span class="tl-dot tl-red" id="tlRed"></span>
+      <span class="tl-dot tl-yellow" id="tlYellow"></span>
+      <span class="tl-dot tl-green on" id="tlGreen"></span>
     </div>
-    <span id="top-title">사루라 아뜨리에 V3</span>
-    <button class="icon-btn" onclick="openModal('session-modal')">💾 세션</button>
-    <button class="icon-btn" onclick="openModal('novel-modal')">📖 소설</button>
-  </div>
-  <div id="status-bar"></div>
-
-  <div id="char-header" onclick="toggleHeader()">
-    <img id="char-portrait" src="" alt="캐릭터">
-    <div id="char-portrait-placeholder">🎭</div>
+    <span class="top-session-id" id="sessionIdDisplay">세션 없음</span>
+    <button class="icon-btn" id="btnSession" title="세션 관리">💾</button>
+    <button class="icon-btn" id="btnNovel" title="소설화">📖</button>
   </div>
 
-  <div id="info-bar">
-    <span id="player-name-display">플레이어</span>
-    <span id="participants-list"></span>
-    <button class="toggle-btn" onclick="togglePanel('scene-panel')">씬 설정</button>
-    <button class="toggle-btn" onclick="togglePanel('director-panel')">연출 설정</button>
+  <!-- ─── Info Bar ─── -->
+  <div class="info-bar">
+    <span class="participants-preview" id="participantsPreview">참여 캐릭터 없음</span>
+    <button class="toggle-panel-btn" id="btnToggleScene">🎭 장면</button>
+    <button class="toggle-panel-btn" id="btnToggleDirector">🎬 연출</button>
   </div>
 
-  <div id="scene-panel" class="settings-panel">
+  <!-- ─── Scene Panel ─── -->
+  <div class="settings-panel open" id="scenePanel">
+    <div class="panel-title">🎭 장면 설정</div>
     <div class="panel-row">
       <label>플레이어 이름</label>
-      <input type="text" id="player-name-input" value="플레이어" placeholder="이름 입력">
-      <button class="toggle-btn" onclick="applyPlayerName()">적용</button>
-    </div>
-    <div class="panel-row"><label>캐릭터 선택</label></div>
-    <div id="char-selector"></div>
-  </div>
-
-  <div id="director-panel" class="settings-panel">
-    <div id="director-toggles">
-      <button class="dir-toggle" data-key="first_person" onclick="toggleDirSetting(this)">1인칭 POV</button>
-      <button class="dir-toggle on" data-key="show_monologue" onclick="toggleDirSetting(this)">내면 독백 표시</button>
-      <button class="dir-toggle" data-key="acquainted_mode" onclick="toggleDirSetting(this)">지인 모드</button>
-      <button class="dir-toggle" data-key="adult_mode" onclick="toggleDirSetting(this)">성인 모드</button>
-      <button class="dir-toggle" data-key="char_initiative" onclick="toggleDirSetting(this)">캐릭터 주도</button>
-      <button class="dir-toggle" data-key="illustration" onclick="toggleDirSetting(this)">일러스트 생성</button>
+      <input type="text" id="playerNameInput" placeholder="이름을 입력하세요" value="">
     </div>
     <div class="panel-row">
+      <label>등장 캐릭터</label>
+    </div>
+    <div class="char-selector" id="charSelector"></div>
+  </div>
+
+  <!-- ─── Director Panel ─── -->
+  <div class="settings-panel" id="directorPanel">
+    <div class="panel-title">🎬 연출 설정</div>
+    <div class="toggle-row">
+      <label class="toggle-item"><input type="checkbox" id="optPov" checked> 1인칭 시점</label>
+      <label class="toggle-item"><input type="checkbox" id="optMonologue" checked> 속마음 표시</label>
+      <label class="toggle-item"><input type="checkbox" id="optAcquainted"> 지인 모드</label>
+      <label class="toggle-item"><input type="checkbox" id="optAdult"> 성인 모드</label>
+      <label class="toggle-item"><input type="checkbox" id="optChoices" checked> 캐릭터 주도성</label>
+    </div>
+    <div class="slider-row">
       <label>나레이션 비율</label>
-      <input type="range" id="narration-ratio" min="0" max="100" value="50">
-      <span id="narration-ratio-val">50%</span>
+      <input type="range" id="sliderNarration" min="0" max="100" value="40">
+      <span class="slider-val" id="valNarration">40%</span>
     </div>
-    <div class="panel-row">
-      <label>템포</label>
-      <input type="range" id="tempo-slider" min="0" max="100" value="50">
-      <span id="tempo-val">50%</span>
+    <div class="slider-row">
+      <label>전개 속도</label>
+      <input type="range" id="sliderTempo" min="1" max="9" value="5">
+      <span class="slider-val" id="valTempo">5</span>
     </div>
-    <div class="panel-row">
+    <div class="slider-row">
       <label>묘사 밀도</label>
-      <input type="range" id="density-slider" min="0" max="100" value="50">
-      <span id="density-val">50%</span>
+      <input type="range" id="sliderDesc" min="1" max="9" value="5">
+      <span class="slider-val" id="valDesc">5</span>
     </div>
-    <div class="panel-row"><label>장르 프리셋</label></div>
-    <div id="genre-presets"></div>
-    <div class="panel-row" style="margin-top: 10px;"><label>CORE-4 조정</label></div>
-    <div id="core4-section"></div>
+    <div class="panel-row" style="margin-top:4px;">
+      <label>장르</label>
+    </div>
+    <div class="genre-tags" id="genreTags">
+      <button class="genre-tag active" data-val="auto">자동</button>
+      <button class="genre-tag" data-val="slice_of_life">일상</button>
+      <button class="genre-tag" data-val="romance">로맨스</button>
+      <button class="genre-tag" data-val="comedy">코미디</button>
+      <button class="genre-tag" data-val="drama">드라마</button>
+      <button class="genre-tag" data-val="action">액션</button>
+      <button class="genre-tag" data-val="horror">호러</button>
+      <button class="genre-tag" data-val="mystery">미스터리</button>
+    </div>
   </div>
 
-  <div id="chat-log"></div>
+  <!-- ─── Chat Log ─── -->
+  <div class="chat-log" id="chatLog"></div>
 
-  <div id="chat-form">
-    <textarea id="user-input" placeholder="메시지를 입력하세요… (Enter: 전송, Shift+Enter: 줄바꿈)"></textarea>
-    <button id="send-btn" onclick="sendTurn()">전송</button>
+  <!-- ─── Chat Form ─── -->
+  <div class="chat-form">
+    <textarea class="chat-textarea" id="chatInput" placeholder="이야기를 시작하세요…" rows="1"></textarea>
+    <button class="submit-btn" id="submitBtn">시작</button>
+  </div>
+
+</div>
+
+<!-- ─── Session Modal ─── -->
+<div class="modal-overlay" id="sessionModal">
+  <div class="modal">
+    <button class="modal-close" id="sessionModalClose">&times;</button>
+    <h2>💾 세션 관리</h2>
+    <div class="modal-section" id="sessionCurrentSection">
+      <h3>현재 세션</h3>
+      <div class="modal-row">
+        <span class="copy-code" id="sessionCodeDisplay" title="클릭하여 복사">-</span>
+        <button class="modal-btn" id="btnCopyCode">복사</button>
+      </div>
+    </div>
+    <div class="modal-section">
+      <h3>세션 불러오기</h3>
+      <div class="modal-row">
+        <input class="modal-input" id="loadCodeInput" placeholder="S-XXXXXXXX">
+        <button class="modal-btn" id="btnLoadCode">불러오기</button>
+      </div>
+    </div>
+    <div class="modal-section">
+      <h3>최근 세션</h3>
+      <ul class="recent-list" id="recentList"></ul>
+    </div>
+    <div class="modal-section" style="text-align:center;margin-top:12px;">
+      <button class="modal-btn danger" id="btnResetSession">세션 초기화</button>
+    </div>
   </div>
 </div>
 
-<!-- Session Modal -->
-<div class="modal-overlay" id="session-modal">
+<!-- ─── Novel Modal ─── -->
+<div class="modal-overlay" id="novelModal">
   <div class="modal">
-    <button class="modal-close" onclick="closeModal('session-modal')">×</button>
-    <h3>세션 관리</h3>
-    <div class="panel-row">
-      <label>플레이어 이름</label>
-      <input type="text" id="modal-player-name" value="플레이어">
+    <button class="modal-close" id="novelModalClose">&times;</button>
+    <h2>📖 소설화</h2>
+    <div class="modal-section">
+      <div class="modal-row">
+        <button class="modal-btn gold" id="btnNovelize">✨ 소설 생성</button>
+        <button class="modal-btn" id="btnMyNovel">내 소설 보기</button>
+      </div>
     </div>
-    <div class="panel-row">
-      <label>시나리오</label>
-      <input type="text" id="modal-scenario" value="사루라 기숙사 일상">
+    <div class="modal-section">
+      <h3>공유 소설 열기</h3>
+      <div class="modal-row">
+        <input class="modal-input" id="novelShareInput" placeholder="N-XXXXXXXX">
+        <button class="modal-btn" id="btnLoadShared">열기</button>
+      </div>
     </div>
-    <div style="margin-bottom: 8px;">
-      <div id="modal-char-selector"></div>
+    <div id="novelDisplay" class="hidden">
+      <div class="novel-title" id="novelTitle"></div>
+      <div class="novel-share"><span class="copy-code" id="novelShareCode"></span></div>
+      <div class="novel-content" id="novelText"></div>
     </div>
-    <button class="modal-btn modal-btn-primary" onclick="startNewSession()" style="margin-right: 8px;">새 게임 시작</button>
-    <button class="modal-btn modal-btn-secondary" onclick="closeModal('session-modal')">닫기</button>
-    <div style="margin-top: 12px;">
-      <div style="font-size: 12px; color: #888; margin-bottom: 6px;">최근 세션</div>
-      <div id="recent-sessions"></div>
-    </div>
-  </div>
-</div>
-
-<!-- Novel Modal -->
-<div class="modal-overlay" id="novel-modal">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal('novel-modal')">×</button>
-    <h3>소설 저장/불러오기</h3>
-    <button class="modal-btn modal-btn-primary" onclick="saveNovel()" style="margin-right: 8px; margin-bottom: 8px;">현재 세션 저장</button>
-    <div class="panel-row">
-      <label>소설 ID</label>
-      <input type="text" id="novel-load-id" placeholder="저장된 ID 입력">
-      <button class="modal-btn modal-btn-secondary" onclick="loadNovel()">불러오기</button>
-    </div>
-    <div id="novel-status" style="font-size: 12px; color: #aaa; margin-top: 8px;"></div>
   </div>
 </div>
 
 <script>
-// ===== Constants =====
-const TYPEWRITER_CPS = 22;
-const MAX_RECENT_SESSIONS = 5;
+/* ═══════════════════════════════════════════════════════════════════════════
+   사루라 아뜨리에 — Multi-Character Ensemble Theater Frontend
+   ═══════════════════════════════════════════════════════════════════════════ */
 
-// ===== State =====
-const state = {
-  characters: [],
-  selectedCharId: 'cha_01',
-  sessionId: null,
-  playerName: '플레이어',
-  currentCharColor: '#4a9466',
-  dirSettings: {
-    first_person: false,
-    show_monologue: true,
-    acquainted_mode: false,
-    adult_mode: false,
-    char_initiative: false,
-    illustration: false
-  },
-  dirSliders: { narration_ratio: 50, tempo: 50, density: 50 },
-  genre: 'auto',
-  core4: { energy: 80, intoxication: 0, stress: 30, pain: 0 },
-  relationship: { affection: 50, trust: 50, tension: 20, respect: 50, intimacy: 0 },
-  isLoading: false,
-  turnCount: 0,
-  headerCollapsed: false
+// ─── Global State ───
+const STATE = {};
+let isBootstrapped = false;
+let characterProfiles = [];
+let STAGED_ON_SCREEN = new Set();
+let PLAYER_ON = true;
+const TYPEWRITER = { enabled: true, cps: 22 };
+let _twAbort = null;
+
+// ─── DOM References ───
+const el = {
+  trafficLight:     document.getElementById('trafficLight'),
+  tlRed:            document.getElementById('tlRed'),
+  tlYellow:         document.getElementById('tlYellow'),
+  tlGreen:          document.getElementById('tlGreen'),
+  sessionIdDisplay: document.getElementById('sessionIdDisplay'),
+  btnSession:       document.getElementById('btnSession'),
+  btnNovel:         document.getElementById('btnNovel'),
+  participantsPreview: document.getElementById('participantsPreview'),
+  btnToggleScene:   document.getElementById('btnToggleScene'),
+  btnToggleDirector:document.getElementById('btnToggleDirector'),
+  scenePanel:       document.getElementById('scenePanel'),
+  directorPanel:    document.getElementById('directorPanel'),
+  playerNameInput:  document.getElementById('playerNameInput'),
+  charSelector:     document.getElementById('charSelector'),
+  chatLog:          document.getElementById('chatLog'),
+  chatInput:        document.getElementById('chatInput'),
+  submitBtn:        document.getElementById('submitBtn'),
+  optPov:           document.getElementById('optPov'),
+  optMonologue:     document.getElementById('optMonologue'),
+  optAcquainted:    document.getElementById('optAcquainted'),
+  optAdult:         document.getElementById('optAdult'),
+  optChoices:       document.getElementById('optChoices'),
+  sliderNarration:  document.getElementById('sliderNarration'),
+  sliderTempo:      document.getElementById('sliderTempo'),
+  sliderDesc:       document.getElementById('sliderDesc'),
+  valNarration:     document.getElementById('valNarration'),
+  valTempo:         document.getElementById('valTempo'),
+  valDesc:          document.getElementById('valDesc'),
+  genreTags:        document.getElementById('genreTags'),
+  sessionModal:     document.getElementById('sessionModal'),
+  sessionModalClose:document.getElementById('sessionModalClose'),
+  sessionCodeDisplay:document.getElementById('sessionCodeDisplay'),
+  btnCopyCode:      document.getElementById('btnCopyCode'),
+  loadCodeInput:    document.getElementById('loadCodeInput'),
+  btnLoadCode:      document.getElementById('btnLoadCode'),
+  recentList:       document.getElementById('recentList'),
+  btnResetSession:  document.getElementById('btnResetSession'),
+  sessionCurrentSection: document.getElementById('sessionCurrentSection'),
+  novelModal:       document.getElementById('novelModal'),
+  novelModalClose:  document.getElementById('novelModalClose'),
+  btnNovelize:      document.getElementById('btnNovelize'),
+  btnMyNovel:       document.getElementById('btnMyNovel'),
+  novelShareInput:  document.getElementById('novelShareInput'),
+  btnLoadShared:    document.getElementById('btnLoadShared'),
+  novelDisplay:     document.getElementById('novelDisplay'),
+  novelTitle:       document.getElementById('novelTitle'),
+  novelShareCode:   document.getElementById('novelShareCode'),
+  novelText:        document.getElementById('novelText'),
 };
 
-const CHAR_COLORS = {
-  cha_01: '#7ab4e8', cha_02: '#e8a44a', cha_03: '#7a9ee8',
-  cha_04: '#c4a8d8', cha_05: '#a8d8c4', cha_06: '#e87a7a',
-  cha_07: '#c4687a', cha_08: '#e8d4a4', cha_09: '#d4c4e8',
-  cha_10: '#a87ac4', cha_11: '#8a9478'
-};
-
-const EMOTION_MAP = {
-  neutral: 'Neutral', happy: 'Happy', sad: 'Sad', angry: 'Angry',
-  surprised: 'Surprised', scared: 'Scared', embarrassed: 'Embarrassed',
-  crying: 'Crying', blushing: 'Blushing', calm: 'Calm',
-  '기쁨': 'Happy', '슬픔': 'Sad', '화남': 'Angry', '당황': 'Embarrassed',
-  '중립': 'Neutral', '놀람': 'Surprised', '설렘': 'Happy', '울음': 'Crying',
-  '부끄러움': 'Blushing', '평온': 'Calm'
-};
-
-const GENRES = ['auto', 'slice_of_life', 'romance', 'comedy', 'fantasy', 'mystery', 'thriller', 'horror', 'sci-fi', 'historical', 'noir', 'wuxia', 'adventure', 'dark_fantasy', 'soap_opera'];
-const GENRE_LABELS = {
-  auto: '자동', slice_of_life: '일상', romance: '로맨스', comedy: '코미디',
-  fantasy: '판타지', mystery: '미스터리', thriller: '스릴러', horror: '공포',
-  'sci-fi': 'SF', historical: '시대극', noir: '누아르', wuxia: '무협',
-  adventure: '모험', dark_fantasy: '다크판타지', soap_opera: '막장드라마'
-};
-
-// ===== Init =====
-async function init() {
-  try {
-    const res = await fetch('/api/characters', { credentials: 'include' });
-    state.characters = await res.json();
-    buildCharSelector();
-    buildModalCharSelector();
-    buildGenrePresets();
-    buildCore4Section();
-    loadRecentSessions();
-
-    const savedSession = localStorage.getItem('currentSessionId');
-    if (savedSession) {
-      state.sessionId = savedSession;
-      await restoreSession();
-    } else {
-      addNarration('환영합니다. 새 게임을 시작하려면 💾 세션을 클릭하세요.');
-    }
-  } catch(e) {
-    console.error('Init error:', e);
-    addNarration('서버 연결 오류. 서버를 시작한 후 새로고침해주세요.');
+// ─── HTTP Helpers ───
+async function GET(endpoint) {
+  const res = await fetch(endpoint, { credentials: 'include' });
+  if (!res.ok) throw new Error('GET ' + endpoint + ' → ' + res.status);
+  return res.json();
+}
+async function POST(endpoint, body) {
+  body = body || {};
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let errData = {};
+    try { errData = await res.json(); } catch(_){}
+    throw new Error(errData.message || 'POST ' + endpoint + ' → ' + res.status);
   }
+  return res.json();
 }
 
-function buildCharSelector() {
-  const el = document.getElementById('char-selector');
-  el.innerHTML = '';
-  state.characters.forEach(c => {
-    const color = CHAR_COLORS[c.id] || '#888';
-    const btn = document.createElement('button');
-    btn.className = 'char-btn' + (c.id === state.selectedCharId ? ' selected' : '');
-    btn.style.setProperty('--c', color);
-    btn.textContent = c.name_ko;
-    btn.onclick = () => selectChar(c.id);
-    el.appendChild(btn);
-  });
+// ─── Traffic Light ───
+function updateTrafficLight(color) {
+  el.tlRed.classList.toggle('on', color === 'RED');
+  el.tlYellow.classList.toggle('on', color === 'YELLOW');
+  el.tlGreen.classList.toggle('on', color === 'GREEN');
 }
 
-function buildModalCharSelector() {
-  const el = document.getElementById('modal-char-selector');
-  el.innerHTML = '<div style="font-size:12px;color:#888;margin-bottom:6px;">캐릭터 선택</div>';
-  const grid = document.createElement('div');
-  grid.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
-  state.characters.forEach(c => {
-    const color = CHAR_COLORS[c.id] || '#888';
-    const btn = document.createElement('button');
-    btn.className = 'char-btn' + (c.id === state.selectedCharId ? ' selected' : '');
-    btn.style.setProperty('--c', color);
-    btn.textContent = c.name_ko;
-    btn.onclick = () => {
-      state.selectedCharId = c.id;
-      document.querySelectorAll('#modal-char-selector .char-btn').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      document.querySelectorAll('#char-selector .char-btn').forEach(b => b.classList.remove('selected'));
-      const idx = state.characters.indexOf(c);
-      const mainBtns = document.querySelectorAll('#char-selector .char-btn');
-      if (mainBtns[idx]) mainBtns[idx].classList.add('selected');
-    };
-    grid.appendChild(btn);
-  });
-  el.appendChild(grid);
+// ─── Character Profile Helpers ───
+function getProfileByName(name) {
+  return characterProfiles.find(function(p){ return p.name === name; });
+}
+function getCharColor(name) {
+  var p = getProfileByName(name);
+  return p ? p.color : '#888';
 }
 
-function buildGenrePresets() {
-  const el = document.getElementById('genre-presets');
-  el.innerHTML = '';
-  GENRES.forEach(g => {
-    const btn = document.createElement('button');
-    btn.className = 'genre-tag' + (g === state.genre ? ' active' : '');
-    btn.textContent = GENRE_LABELS[g] || g;
-    btn.onclick = () => {
-      state.genre = g;
-      document.querySelectorAll('.genre-tag').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    };
-    el.appendChild(btn);
-  });
-}
-
-function buildCore4Section() {
-  const el = document.getElementById('core4-section');
-  const stats = [
-    { key: 'energy', label: '에너지' },
-    { key: 'intoxication', label: '취기' },
-    { key: 'stress', label: '스트레스' },
-    { key: 'pain', label: '통증' }
-  ];
-  el.innerHTML = stats.map(s => `
-    <div class="stat-row">
-      <span class="stat-label">${s.label}</span>
-      <input type="range" min="0" max="100" value="${state.core4[s.key]}"
-        id="core4-${s.key}"
-        oninput="updateCore4('${s.key}', this.value)">
-      <span class="stat-val" id="core4-${s.key}-val">${state.core4[s.key]}</span>
-    </div>
-  `).join('');
-}
-
-function updateCore4(key, val) {
-  state.core4[key] = parseInt(val);
-  document.getElementById('core4-' + key + '-val').textContent = val;
-  clearTimeout(window._hotSwapTimer);
-  window._hotSwapTimer = setTimeout(() => hotSwap(), 500);
-}
-
-async function hotSwap() {
-  if (!state.sessionId) return;
-  try {
-    await fetch('/api/hot-swap', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ core4_overrides: state.core4 })
-    });
-  } catch(e) { console.warn('hot-swap error:', e); }
-}
-
-function selectChar(id) {
-  state.selectedCharId = id;
-  document.querySelectorAll('#char-selector .char-btn').forEach((b, i) => {
-    b.classList.toggle('selected', state.characters[i] && state.characters[i].id === id);
-  });
-  state.currentCharColor = CHAR_COLORS[id] || '#888';
-  updateParticipants();
-}
-
-function updateParticipants() {
-  const char = state.characters.find(c => c.id === state.selectedCharId);
-  document.getElementById('participants-list').textContent = char ? ('👤 ' + char.name_ko) : '';
-  document.getElementById('player-name-display').textContent = state.playerName;
-}
-
-function toggleHeader() {
-  state.headerCollapsed = !state.headerCollapsed;
-  document.getElementById('char-header').classList.toggle('collapsed', state.headerCollapsed);
-}
-
-function togglePanel(id) {
-  document.getElementById(id).classList.toggle('open');
-}
-
-function toggleDirSetting(btn) {
-  const key = btn.dataset.key;
-  state.dirSettings[key] = !state.dirSettings[key];
-  btn.classList.toggle('on', state.dirSettings[key]);
-}
-
-function applyPlayerName() {
-  state.playerName = document.getElementById('player-name-input').value || '플레이어';
-  updateParticipants();
-}
-
-// ===== Session =====
-async function startNewSession() {
-  const playerName = document.getElementById('modal-player-name').value || '플레이어';
-  const scenario = document.getElementById('modal-scenario').value || '사루라 기숙사 일상';
-  state.playerName = playerName;
-  document.getElementById('player-name-input').value = playerName;
-
-  setLoading(true);
-  try {
-    const res = await fetch('/api/start-session', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        character_id: state.selectedCharId,
-        scenario: scenario,
-        user_name: playerName,
-        settings: state.dirSettings
-      })
-    });
-    const data = await res.json();
-    state.sessionId = data.session_id;
-    state.core4 = data.session_data.core4;
-    state.relationship = data.session_data.relationship;
-    state.turnCount = 0;
-
-    localStorage.setItem('currentSessionId', state.sessionId);
-    saveToRecentSessions(state.sessionId, data.character.name_ko, scenario);
-
-    document.getElementById('chat-log').innerHTML = '';
-
-    const char = data.character;
-    updateCharPortrait(char, 'neutral');
-    updateParticipants();
-    buildCore4Section();
-
-    addNarration('[' + scenario + '] ' + char.name_ko + '와(과)의 이야기가 시작됩니다.');
-    closeModal('session-modal');
-
-    if (state.dirSettings.char_initiative) {
-      setTimeout(() => sendInitiative(char), 800);
-    }
-  } catch(e) {
-    addNarration('세션 시작 실패: ' + e.message);
-  } finally {
-    setLoading(false);
+// ─── Participants Preview ───
+function renderParticipantsPreview() {
+  var names = Array.from(STAGED_ON_SCREEN);
+  if (!names.length) {
+    el.participantsPreview.textContent = '참여 캐릭터 없음';
+    return;
   }
+  el.participantsPreview.innerHTML = names.map(function(n) {
+    var c = getCharColor(n);
+    return '<span class="p-name" style="color:' + c + '">' + n + '</span>';
+  }).join(', ');
 }
 
-async function restoreSession() {
-  try {
-    const res = await fetch('/api/session-state', { credentials: 'include' });
-    if (!res.ok) {
-      state.sessionId = null;
-      localStorage.removeItem('currentSessionId');
+// ─── Build Character Buttons ───
+function buildCharButtons() {
+  el.charSelector.innerHTML = '';
+
+  // Player toggle
+  var pBtn = document.createElement('button');
+  pBtn.className = 'char-btn player-btn' + (PLAYER_ON ? ' active' : '');
+  pBtn.textContent = '🧑 플레이어';
+  pBtn.addEventListener('click', function() {
+    PLAYER_ON = !PLAYER_ON;
+    pBtn.classList.toggle('active', PLAYER_ON);
+  });
+  el.charSelector.appendChild(pBtn);
+
+  // Character buttons
+  characterProfiles.forEach(function(prof) {
+    var btn = document.createElement('button');
+    btn.className = 'char-btn';
+    btn.style.setProperty('--c', prof.color);
+    btn.textContent = prof.name;
+    if (STAGED_ON_SCREEN.has(prof.name)) btn.classList.add('active');
+    btn.addEventListener('click', function() {
+      if (STAGED_ON_SCREEN.has(prof.name)) {
+        STAGED_ON_SCREEN.delete(prof.name);
+        btn.classList.remove('active');
+      } else {
+        STAGED_ON_SCREEN.add(prof.name);
+        btn.classList.add('active');
+      }
+      renderParticipantsPreview();
+    });
+    el.charSelector.appendChild(btn);
+  });
+}
+
+// ─── Director Settings ───
+function getCurrentDirectorSettings() {
+  var activeGenre = el.genreTags.querySelector('.genre-tag.active');
+  return {
+    pov_first_person: el.optPov.checked,
+    show_monologue: el.optMonologue.checked,
+    acquainted: el.optAcquainted.checked,
+    adult_mode: el.optAdult.checked,
+    offer_interactive_choices: el.optChoices.checked,
+    narration_ratio: parseInt(el.sliderNarration.value),
+    tempo: parseInt(el.sliderTempo.value),
+    description_focus: parseInt(el.sliderDesc.value),
+    genre_preset: activeGenre ? activeGenre.dataset.val : 'auto',
+  };
+}
+
+function applyDirectorSettings(settings) {
+  if (!settings) return;
+  el.optPov.checked = !!settings.pov_first_person;
+  el.optMonologue.checked = !!settings.show_monologue;
+  el.optAcquainted.checked = !!settings.acquainted;
+  el.optAdult.checked = !!settings.adult_mode;
+  el.optChoices.checked = !!settings.offer_interactive_choices;
+  el.sliderNarration.value = settings.narration_ratio != null ? settings.narration_ratio : 40;
+  el.sliderTempo.value = settings.tempo != null ? settings.tempo : 5;
+  el.sliderDesc.value = settings.description_focus != null ? settings.description_focus : 5;
+  el.valNarration.textContent = el.sliderNarration.value + '%';
+  el.valTempo.textContent = el.sliderTempo.value;
+  el.valDesc.textContent = el.sliderDesc.value;
+  el.genreTags.querySelectorAll('.genre-tag').forEach(function(t) {
+    t.classList.toggle('active', t.dataset.val === (settings.genre_preset || 'auto'));
+  });
+}
+
+// ─── Typewriter ───
+function typeText(element, text) {
+  return new Promise(function(resolve) {
+    if (!TYPEWRITER.enabled || TYPEWRITER.cps <= 0) {
+      element.textContent = text;
+      resolve();
       return;
     }
-    const data = await res.json();
-    state.core4 = data.core4 || state.core4;
-    state.relationship = data.relationship || state.relationship;
-    state.turnCount = data.turn_count || 0;
-    state.selectedCharId = data.character_id || state.selectedCharId;
-    state.playerName = data.user_name || state.playerName;
-
-    updateParticipants();
-    buildCore4Section();
-
-    const char = state.characters.find(c => c.id === state.selectedCharId);
-    if (char) updateCharPortrait(char, 'neutral');
-
-    const history = data.history || [];
-    history.forEach(h => {
-      appendUserMsg(h.user);
-      const charObj = state.characters.find(c => c.id === state.selectedCharId);
-      appendCharMsg(charObj, h.character, h.action || '', h.emotion || 'neutral', '', [], false, null);
-    });
-
-    addNarration('이전 세션이 복원되었습니다.');
-  } catch(e) {
-    console.warn('Restore session error:', e);
-    addNarration('이전 세션을 불러올 수 없습니다. 새 게임을 시작해주세요.');
-  }
-}
-
-async function sendInitiative(char) {
-  await sendTurnWithInput('(' + char.name_ko + '이(가) 먼저 말을 건다)');
-}
-
-// ===== Turn =====
-async function sendTurn() {
-  const input = document.getElementById('user-input');
-  const text = input.value.trim();
-  if (!text || state.isLoading) return;
-  if (!state.sessionId) { addNarration('먼저 세션을 시작해주세요. (💾 세션 버튼)'); return; }
-  input.value = '';
-  await sendTurnWithInput(text);
-}
-
-async function sendTurnWithInput(text) {
-  appendUserMsg(text);
-  setLoading(true);
-
-  const uiSettings = Object.assign({}, state.dirSettings, {
-    genre: state.genre,
-    narration_ratio: state.dirSliders.narration_ratio,
-    tempo: state.dirSliders.tempo,
-    density: state.dirSliders.density
+    var ac = new AbortController();
+    _twAbort = ac;
+    var i = 0;
+    var interval = 1000 / TYPEWRITER.cps;
+    function tick() {
+      if (ac.signal.aborted) {
+        element.textContent = text;
+        resolve();
+        return;
+      }
+      if (i < text.length) {
+        element.textContent += text[i];
+        i++;
+        scrollToBottom();
+        setTimeout(tick, interval);
+      } else {
+        resolve();
+      }
+    }
+    tick();
   });
-
-  try {
-    const res = await fetch('/api/send-turn', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_input: text, settings_override: uiSettings })
-    });
-    const data = await res.json();
-
-    if (data.error && !data.dialogue) {
-      addNarration('오류: ' + data.error);
-      return;
-    }
-
-    state.core4 = data.core4 || state.core4;
-    state.relationship = data.relationship || state.relationship;
-    state.turnCount = data.turn_count || state.turnCount + 1;
-    updateCore4UI();
-
-    const char = state.characters.find(c => c.id === state.selectedCharId);
-    const emotion = data.emotion || 'neutral';
-
-    if (char) updateCharPortrait(char, emotion);
-
-    appendCharMsg(char, data.dialogue, data.action, emotion, data.inner_monologue, data.scene_visual_tags, true, data.illustration_b64 || null);
-
-  } catch(e) {
-    addNarration('전송 오류: ' + e.message);
-  } finally {
-    setLoading(false);
-  }
 }
 
-function appendUserMsg(text) {
-  const log = document.getElementById('chat-log');
-  const div = document.createElement('div');
-  div.className = 'msg-user';
-  div.textContent = text;
-  log.appendChild(div);
-  scrollToBottom();
+function abortTypewriter() {
+  if (_twAbort) { _twAbort.abort(); _twAbort = null; }
 }
 
-function appendCharMsg(char, dialogue, action, emotion, monologue, tags, typewrite, illustrationB64) {
-  const log = document.getElementById('chat-log');
-  const color = char ? (CHAR_COLORS[char.id] || '#888') : '#888';
-  const name = char ? char.name_ko : '???';
-
-  const wrapper = document.createElement('div');
-  wrapper.className = 'msg-char';
-  wrapper.style.setProperty('--char-color', color);
-
-  const nameEl = document.createElement('div');
-  nameEl.className = 'msg-char-name';
-  nameEl.textContent = name + ' · ' + emotion;
-
-  const bubble = document.createElement('div');
-  bubble.className = 'msg-char-bubble';
-
-  if (action) {
-    const actionEl = document.createElement('div');
-    actionEl.className = 'msg-char-action';
-    actionEl.textContent = '*' + action + '*';
-    bubble.appendChild(actionEl);
-  }
-
-  const dialogueEl = document.createElement('div');
-  dialogueEl.className = 'msg-dialogue';
-  bubble.appendChild(dialogueEl);
-
-  if (monologue && state.dirSettings.show_monologue) {
-    const monoEl = document.createElement('div');
-    monoEl.className = 'msg-monologue';
-    monoEl.textContent = '💭 ' + monologue;
-    bubble.appendChild(monoEl);
-  }
-
-  const branchBtn = document.createElement('button');
-  branchBtn.className = 'branch-btn';
-  branchBtn.textContent = '↩ 여기서 분기';
-  branchBtn.onclick = () => branchFromHere(dialogue);
-
-  wrapper.appendChild(nameEl);
-  wrapper.appendChild(bubble);
-  wrapper.appendChild(branchBtn);
-
-  if (illustrationB64) {
-    const illDiv = document.createElement('div');
-    illDiv.className = 'msg-illustration';
-    const img = document.createElement('img');
-    img.src = 'data:image/png;base64,' + illustrationB64;
-    img.onload = () => { img.classList.add('loaded'); scrollToBottom(); };
-    illDiv.appendChild(img);
-    wrapper.appendChild(illDiv);
-  }
-
-  log.appendChild(wrapper);
-
-  if (typewrite) {
-    typewriteEffect(dialogueEl, dialogue, TYPEWRITER_CPS);
-  } else {
-    dialogueEl.textContent = dialogue;
-  }
-
-  scrollToBottom();
-}
-
-function typewriteEffect(el, text, cps) {
-  el.textContent = '';
-  let i = 0;
-  const interval = setInterval(() => {
-    if (i < text.length) {
-      el.textContent += text[i];
-      i++;
-      scrollToBottom();
-    } else {
-      clearInterval(interval);
-    }
-  }, 1000 / cps);
-}
-
-function addNarration(text) {
-  const log = document.getElementById('chat-log');
-  const div = document.createElement('div');
-  div.className = 'msg-narration';
-  div.textContent = text;
-  log.appendChild(div);
-  scrollToBottom();
-}
-
+// ─── Scroll ───
 function scrollToBottom() {
-  const log = document.getElementById('chat-log');
-  log.scrollTop = log.scrollHeight;
+  el.chatLog.scrollTop = el.chatLog.scrollHeight;
 }
 
-function updateCharPortrait(char, emotion) {
-  const emotionEng = EMOTION_MAP[emotion.toLowerCase()] || EMOTION_MAP[emotion] || 'Neutral';
-  const engName = char.name_en.replace(/\s/g, '_');
-  const src = '/static/gifs/' + engName + '/' + emotionEng + '.webp';
-  const img = document.getElementById('char-portrait');
-  const placeholder = document.getElementById('char-portrait-placeholder');
-  img.src = src;
-  img.onload = () => { img.style.display = 'block'; placeholder.style.display = 'none'; };
-  img.onerror = () => { img.style.display = 'none'; placeholder.style.display = 'flex'; };
+// ─── Add Single Message ───
+async function addMessageToLog(container, type, data, animate) {
+  var showMonologue = el.optMonologue.checked;
+
+  if (type === 'user') {
+    var div = document.createElement('div');
+    div.className = 'user-message' + (animate ? ' fade-in' : '');
+    div.textContent = data.content || '';
+    container.appendChild(div);
+    return;
+  }
+
+  if (type === 'narration') {
+    var div = document.createElement('div');
+    div.className = 'narration-message' + (animate ? ' fade-in' : '');
+    if (animate && TYPEWRITER.enabled) {
+      container.appendChild(div);
+      await typeText(div, data.content || '');
+    } else {
+      div.textContent = data.content || '';
+      container.appendChild(div);
+    }
+    return;
+  }
+
+  if (type === 'dialogue') {
+    var div = document.createElement('div');
+    div.className = 'dialogue-message' + (animate ? ' fade-in' : '');
+    var charColor = getCharColor(data.character);
+    div.style.setProperty('--c', charColor);
+
+    var nameEl = document.createElement('div');
+    nameEl.className = 'dialogue-name';
+    nameEl.style.color = charColor;
+    nameEl.textContent = data.character || '?';
+    div.appendChild(nameEl);
+
+    var contentEl = document.createElement('div');
+    contentEl.className = 'dialogue-content';
+    div.appendChild(contentEl);
+    container.appendChild(div);
+
+    if (animate && TYPEWRITER.enabled) {
+      await typeText(contentEl, data.content || '');
+    } else {
+      contentEl.textContent = data.content || '';
+    }
+
+    if (showMonologue && data.monologue) {
+      var monoEl = document.createElement('div');
+      monoEl.className = 'dialogue-monologue';
+      monoEl.textContent = data.monologue;
+      div.appendChild(monoEl);
+    }
+    return;
+  }
+
+  if (type === 'system') {
+    var div = document.createElement('div');
+    div.className = 'system-message fade-in';
+    div.textContent = data.content || '';
+    container.appendChild(div);
+  }
 }
 
-function updateCore4UI() {
-  Object.entries(state.core4).forEach(([k, v]) => {
-    const slider = document.getElementById('core4-' + k);
-    const val = document.getElementById('core4-' + k + '-val');
-    if (slider) slider.value = v;
-    if (val) val.textContent = v;
-  });
+// ─── Render Full State ───
+async function renderUIFromState(state) {
+  if (!state) return;
+  Object.assign(STATE, state);
+
+  el.sessionIdDisplay.textContent = state.session_id || '세션 없음';
+  updateTrafficLight(state.traffic_light || 'GREEN');
+
+  if (state.on_screen) {
+    STAGED_ON_SCREEN = new Set(state.on_screen);
+    buildCharButtons();
+    renderParticipantsPreview();
+  }
+
+  if (state.player_name) {
+    el.playerNameInput.value = state.player_name;
+  }
+
+  if (state.ui_settings) {
+    applyDirectorSettings(state.ui_settings);
+  }
+
+  abortTypewriter();
+  el.chatLog.innerHTML = '';
+  var turns = state.turns || [];
+
+  for (var i = 0; i < turns.length; i++) {
+    var turn = turns[i];
+    var isLast = (i === turns.length - 1);
+    TYPEWRITER.enabled = isLast;
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'turn-wrapper';
+
+    // Turn divider with branch button
+    if (i > 0 || turns.length > 1) {
+      var divider = document.createElement('div');
+      divider.className = 'turn-divider';
+      divider.appendChild(document.createTextNode('턴 ' + (turn.turn_id || (i + 1))));
+
+      if (!isLast) {
+        var branchBtn = document.createElement('button');
+        branchBtn.className = 'branch-btn';
+        branchBtn.title = '이 턴에서 분기';
+        branchBtn.textContent = '↪️';
+        (function(idx) {
+          branchBtn.addEventListener('click', function() { handleBranchFromTurn(idx); });
+        })(i);
+        divider.appendChild(branchBtn);
+      }
+      wrapper.appendChild(divider);
+    }
+
+    // User message
+    if (turn.user_input && turn.user_input !== '[SCENE_START]' && turn.user_input !== '[CONTINUE_SCENE]') {
+      await addMessageToLog(wrapper, 'user', { content: turn.user_input }, false);
+    }
+
+    // Script blocks
+    var script = turn.script || [];
+    for (var j = 0; j < script.length; j++) {
+      var block = script[j];
+      if (block.type === 'narration') {
+        await addMessageToLog(wrapper, 'narration', block, isLast);
+      } else if (block.type === 'dialogue') {
+        await addMessageToLog(wrapper, 'dialogue', block, isLast);
+      }
+    }
+
+    el.chatLog.appendChild(wrapper);
+  }
+
+  TYPEWRITER.enabled = true;
+  scrollToBottom();
 }
 
-function setLoading(loading) {
-  state.isLoading = loading;
-  document.getElementById('send-btn').disabled = loading;
-  document.getElementById('status-bar').className = loading ? 'loading' : '';
-  document.getElementById('conn-dot').style.background = loading ? '#febc2e' : '#28c840';
+// ─── Submit ───
+async function handleFormSubmit(e) {
+  if (e) e.preventDefault();
+  var text = el.chatInput.value.trim();
+
+  if (!isBootstrapped) {
+    var playerName = el.playerNameInput.value.trim() || '사용자';
+    var onScreenNames = Array.from(STAGED_ON_SCREEN);
+    if (onScreenNames.length === 0) {
+      addMessageToLog(el.chatLog, 'system', { content: '등장 캐릭터를 1명 이상 선택하세요.' }, true);
+      scrollToBottom();
+      return;
+    }
+
+    setSubmitState('loading');
+    updateTrafficLight('YELLOW');
+
+    try {
+      var result = await POST('/bootstrap', {
+        player_name: playerName,
+        on_screen_names: onScreenNames,
+        seed_text: text || '',
+        ui_settings: getCurrentDirectorSettings(),
+      });
+      if (result.status === 'ok') {
+        isBootstrapped = true;
+        addRecent(result.sid);
+        el.scenePanel.classList.remove('open');
+        el.btnToggleScene.classList.remove('active');
+        await renderUIFromState(result.state);
+        setSubmitState('send');
+        el.chatInput.value = '';
+        el.chatInput.placeholder = '메시지를 입력하세요…';
+        autoResizeTextarea();
+      } else {
+        throw new Error(result.message || '부트스트랩 실패');
+      }
+    } catch (err) {
+      console.error('Bootstrap error:', err);
+      addMessageToLog(el.chatLog, 'system', { content: '오류: ' + err.message }, true);
+      scrollToBottom();
+      setSubmitState('retry');
+      updateTrafficLight('RED');
+    }
+  } else {
+    if (!text) return;
+
+    setSubmitState('loading');
+    updateTrafficLight('YELLOW');
+
+    try {
+      var result = await POST('/execute-turn', {
+        user_text: text,
+        ui_settings: getCurrentDirectorSettings(),
+        on_screen_names: Array.from(STAGED_ON_SCREEN),
+      });
+      if (result.status === 'ok') {
+        await renderUIFromState(result.state);
+        setSubmitState('send');
+        el.chatInput.value = '';
+        autoResizeTextarea();
+      } else {
+        throw new Error(result.message || '턴 실행 실패');
+      }
+    } catch (err) {
+      console.error('Turn error:', err);
+      addMessageToLog(el.chatLog, 'system', { content: '오류: ' + err.message }, true);
+      scrollToBottom();
+      setSubmitState('retry');
+      updateTrafficLight('RED');
+    }
+  }
 }
 
-function branchFromHere(dialogue) {
-  if (!state.sessionId) return;
-  addNarration('↩ "' + dialogue.substring(0, 30) + '..." 이후 분기 지점 생성됨');
-  const branchKey = 'branch_' + Date.now();
-  localStorage.setItem(branchKey, JSON.stringify({ sessionId: state.sessionId, turnCount: state.turnCount }));
+function setSubmitState(state) {
+  var btn = el.submitBtn;
+  btn.disabled = false;
+  btn.classList.remove('retry');
+  switch (state) {
+    case 'start': btn.textContent = '시작'; break;
+    case 'send':  btn.textContent = '전송'; break;
+    case 'loading': btn.textContent = '처리 중…'; btn.disabled = true; break;
+    case 'retry': btn.textContent = '재시도'; btn.classList.add('retry'); break;
+  }
 }
 
-// ===== Modals =====
-function openModal(id) { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-
-// ===== Novel =====
-async function saveNovel() {
-  if (!state.sessionId) { document.getElementById('novel-status').textContent = '활성 세션이 없습니다.'; return; }
+// ─── Branch ───
+async function handleBranchFromTurn(turnIndex) {
+  if (!isBootstrapped) return;
+  updateTrafficLight('YELLOW');
   try {
-    const res = await fetch('/api/save-novel', { method: 'POST', credentials: 'include' });
-    const data = await res.json();
-    document.getElementById('novel-status').textContent = '저장됨 ID: ' + data.novel_id;
-  } catch(e) {
-    document.getElementById('novel-status').textContent = '저장 실패: ' + e.message;
+    var result = await POST('/branch_from_turn', { turn_index: turnIndex });
+    if (result.status === 'ok') {
+      addRecent(result.sid);
+      await renderUIFromState(result.state);
+      updateTrafficLight('GREEN');
+    }
+  } catch (err) {
+    console.error('Branch error:', err);
+    addMessageToLog(el.chatLog, 'system', { content: '분기 오류: ' + err.message }, true);
+    scrollToBottom();
+    updateTrafficLight('RED');
   }
 }
 
-async function loadNovel() {
-  const id = document.getElementById('novel-load-id').value.trim();
-  if (!id) return;
+// ─── Session Management ───
+var STORAGE_KEY = 'sarura_recent_sessions';
+
+function loadRecents() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+  catch(e) { return []; }
+}
+function saveRecents(list) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 20)));
+}
+function addRecent(sid) {
+  if (!sid) return;
+  var list = loadRecents();
+  list = list.filter(function(s){ return s !== sid; });
+  list.unshift(sid);
+  saveRecents(list);
+}
+function renderRecentList() {
+  var list = loadRecents();
+  el.recentList.innerHTML = '';
+  if (!list.length) {
+    el.recentList.innerHTML = '<li style="padding:8px;color:#666;font-size:12px;">최근 세션 없음</li>';
+    return;
+  }
+  list.forEach(function(sid) {
+    var li = document.createElement('li');
+    li.className = 'recent-item';
+    li.textContent = sid;
+    li.addEventListener('click', function(){ loadSessionByCode(sid); });
+    el.recentList.appendChild(li);
+  });
+}
+
+async function loadSessionByCode(code) {
+  if (!code) return;
+  setSubmitState('loading');
   try {
-    const res = await fetch('/api/load-novel/' + id, { credentials: 'include' });
-    const data = await res.json();
-    if (data.error) { document.getElementById('novel-status').textContent = data.error; return; }
-    document.getElementById('novel-status').textContent = '불러옴: ' + data.character_name + ' / ' + data.scenario;
-  } catch(e) {
-    document.getElementById('novel-status').textContent = '불러오기 실패: ' + e.message;
+    var result = await POST('/bootstrap', { save_code: code });
+    if (result.status === 'ok') {
+      isBootstrapped = true;
+      addRecent(result.sid);
+      await renderUIFromState(result.state);
+      setSubmitState('send');
+      el.chatInput.placeholder = '메시지를 입력하세요…';
+      closeModal(el.sessionModal);
+      el.scenePanel.classList.remove('open');
+      el.btnToggleScene.classList.remove('active');
+    } else {
+      throw new Error(result.message || '세션 로드 실패');
+    }
+  } catch (err) {
+    alert('세션 로드 실패: ' + err.message);
+    setSubmitState(isBootstrapped ? 'send' : 'start');
   }
 }
 
-// ===== Recent Sessions =====
-function saveToRecentSessions(sid, charName, scenario) {
-  const recent = JSON.parse(localStorage.getItem('recentSessions') || '[]');
-  recent.unshift({ id: sid, charName: charName, scenario: scenario, time: new Date().toLocaleString() });
-  localStorage.setItem('recentSessions', JSON.stringify(recent.slice(0, MAX_RECENT_SESSIONS)));
-  loadRecentSessions();
-}
-
-function loadRecentSessions() {
-  const el = document.getElementById('recent-sessions');
-  if (!el) return;
-  const recent = JSON.parse(localStorage.getItem('recentSessions') || '[]');
-  if (!recent.length) { el.innerHTML = '<div style="font-size:12px;color:#666;">없음</div>'; return; }
-  el.innerHTML = recent.map(s =>
-    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
-    '<span style="font-size:12px;color:#ccc;">' + s.charName + ' — ' + s.scenario + '</span>' +
-    '<span style="font-size:11px;color:#666;">' + s.time + '</span>' +
-    '</div>'
-  ).join('');
-}
-
-// ===== Keyboard =====
-document.getElementById('user-input').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendTurn();
+async function resetSession() {
+  if (!confirm('현재 세션을 초기화하시겠습니까?')) return;
+  try {
+    await GET('/reset-session');
+    isBootstrapped = false;
+    Object.keys(STATE).forEach(function(k){ delete STATE[k]; });
+    el.chatLog.innerHTML = '';
+    el.sessionIdDisplay.textContent = '세션 없음';
+    setSubmitState('start');
+    el.chatInput.placeholder = '이야기를 시작하세요…';
+    el.chatInput.value = '';
+    updateTrafficLight('GREEN');
+    closeModal(el.sessionModal);
+    el.scenePanel.classList.add('open');
+    el.btnToggleScene.classList.add('active');
+  } catch (err) {
+    alert('초기화 실패: ' + err.message);
   }
-});
+}
 
-document.querySelectorAll('input[type=range]').forEach(function(el) {
-  el.addEventListener('input', function() {
-    const valEl = document.getElementById(this.id + '-val');
-    if (valEl) valEl.textContent = this.value + '%';
-    const key = this.id.replace('-slider', '').replace(/-/g, '_');
-    if (key in state.dirSliders) state.dirSliders[key] = parseInt(this.value);
+// ─── Novel ───
+async function handleNovelize() {
+  el.btnNovelize.disabled = true;
+  el.btnNovelize.textContent = '생성 중…';
+  try {
+    var result = await POST('/novelize', {});
+    if (result.status === 'ok' && result.novel_data) {
+      displayNovel(result.novel_data);
+    } else {
+      throw new Error(result.message || '소설 생성 실패');
+    }
+  } catch (err) {
+    alert('소설 생성 오류: ' + err.message);
+  } finally {
+    el.btnNovelize.disabled = false;
+    el.btnNovelize.textContent = '✨ 소설 생성';
+  }
+}
+
+async function handleMyNovel() {
+  try {
+    var result = await POST('/get-my-novel', {});
+    if (result.status === 'ok' && result.novel_data) {
+      displayNovel(result.novel_data);
+    } else {
+      alert('저장된 소설이 없습니다.');
+    }
+  } catch (err) {
+    alert('오류: ' + err.message);
+  }
+}
+
+async function handleLoadShared() {
+  var code = el.novelShareInput.value.trim();
+  if (!code) return;
+  try {
+    var result = await POST('/get-shared-novel', { share_code: code });
+    if (result.status === 'ok' && result.novel_data) {
+      displayNovel(result.novel_data);
+    } else {
+      throw new Error(result.message || '소설을 찾을 수 없습니다.');
+    }
+  } catch (err) {
+    alert('오류: ' + err.message);
+  }
+}
+
+function displayNovel(data) {
+  el.novelDisplay.classList.remove('hidden');
+  el.novelTitle.textContent = data.title || '무제';
+  el.novelShareCode.textContent = data.share_code || '';
+  el.novelText.textContent = data.text || data.content || '';
+}
+
+// ─── Modals ───
+function openModal(overlay) { overlay.classList.add('show'); }
+function closeModal(overlay) { overlay.classList.remove('show'); }
+
+// ─── Textarea Auto-resize ───
+function autoResizeTextarea() {
+  var ta = el.chatInput;
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+}
+
+// ─── Init ───
+(async function init() {
+
+  // 1. Load character profiles
+  try {
+    characterProfiles = await GET('/get-character-profiles');
+  } catch (err) {
+    console.error('Failed to load profiles:', err);
+    characterProfiles = [];
+  }
+
+  // 2. Default: select first 2 characters
+  characterProfiles.slice(0, 2).forEach(function(p){ STAGED_ON_SCREEN.add(p.name); });
+  buildCharButtons();
+  renderParticipantsPreview();
+
+  // 3. Check for existing session
+  try {
+    var sessionData = await GET('/get-session-data');
+    if (sessionData.status === 'ok' && sessionData.state) {
+      isBootstrapped = true;
+      await renderUIFromState(sessionData.state);
+      setSubmitState('send');
+      el.chatInput.placeholder = '메시지를 입력하세요…';
+      el.scenePanel.classList.remove('open');
+      el.btnToggleScene.classList.remove('active');
+    }
+  } catch (err) {
+    console.log('No existing session');
+  }
+
+  // 4. Event listeners
+
+  el.submitBtn.addEventListener('click', handleFormSubmit);
+  el.chatInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleFormSubmit(e);
+    }
   });
-});
 
-document.querySelectorAll('.modal-overlay').forEach(function(el) {
-  el.addEventListener('click', function(e) {
-    if (e.target === el) el.classList.remove('open');
+  el.chatInput.addEventListener('input', autoResizeTextarea);
+
+  el.btnToggleScene.addEventListener('click', function() {
+    el.scenePanel.classList.toggle('open');
+    el.btnToggleScene.classList.toggle('active');
+    if (el.scenePanel.classList.contains('open')) {
+      el.directorPanel.classList.remove('open');
+      el.btnToggleDirector.classList.remove('active');
+    }
   });
-});
+  el.btnToggleDirector.addEventListener('click', function() {
+    el.directorPanel.classList.toggle('open');
+    el.btnToggleDirector.classList.toggle('active');
+    if (el.directorPanel.classList.contains('open')) {
+      el.scenePanel.classList.remove('open');
+      el.btnToggleScene.classList.remove('active');
+    }
+  });
 
-init();
+  el.sliderNarration.addEventListener('input', function() { el.valNarration.textContent = el.sliderNarration.value + '%'; });
+  el.sliderTempo.addEventListener('input', function() { el.valTempo.textContent = el.sliderTempo.value; });
+  el.sliderDesc.addEventListener('input', function() { el.valDesc.textContent = el.sliderDesc.value; });
+
+  el.genreTags.addEventListener('click', function(e) {
+    var tag = e.target.closest('.genre-tag');
+    if (!tag) return;
+    el.genreTags.querySelectorAll('.genre-tag').forEach(function(t){ t.classList.remove('active'); });
+    tag.classList.add('active');
+  });
+
+  el.btnSession.addEventListener('click', function() {
+    el.sessionCodeDisplay.textContent = STATE.session_id || '-';
+    el.sessionCurrentSection.classList.toggle('hidden', !isBootstrapped);
+    renderRecentList();
+    openModal(el.sessionModal);
+  });
+  el.sessionModalClose.addEventListener('click', function(){ closeModal(el.sessionModal); });
+  el.sessionModal.addEventListener('click', function(e){ if (e.target === el.sessionModal) closeModal(el.sessionModal); });
+
+  el.btnCopyCode.addEventListener('click', function() {
+    var code = STATE.session_id;
+    if (code) {
+      navigator.clipboard.writeText(code).then(function() {
+        el.btnCopyCode.textContent = '✓';
+        setTimeout(function(){ el.btnCopyCode.textContent = '복사'; }, 1500);
+      }).catch(function(){});
+    }
+  });
+  el.sessionCodeDisplay.addEventListener('click', function() {
+    var code = STATE.session_id;
+    if (code) navigator.clipboard.writeText(code).catch(function(){});
+  });
+
+  el.btnLoadCode.addEventListener('click', function() {
+    var code = el.loadCodeInput.value.trim();
+    if (code) loadSessionByCode(code);
+  });
+  el.btnResetSession.addEventListener('click', resetSession);
+
+  el.btnNovel.addEventListener('click', function() {
+    el.novelDisplay.classList.add('hidden');
+    openModal(el.novelModal);
+  });
+  el.novelModalClose.addEventListener('click', function(){ closeModal(el.novelModal); });
+  el.novelModal.addEventListener('click', function(e){ if (e.target === el.novelModal) closeModal(el.novelModal); });
+
+  el.btnNovelize.addEventListener('click', handleNovelize);
+  el.btnMyNovel.addEventListener('click', handleMyNovel);
+  el.btnLoadShared.addEventListener('click', handleLoadShared);
+
+  el.novelShareCode.addEventListener('click', function() {
+    var code = el.novelShareCode.textContent;
+    if (code) navigator.clipboard.writeText(code).catch(function(){});
+  });
+
+})();
 </script>
 </body>
 </html>
