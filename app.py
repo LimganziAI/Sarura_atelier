@@ -213,7 +213,7 @@ def _safe_path(directory: Path, name: str) -> Path:
     if not _SAFE_ID_RE.match(base):
         raise ValueError(f"Invalid identifier: {name!r}")
     resolved = (directory / f"{base}.json").resolve()
-    if not str(resolved).startswith(str(directory.resolve())):
+    if not resolved.is_relative_to(directory.resolve()):
         raise ValueError(f"Path escapes target directory: {name!r}")
     return resolved
 
@@ -1085,12 +1085,13 @@ def novelize():
             save_session_file(sid, s_reload)
 
     # Save shared copy
-    shared_path = SHARED_NOVELS_DIR / f"{share_code}.json"
     try:
+        shared_path = _safe_path(SHARED_NOVELS_DIR, share_code)
         with open(shared_path, "w", encoding="utf-8") as f:
             json.dump(novel_data, f, ensure_ascii=False, indent=2)
     except Exception:
         logging.error(f"Failed to save shared novel: {traceback.format_exc()}")
+        novel_data["share_warning"] = "공유 저장에 실패했습니다. 세션 내에서는 열람 가능합니다."
 
     return jsonify({"status": "ok", "novel_data": novel_data})
 

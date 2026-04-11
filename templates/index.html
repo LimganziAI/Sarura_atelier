@@ -880,7 +880,7 @@ function displayNovel(data) {
   el.novelDisplay.classList.remove('hidden');
   el.novelTitle.textContent = data.title || '무제';
   el.novelShareCode.textContent = data.share_code || '';
-  el.novelText.textContent = data.text || data.content || '';
+  el.novelText.textContent = data.text || '';
 }
 
 // ─── Modals ───
