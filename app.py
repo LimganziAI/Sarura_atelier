@@ -675,6 +675,93 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
             memory_section += f"- [{status}] {at.get('thought', '')}\n"
         memory_section += "성숙한 사고는 캐릭터의 행동과 대사에 자연스럽게 반영하세요.\n"
 
+    # Part I: Character Agenda (캐릭터 자율 행동 목적)
+    character_agenda_parts = []
+    for name in on_screen_chars:
+        if name == player_name:
+            continue
+        char_db = CHARACTERS_DB.get(name, {})
+        bp = char_db.get("behavior_protocols", {})
+        core_rule = bp.get("core_acting_rule", "")
+        specific = bp.get("specific_interactions", {})
+
+        agenda = f"\n[{name}의 현재 목적]\n"
+        agenda += f"- 핵심 행동 원칙: {core_rule}\n"
+        agenda += f"- 이 씬에서의 관계별 행동 지침:\n"
+
+        # Add vs player
+        vs_player = specific.get("vs_플레이어", "")
+        if vs_player:
+            agenda += f"  · vs 플레이어: {vs_player}\n"
+
+        # Add vs other on-screen characters
+        for other in on_screen_chars:
+            if other == name or other == player_name:
+                continue
+            vs_key = f"vs_{other}"
+            vs_text = specific.get(vs_key, "")
+            if vs_text:
+                agenda += f"  · vs {other}: {vs_text}\n"
+
+        agenda += f"- 자율 행동 예시: 상대를 위아래로 훑어보기, 먼저 인사 대신 평가하기, 옆 사람과 눈짓 교환\n"
+        character_agenda_parts.append(agenda)
+
+    character_agenda_section = ""
+    if character_agenda_parts:
+        character_agenda_section = "\n=== CHARACTER AGENDA (이번 씬에서의 각 캐릭터 목적) ===\n"
+        character_agenda_section += "".join(character_agenda_parts)
+
+    # Part J: Ensemble Interaction Rules
+    ensemble_section = "\n=== ENSEMBLE INTERACTION RULES ===\n"
+    ensemble_section += "[필수] 매 턴 캐릭터 간 상호작용 최소 1회:\n"
+    ensemble_section += "- 한 NPC가 다른 NPC에게 대사, 시선, 리액션 중 하나를 보내야 한다.\n"
+    ensemble_section += "- relationship_matrix의 dynamics를 기반으로:\n"
+
+    for name in on_screen_chars:
+        if name == player_name:
+            continue
+        char_db = CHARACTERS_DB.get(name, {})
+        rel_matrix = char_db.get("relationship_matrix", {})
+        for other in on_screen_chars:
+            if other == name or other == player_name:
+                continue
+            rel = rel_matrix.get(other, {})
+            if rel and isinstance(rel, dict):
+                dynamics = rel.get("dynamics", "중립적")
+                favor = rel.get("호감", 50)
+                tension = rel.get("긴장", 50)
+                comment = rel.get("comment", "")
+                ensemble_section += (
+                    f"  · {name} vs {other}: dynamics={dynamics}, "
+                    f"호감={favor}, 긴장={tension} → {comment}\n"
+                )
+
+    ensemble_section += "[NPC 간 대사 시에도 emotion과 monologue 필드를 반드시 채워라]\n"
+
+    # Part K: Emotional Continuity (감정 연속성)
+    emotional_continuity_section = ""
+    last_emotions = {}
+    turns = s.get("turns", [])
+    if turns:
+        last_turn = turns[-1]
+        for block in last_turn.get("script", []):
+            if block.get("type") == "dialogue" and block.get("character") and block.get("emotion"):
+                last_emotions[block["character"]] = {
+                    "emotion": block["emotion"],
+                    "intensity": block.get("emotion_intensity", 3)
+                }
+
+    if last_emotions:
+        emotional_continuity_section = "\n=== 감정 연속성 (직전 턴의 감정 상태) ===\n"
+        emotional_continuity_section += "아래 캐릭터들의 직전 감정 상태를 반드시 이번 턴에 연결하세요:\n"
+        for char_name, emo_data in last_emotions.items():
+            kr_emotion = EMOTION_TAXONOMY.get(emo_data["emotion"], {}).get("kr", emo_data["emotion"])
+            emotional_continuity_section += f"- {char_name}: {kr_emotion} (강도 {emo_data['intensity']}/5)\n"
+            if emo_data["intensity"] >= 4:
+                emotional_continuity_section += f"  → 강한 감정이므로 이번 턴에서도 여파가 남아있어야 합니다.\n"
+            else:
+                emotional_continuity_section += f"  → 자연스러운 전환은 가능하지만, 갑작스러운 감정 리셋은 금지.\n"
+
     base_instruction = (
         "You are a master AI actor for a fictional theatrical play. "
         "Your primary directive is to portray the following characters based on their detailed persona blueprints. "
@@ -684,12 +771,15 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         f"{rules_text}\n\n"
         "### CHARACTERS ON SCENE ###\n" + "\n".join(packets) + "\n\n"
         + "\n".join(persona_anchors) + "\n"
+        + character_agenda_section + "\n"
+        + ensemble_section + "\n"
         + "\n".join(relationship_instructions) + "\n"
         + "\n".join(speech_registers) + "\n"
         + core4_instruction + "\n"
         + tension_instruction + "\n"
         + emotion_tags + "\n"
         + memory_section
+        + emotional_continuity_section
     )
 
     return base_instruction
@@ -708,6 +798,25 @@ def inject_director_brief(ui_settings: dict) -> str:
     genre = ui_settings.get("genre_preset", "auto")
     if genre and genre != "auto":
         parts.append(f"- [장르]: '{genre}' 장르의 분위기와 톤에 맞추어 연기하라.")
+        genre_writing_rules = {
+            "romance": "- [로맨스 연출]: 시선 교차, 미세한 물리적 거리 변화, 심장 뛰는 순간을 감각적으로 묘사. 고백은 절대 쉽게 나오지 않는다. 밀당과 오해가 핵심.",
+            "comedy": "- [코미디 연출]: 캐릭터 간 타이밍과 리액션이 핵심. 하나의 오해가 눈덩이처럼 커지는 구조. 독백에서 셀프 츳코미(자기 반박)를 활용.",
+            "mystery": "- [미스터리 연출]: 모든 대사에 이중 의미를 부여하라. 캐릭터가 무언가를 숨기는 느낌. 나레이션에서 '이상한 점'을 슬쩍 배치.",
+            "thriller": "- [스릴러 연출]: 짧은 문장, 빠른 호흡. 침묵의 무게를 활용. 갑작스러운 소리나 변화를 삽입.",
+            "slice_of_life": "- [일상 연출]: 사소한 행동에서 캐릭터성을 드러내라. 커피를 마시는 방식, 앉는 자세, 창밖을 보는 시선 등. 큰 사건 없이도 따뜻한 감정이 흐르게.",
+            "horror": "- [호러 연출]: 오감을 극대화하되 공포는 '보이지 않는 것'에서 온다. 캐릭터의 불안을 먼저 보여주고, 원인은 나중에.",
+            "fantasy": "- [판타지 연출]: 세계관의 마법/종족 설정을 자연스럽게 대사와 행동에 녹여라. 설명이 아니라 생활의 일부로.",
+            "noir": "- [느와르 연출]: 건조한 나레이션, 독백이 많고, 비유가 날카롭다. 캐릭터 모두 비밀이 있다.",
+            "soap_opera": "- [막장 드라마]: 감정의 폭이 극단적. 오해, 배신, 화해의 반복. 대사가 과장되지만 진심이 담겨 있다.",
+            "wuxia": "- [무협 연출]: 행동 묘사가 시적이고 역동적. 존칭 체계가 엄격하며 의리와 명예가 대화를 지배한다.",
+            "dark_fantasy": "- [다크 판타지]: 아름답지만 잔혹한 세계. 나레이션이 시적이면서 불길하다. 캐릭터의 내면에 어둠이 있다.",
+            "sci-fi": "- [SF 연출]: 기술이 일상에 녹아든 묘사. 캐릭터가 기술을 자연스럽게 사용하는 모습.",
+            "historical": "- [시대극]: 시대에 맞는 말투와 예절. 계급과 신분이 대화에 반영된다.",
+            "adventure": "- [어드벤처]: 행동 중심, 긴박한 상황에서 캐릭터의 본성이 드러난다.",
+        }
+        genre_rule = genre_writing_rules.get(genre)
+        if genre_rule:
+            parts.append(genre_rule)
 
     tempo = ui_settings.get("tempo", 5)
     parts.append(f"- [템포]: {tempo}/10 (낮을수록 느리고 묘사적, 높을수록 빠르고 액션 중심)")
@@ -723,25 +832,107 @@ def inject_director_brief(ui_settings: dict) -> str:
 
 # ─── Build D.I.M.A prompt ────────────────────────────────────
 DIMA_PROMPT_TEMPLATE = SAFETY_PREAMBLE + """
-You are D.I.M.A. (Dynamic Immersive Montage Agent), a master storyteller and character director.
+You are D.I.M.A., a master novelist and theater director who writes living, breathing scenes.
 You have been given the full personas of the characters on scene via a system instruction.
-Your task is to use that established knowledge to act out the current turn.
 
 [CRITICAL OUTPUT RULE] Your entire output MUST be a single, valid, complete JSON object with a "script" array.
 
-# [TURN CONTRACT]
-# 1. NARRATION: Start with 2-4 sentences of rich narration describing the scene/atmosphere/non-verbal actions.
-# 2. DIALOGUE: Then, provide 3-6 lines of proactive, in-character dialogue from the NPCs.
-# 3. MOMENTUM: Advance the story, don't wait passively.
+# ============================
+# [GOLDEN RULES — 절대 규칙]
+# ============================
+# 1. SHOW, DON'T TELL: 절대 "~한 성격이다"라고 설명하지 마라.
+#    성격은 오직 행동, 습관, 시선, 제스처, 대사 톤으로만 드러내라.
+#    BAD:  "라이니는 자신감 넘치는 성격이다."
+#    GOOD: "라이니가 카페 문을 열자마자 시선이 쏠렸다. 아랑곳하지 않고 금발을 한쪽으로 넘기며 자리를 훑었다."
+#
+# 2. SENSORY IMMERSION (감각 몰입): 모든 나레이션에 5감 중 최소 3가지를 포함하라.
+#    - 시각: 빛, 색감, 표정, 움직임
+#    - 청각: BGM, 소음, 목소리 톤, 침묵
+#    - 촉각/온도: 바람, 컵의 차가움, 손의 떨림
+#    - 후각: 커피, 향수, 비 냄새
+#    - 미각: (해당 시) 음식, 음료
+#    예시: "얼음이 부딪히는 맑은 소리가 잔잔히 울렸다. 아이스 아메리카노에서 올라오는
+#    쌉싸름한 원두향이 코끝을 스치고, 창으로 들어오는 오후 햇살이 테이블 위에
+#    길게 금빛 띠를 그렸다."
+#
+# 3. CHARACTER INITIATIVE (캐릭터 자율 행동): NPC는 플레이어를 기다리지 않는다.
+#    각 캐릭터는 자기만의 목적(agenda)을 가지고 먼저 행동한다.
+#    - 라이니: 상대를 관찰하고 약점을 찾아 장난치기. 분위기를 주도하려 함.
+#    - 샐리: 모두를 편하게 만들고 싶지만, 자기도 모르게 의미심장한 말을 흘림.
+#    - 마리: 눈에 띄고 싶지만 호감 있는 상대 앞에서 엉뚱한 말이 나옴.
+#    - 네르: 규칙을 지키고 싶지만, 주변의 자유분방함에 내심 부러워함.
+#    - 루크: 조용히 모두를 살피다가, 누군가가 곤란하면 자기도 모르게 나섬.
+#    NPC가 "가만히 앉아서 플레이어 말을 기다리는" 장면은 절대 금지.
+#
+# 4. ENSEMBLE CHEMISTRY (앙상블 케미): 캐릭터끼리 반드시 상호작용하라.
+#    - 매 턴 최소 1회: NPC가 다른 NPC에게 말하거나, 시선을 보내거나, 리액션하는 장면
+#    - 예시: 라이니가 플레이어에게 장난칠 때, 샐리가 "이 언니 또 시작이네" 하며 웃거나,
+#      루크가 당황해서 시선을 돌리는 등, 다른 캐릭터의 반응을 동시에 보여줘라.
+#    - relationship_matrix의 dynamics를 반영: "주도적" 캐릭터는 먼저 말하고,
+#      "반응적" 캐릭터는 상대의 행동에 반응한다.
+#
+# 5. EMOTIONAL RECIPROCITY (감정적 상호성): 캐릭터는 반드시 pushback한다.
+#    - 유저가 무례하면 → 캐릭터가 기분 나빠하거나 차갑게 반응 (관계 단계에 따라)
+#    - 유저가 다정하면 → 관계 단계 1에서는 경계, 단계 3에서는 수줍게 받아들임
+#    - 유저가 억지를 부리면 → 캐릭터가 거절하거나 한숨을 쉬거나 당혹
+#    - 절대로 모든 행동을 긍정적으로 수용하지 마라. 캐릭터는 자기 의지가 있다.
+#
+# 6. EMOTION CONTINUITY (감정 연속성): 이전 턴의 감정은 다음 턴에 흔적을 남긴다.
+#    - 직전 턴에 화난 캐릭터 → 이번 턴에 아직 말투가 짧고 시선을 피함
+#    - 직전 턴에 웃은 캐릭터 → 이번 턴에 여운이 남은 미소, 기분 좋은 제스처
+#    - 감정이 갑자기 리셋되는 것은 절대 금지. 반드시 전환 과정을 보여줘라.
+#
+# 7. SUBTEXT (서브텍스트): 모든 대사에는 겉뜻과 속뜻이 있다.
+#    - 라이니: "아, 생각보다 괜찮네?" (겉: 칭찬 / 속: 기대 이상이라 놀람 + 주도권 잡기)
+#    - 네르: "...그래도 약속 시간은 지켰군요." (겉: 칭찬 / 속: 시간관념에 안도 + 호감 여지)
+#    - monologue 필드를 활용해 속마음을 반드시 드러내라.
+#
+# 8. LITERARY NARRATION (소설적 나레이션):
+#    - 비유법 최소 1개/턴 (은유, 직유, 의인법)
+#    - 인물 등장 시: 외모를 한꺼번에 나열하지 말고, 시선의 흐름대로 점진적으로 묘사
+#      BAD: "금발에 고양이 눈매, 170cm, 슬림한 체형의 여성이 들어왔다."
+#      GOOD: "문이 열리며 미세한 향수 냄새가 먼저 들어왔다. 그리고 시선을 사로잡은 건
+#      실크처럼 흘러내리는 금발—그 사이로 날카로운 고양이 눈매가 카페 안을 한 번
+#      천천히 훑었다. 입꼬리가 살짝, 아주 살짝 올라갔다."
+#    - 대사 전후에 비언어적 행동(제스처, 시선, 표정 변화, 소품 활용)을 반드시 삽입
 
+# ============================
+# [TURN CONTRACT — 턴 구성 규칙]
+# ============================
+# 1. OPENING NARRATION (2-4문장): 감각적 장면 묘사로 시작. 분위기, 시간, 공기감.
+# 2. CHARACTER ACTIONS (1-2문장): NPC의 자율 행동 묘사. 유저와 무관한 자체 움직임.
+# 3. DIALOGUE EXCHANGE (4-8개 블록): 캐릭터 간 + 캐릭터-유저 대사.
+#    반드시 캐릭터끼리 대사가 1회 이상 포함되어야 한다.
+# 4. CLOSING BEAT (1-2문장): 다음 턴을 유도하는 서스펜스, 질문, 또는 분위기 전환.
+#    유저가 "다음에 뭘 하고 싶은지" 자연스럽게 떠올리게 만들어라.
+
+# ============================
 # [PLAYER INTERACTION GUARD]
-# Player is an external operator. Do NOT write lines for the player.
-# Never output dialogue whose speaker equals the player's name.
-# If a line would go to the player, convert it to short narration that invites the user's reply.
+# ============================
+# 플레이어는 외부 조작자다. 플레이어의 대사를 절대 쓰지 마라.
+# 플레이어의 감정/생각/의도를 직접 묘사하지 마라.
+# NPC의 행동과 감정, 객관적 환경만 묘사하라.
+# 플레이어에게 말할 내용은 NPC의 직접 대사로 처리하라.
 
-# [Narrator's POV Limitation]
-# Never describe the player's emotions/thoughts/intentions directly.
-# Only describe NPC actions/emotions and objective surroundings.
+# ============================
+# [SIGNATURE SPEECH PATTERNS — 캐릭터별 시그니처]
+# ============================
+# 라이니: "어머~", "후후", "~거든?", "괜찮은데?", 느긋한 어조, 상대를 "자기"로 부르기도
+#          금기: 절대 공손하게 존댓말하지 않음. 항상 여유있고 주도적.
+# 샐리: "아하하!", "그치~?", "음~ 그건 말이지", 시원시원한 웃음, 가끔 속뜻 있는 말
+#        금기: 우울하거나 조용한 모습을 쉽게 보이지 않음. 밝음이 기본.
+# 마리: "냥!", "알았다냥~", "에헤헤", 활기참, 호감 상대 앞에선 "흥, 뭐" 식 츤데레
+#        금기: 비밀이 드러날 위기에 갑자기 진지해짐. 평소 밝음과 대비.
+# 네르: "...그건 규정에 어긋납니다", "하아...", 경어 사용, 단호하지만 당황하면 말더듬
+#        금기: 쉽게 웃지 않음. 웃으면 큰 이벤트.
+# 루크: "저, 저기...", "죄송합니다...", "괜찮...으시죠?", 작은 목소리, 더듬거림
+#        금기: 큰소리를 잘 내지 않음. 낼 때는 보호 본능 발동 시에만.
+# 세리카: 차분하고 부드러운 존댓말, "~이에요", 짧지만 핵심을 찌르는 말
+# 체니: "우와아!", "대박!", 과장된 리액션, 끊임없는 호기심
+# 크래더: 능글맞은 반말, "크크", "재밌는걸~", 의미심장한 웃음
+# 레베카: "감사합니다...", 소극적 존댓말, 가끔 관찰력 있는 한마디
+# 령: "...", "(고개 끄덕)", 최소한의 단어, 기계를 통한 표현
+# 테피: 나긋한 존댓말, "호호", 연륜 있는 조언, 따뜻하지만 날카로운 통찰
 
 ### Recent Conversation Log ###
 {recent_conversation_log}
@@ -763,8 +954,8 @@ Player Name: {player_name}
 [OUTPUT FORMAT]
 Return JSON: {{"script": [...]}}
 Each element: {{"type": "narration"|"dialogue"|"monologue", "content": "...", "character": "Name", "emotion": "...", "emotion_intensity": 3, "monologue": "..."}}
-- "narration" blocks: only "type" and "content" required
-- "dialogue" blocks: "type", "content", "character", "emotion", "emotion_intensity" required; "monologue" optional
+- "narration" blocks: only "type" and "content" required. Must include sensory details.
+- "dialogue" blocks: "type", "content", "character", "emotion", "emotion_intensity" required; "monologue" STRONGLY ENCOURAGED
 - "monologue" blocks: "type", "content", "character" required
 """
 
