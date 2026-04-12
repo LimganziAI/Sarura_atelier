@@ -499,7 +499,13 @@
         const indicator = document.createElement('div');
         indicator.id = 'typing-indicator';
         indicator.className = 'typing-indicator';
-        indicator.innerHTML = `<span>${label || '이야기를 만들고 있어요'}</span><span class="dots"><span></span><span></span><span></span></span>`;
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = label || '이야기를 만들고 있어요';
+        const dotsSpan = document.createElement('span');
+        dotsSpan.className = 'dots';
+        dotsSpan.innerHTML = '<span></span><span></span><span></span>';
+        indicator.appendChild(labelSpan);
+        indicator.appendChild(dotsSpan);
         el.chatLog.appendChild(indicator);
         el.chatLog.scrollTop = el.chatLog.scrollHeight;
       }
@@ -756,7 +762,7 @@
             updateTrafficLight('yellow', '요청 중...');
             el.submitBtn.textContent = '처리 중…';
             await addMessageToLog(el.chatLog, 'user', { content: text });
-            showTypingIndicator('이야기를 만들고 있어요');
+            showTypingIndicator();
             const turnResponse = await POST('/execute-turn', {
               user_input: text,
               ui_settings: getCurrentDirectorSettings(),
