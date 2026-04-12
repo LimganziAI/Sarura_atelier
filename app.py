@@ -1578,7 +1578,7 @@ def generate_illustration():
         return jsonify({"status": "error", "message": "No image in response"}), 500
     except Exception as e:
         logger.warning(f"Illustration failed: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "삽화 생성에 실패했습니다."}), 500
 
 
 @app.route("/novelize", methods=["POST"])
@@ -1614,7 +1614,7 @@ def novelize():
         return jsonify({"status": "ok", "novel_text": full_novel})
     except Exception as e:
         logger.warning(f"Novelize failed: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "소설화에 실패했습니다."}), 500
 
 
 @app.errorhandler(500)
@@ -1631,4 +1631,4 @@ if __name__ == "__main__":
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
         logger.info("Sarura Atelier V3.3 — Flask dev server on port 5000")
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
