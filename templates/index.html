@@ -89,7 +89,7 @@
 
     /* Form */
     .chat-form{flex-shrink:0;display:flex;padding:10px;background:var(--bg-medium);align-items:flex-end;position:sticky;bottom:0;z-index:1}
-    .chat-form textarea{flex-grow:1;padding:10px;border:none;border-radius:20px;margin-right:10px;background:var(--bg-light);color:var(--text-light);font-size:var(--font-base);resize:none;max-height:120px}
+    .chat-form textarea{flex-grow:1;padding:10px;border:none;border-radius:20px;margin-right:10px;background:var(--bg-light);color:var(--text-light);font-size:var(--font-base);resize:none;max-height:120px;field-sizing:content}
     .chat-form button{padding:12px 20px;border:none;border-radius:20px;background:var(--accent-gold);color:var(--bg-darkest);font-weight:bold;cursor:pointer}
     .chat-form button:disabled{background:#666;color:#fff;cursor:not-allowed;filter:saturate(0.6)}
 
@@ -480,11 +480,21 @@
 
       // --- HTTP helpers ---
       const GET = async (endpoint) => { const r = await fetch(endpoint, {credentials:'include'}); if (!r.ok) throw new Error(`GET ${endpoint} -> ${r.status}`); return r.json(); };
-      const POST = async (endpoint, body) => {
-        const r = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body || {}) });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.message || `서버 요청 실패 (상태: ${r.status})`);
-        return data;
+      const POST = async (endpoint, body, maxRetries = 3) => {
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            const r = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body || {}) });
+            if (r.status === 429 && attempt < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+              continue;
+            }
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.message || `서버 요청 실패 (상태: ${r.status})`);
+            return data;
+          } catch (e) {
+            if (attempt === maxRetries) throw e;
+          }
+        }
       };
 
       // --- UI helpers ---
@@ -605,6 +615,7 @@
 
       // --- Render full state ---
       const renderUIFromState = async (newState) => {
+        hideTypingIndicator();
         STATE = newState;
         isBootstrapped = !!(STATE && STATE.session_id);
 
@@ -690,10 +701,10 @@
                 });
                 illWrap.appendChild(img);
               } else {
-                illWrap.innerHTML = '';
+                illWrap.innerHTML = '<div class="small" style="color:#999;padding:8px;">⚠️ 삽화 생성 실패</div>';
               }
             }).catch(() => {
-              illWrap.innerHTML = '';
+              illWrap.innerHTML = '<div class="small" style="color:#999;padding:8px;">⚠️ 삽화 생성 실패</div>';
             });
           }
         }
