@@ -1,10 +1,11 @@
 """
-Sarura Atelier V3.1 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V3.3 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
 Emotional Contagion, Persona Anchors, Speech Registers, Tension Curve,
-3-Layer Memory System.
+3-Layer Memory System, Maestro Memory Architect, Thought Cabinet,
+Illustration Generation, Chunked Novelization.
 """
 
 import os, json, re, uuid, copy, time, threading, logging, random
@@ -37,6 +38,7 @@ GEMINI_API_KEY = (
 
 # ─── Constants ───────────────────────────────────────────────
 MODEL_DIMA = "gemini-2.5-flash"
+MODEL_MAESTRO = "gemini-2.5-pro"
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
@@ -664,6 +666,15 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
             for st in short_term[-10:]:
                 memory_section += f"- {st}\n"
 
+    # Active Thoughts (Disco Elysium Thought Cabinet)
+    active_thoughts = memory.get("active_thoughts", [])
+    if active_thoughts:
+        memory_section += "\n[활성 사고 (Thought Cabinet)]\n"
+        for at in active_thoughts[-5:]:
+            status = "✅ 성숙" if at.get("matured") else "⏳ 발효 중"
+            memory_section += f"- [{status}] {at.get('thought', '')}\n"
+        memory_section += "성숙한 사고는 캐릭터의 행동과 대사에 자연스럽게 반영하세요.\n"
+
     base_instruction = (
         "You are a master AI actor for a fictional theatrical play. "
         "Your primary directive is to portray the following characters based on their detailed persona blueprints. "
@@ -792,16 +803,22 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     else:
         user_input_for_prompt = f"[This is a line of dialogue from the player]: '{user_input}'"
 
-    # Recent conversation log
-    flow_digest = s.get("flow_digest_10", [])
-    if isinstance(flow_digest, deque):
-        flow_digest = list(flow_digest)
-    log_entries = []
-    for entry in flow_digest:
-        if isinstance(entry, (list, tuple)) and len(entry) == 2:
-            speaker, line = entry
-            log_entries.append(f"- {speaker}: {_short(line)}")
-    recent_conversation_log = "\n".join(log_entries) if log_entries else "이번 씬의 첫 대화입니다."
+    # Recent conversation log for DIMA prompt
+    digest = s.get("flow_digest_10", [])
+    digest_text = "\n".join(digest[-7:]) if digest else "(첫 번째 턴)"
+
+    # Last 3 turns raw (for immediate context)
+    recent_turns = s.get("turns", [])[-3:]
+    raw_recent = []
+    for t in recent_turns:
+        if t.get("user_input"):
+            raw_recent.append(f"[Player]: {t['user_input'][:120]}")
+        for b in t.get("script", [])[:4]:
+            if b.get("type") == "dialogue":
+                raw_recent.append(f"[{b.get('character','?')}]: {b.get('content','')[:100]}")
+    raw_text = "\n".join(raw_recent[-12:])
+
+    recent_conversation_log = f"=== 흐름 요약 (최근 10턴) ===\n{digest_text}\n\n=== 직전 대화 (최근 3턴 원문) ===\n{raw_text}"
 
     # Character briefs
     briefs = []
@@ -1031,51 +1048,43 @@ def post_process_script(script: list, s: dict) -> list:
 
 
 # =========================================================================
-# PART D: EMOTIONAL CONTAGION BETWEEN CHARACTERS
+# PART D: EMOTIONAL CONTAGION BETWEEN CHARACTERS (PAD-based)
 # =========================================================================
-def apply_emotional_contagion(script: list, session_data: dict) -> list:
-    """Characters with high extraversion spread emotions to others."""
-    # Collect emotions from this turn
-    turn_emotions = {}
+def apply_emotional_contagion(s: dict, script: list):
+    """PAD-averaging emotional contagion with stress feedback."""
+    dominant_emotions = []
     for block in script:
-        if block.get("type") == "dialogue" and block.get("character") and block.get("emotion"):
-            turn_emotions[block["character"]] = block["emotion"]
+        if block.get("type") == "dialogue" and block.get("emotion"):
+            emo_key = normalize_emotion_tag(block["emotion"])
+            pad = get_emotion_pad(emo_key)
+            intensity = block.get("emotion_intensity", 3) / 5.0
+            dominant_emotions.append((pad, intensity, block.get("character", "?")))
 
-    # For each character, check if nearby character's strong emotion should influence them
-    contagion_log = []
-    for source_name, source_emotion in turn_emotions.items():
-        source_db = CHARACTERS_DB.get(source_name, {})
-        source_extraversion = source_db.get("personality_dna", {}).get("extraversion", 5)
-        source_intensity = 3  # default mid
-        for b in script:
-            if b.get("character") == source_name and b.get("emotion_intensity"):
-                try:
-                    source_intensity = int(b["emotion_intensity"])
-                except (ValueError, TypeError):
-                    source_intensity = 3
-                break
+    if not dominant_emotions:
+        return
 
-        if source_extraversion >= 7 and source_intensity >= 4:
-            for target_name in turn_emotions:
-                if target_name == source_name:
-                    continue
-                target_db = CHARACTERS_DB.get(target_name, {})
-                target_agreeableness = target_db.get("personality_dna", {}).get("agreeableness", 5)
-                if target_agreeableness >= 6:
-                    contagion_log.append({
-                        "source": source_name,
-                        "target": target_name,
-                        "emotion": source_emotion,
-                        "note": f"{source_name}의 강한 {source_emotion}이 {target_name}에게 전염됨"
-                    })
+    avg_pleasure = sum(e[0][0] * e[1] for e in dominant_emotions) / len(dominant_emotions)
+    avg_arousal = sum(e[0][1] * e[1] for e in dominant_emotions) / len(dominant_emotions)
 
-    # Store contagion log in session memory
-    memory = session_data.get("memory", {})
-    ecl = memory.get("emotional_contagion_log", [])
-    ecl.extend(contagion_log)
-    memory["emotional_contagion_log"] = ecl[-10:]
-    session_data["memory"] = memory
-    return script
+    # Log contagion
+    contagion_entry = {
+        "turn": len(s.get("turns", [])),
+        "pleasure": round(avg_pleasure, 3),
+        "arousal": round(avg_arousal, 3),
+        "atmosphere": "따뜻한 분위기" if avg_pleasure > 0.2 else ("긴장된 분위기" if avg_pleasure < -0.2 else "평온한 분위기"),
+        "sources": [e[2] for e in dominant_emotions[:3]]
+    }
+    s.setdefault("memory", {}).setdefault("emotional_contagion_log", []).append(contagion_entry)
+    if len(s["memory"]["emotional_contagion_log"]) > 10:
+        s["memory"]["emotional_contagion_log"] = s["memory"]["emotional_contagion_log"][-10:]
+
+    # Adjust CORE-4 stress based on emotional atmosphere
+    core4 = s.get("core4", {})
+    stress = core4.get("stress", {})
+    if avg_pleasure < -0.3:
+        stress["value"] = min(stress.get("max", 100), stress.get("value", 30) + 3)
+    elif avg_pleasure > 0.3:
+        stress["value"] = max(stress.get("min", 0), stress.get("value", 30) - 2)
 
 
 # ─── Core turn engine ─────────────────────────────────────────
@@ -1106,9 +1115,131 @@ def run_dima_turn(s: dict, user_input: str) -> list:
     processed = post_process_script(script, s)
 
     # Part D: Apply emotional contagion
-    processed = apply_emotional_contagion(processed, s)
+    apply_emotional_contagion(s, processed)
 
     return processed
+
+
+# =========================================================================
+# MAESTRO — Memory architect + relationship/CORE-4 adjuster (every 4 turns)
+# =========================================================================
+def run_maestro_sync(s: dict):
+    """Run Maestro analysis every 4 turns to update long-term memory, relationships, and CORE-4."""
+    turns = s.get("turns", [])
+    if len(turns) < 4 or len(turns) % 4 != 0:
+        return
+
+    recent_4 = turns[-4:]
+    recent_text = json.dumps(
+        [{"turn_id": t.get("turn_id"), "user_input": t.get("user_input", ""), "script": t.get("script", [])} for t in recent_4],
+        ensure_ascii=False
+    )[:6000]
+
+    on_screen = s.get("on_screen", [])
+    player_name = s.get("player_name", "사용자")
+    char_names = [n for n in on_screen if n != player_name]
+
+    maestro_prompt = SAFETY_PREAMBLE + f"""
+You are the Maestro, a narrative memory architect. Analyze the last 4 turns of an interactive novel and return a structured JSON summary.
+
+Characters in scene: {', '.join(char_names)}
+Player name: {player_name}
+
+Last 4 turns:
+{recent_text}
+
+Also analyze and return:
+- "core4_adjustments": {{"energy": int, "stress": int, "intoxication": int, "pain": int}}
+  Positive values = increase, negative = decrease.
+  Example: if a fight happened, stress +15, pain +10. If characters had a warm meal, energy +5, stress -5.
+
+Return JSON with:
+{{
+  "long_term_summary": "이번 4턴의 핵심 줄거리 1~2문장 요약",
+  "core_pin": "절대 잊으면 안 되는 핵심 사건이 있으면 기록. 없으면 null",
+  "active_thought": "캐릭터가 새로 깨달은 생각/의심/결심 (Disco Elysium Thought Cabinet 형식). 없으면 null",
+  "relationship_deltas": {{
+    "캐릭터이름": {{
+      "axis": "agreeable|adversarial|open|closed|bold|passive|reliable|unreliable|insightful|oblivious",
+      "delta": 1,
+      "reason": "왜 이 축이 변했는지 한 줄 설명"
+    }}
+  }},
+  "core4_adjustments": {{"energy": 0, "stress": 0, "intoxication": 0, "pain": 0}}
+}}
+"""
+
+    try:
+        config = genai_types.GenerateContentConfig(
+            temperature=0.4,
+            max_output_tokens=2048,
+            response_mime_type="application/json",
+            safety_settings=get_safety_settings(),
+        )
+        response = client.models.generate_content(
+            model=MODEL_MAESTRO,
+            contents=[maestro_prompt],
+            config=config,
+        )
+        text = response.text
+        if not text:
+            return
+        cleaned = re.sub(r'```json\s*', '', text.strip())
+        cleaned = re.sub(r'\s*```', '', cleaned)
+        maestro_result = json.loads(cleaned)
+    except Exception as e:
+        logger.warning(f"Maestro failed: {e}")
+        return
+
+    memory = s.setdefault("memory", {"short_term": [], "long_term": [], "core_pins": [], "emotional_contagion_log": []})
+
+    # Long-term memory
+    lt = maestro_result.get("long_term_summary")
+    if lt:
+        memory.setdefault("long_term", []).append(lt)
+        if len(memory["long_term"]) > 15:
+            memory["long_term"] = memory["long_term"][-15:]
+
+    # Core pin
+    pin = maestro_result.get("core_pin")
+    if pin:
+        memory.setdefault("core_pins", []).append(pin)
+        if len(memory["core_pins"]) > 20:
+            memory["core_pins"] = memory["core_pins"][-20:]
+
+    # Active thought (Disco Elysium Thought Cabinet)
+    thought = maestro_result.get("active_thought")
+    if thought:
+        memory.setdefault("active_thoughts", []).append({
+            "thought": thought,
+            "turn_born": len(turns),
+            "matured": False
+        })
+        # Mature old thoughts (> 8 turns old)
+        for t in memory.get("active_thoughts", []):
+            if len(turns) - t.get("turn_born", 0) > 8:
+                t["matured"] = True
+
+    # Relationship deltas (Scarlet Hollow style)
+    deltas = maestro_result.get("relationship_deltas", {})
+    for char_name, change in deltas.items():
+        rel = s.get("relationships", {}).get(char_name)
+        if not rel:
+            continue
+        axis = change.get("axis", "")
+        delta_val = change.get("delta", 0)
+        if axis in rel.get("axes", {}):
+            rel["axes"][axis] = max(0, rel["axes"][axis] + delta_val)
+        rel["stage"] = calculate_relationship_stage(rel)
+
+    # CORE-4 adjustments
+    adjustments = maestro_result.get("core4_adjustments", {})
+    for key, delta in adjustments.items():
+        stat = s.get("core4", {}).get(key)
+        if stat:
+            stat["value"] = max(stat["min"], min(stat["max"], stat["value"] + delta))
+
+    logger.info(f"Maestro completed for turn {len(turns)}")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1119,7 +1250,13 @@ def run_dima_turn(s: dict, user_input: str) -> list:
 # Part K: Health endpoint
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "version": "3.1"})
+    return jsonify({
+        "status": "ok",
+        "version": "3.3",
+        "model_dima": MODEL_DIMA,
+        "model_maestro": MODEL_MAESTRO,
+        "characters_loaded": len(ALL_CHARACTER_NAMES),
+    })
 
 
 @app.route("/")
@@ -1182,19 +1319,19 @@ def bootstrap():
     }
     s["turns"].append(first_turn)
 
-    # Update flow digest + short-term memory
-    flow = s.get("flow_digest_10", [])
-    if isinstance(flow, list):
-        flow = deque(flow, maxlen=10)
-    for b in final_script:
-        if b.get("type") == "dialogue":
-            flow.append((b["character"], b["content"]))
-        elif b.get("type") == "narration":
-            flow.append(("[System]", b["content"]))
-    s["flow_digest_10"] = list(flow)
+    # --- Flow Digest Update for bootstrap ---
+    speakers = list(set(b.get("character", "") for b in final_script if b.get("type") == "dialogue" and b.get("character")))
+    emotions = list(set(normalize_emotion_tag(b.get("emotion", "joy")) for b in final_script if b.get("type") == "dialogue" and b.get("emotion")))
+    narr_summary = next((b["content"][:80] for b in final_script if b.get("type") == "narration"), "")
+    digest_entry = f"T1: {', '.join(speakers)} — {narr_summary}... [감정: {', '.join(emotions[:3])}]"
+    s.setdefault("flow_digest_10", []).append(digest_entry)
 
-    # Part H: Update short-term memory
-    _update_short_term_memory(s, first_turn)
+    # --- Short-Term Memory Update for bootstrap ---
+    seed = data.get("seed_text", "")
+    user_summary = seed[:100] if seed and seed != "[PLAYER_PAUSE]" else "(침묵)"
+    npc_actions = "; ".join(f"{b.get('character','?')}: {b.get('content','')[:60]}" for b in final_script if b.get("type") == "dialogue")[:200]
+    short_entry = f"Turn 1 | Player: {user_summary} | NPCs: {npc_actions}"
+    s.setdefault("memory", {}).setdefault("short_term", []).append(short_entry)
 
     s["traffic_light"] = "GREEN"
     session["session_id"] = sid
@@ -1253,55 +1390,38 @@ def execute_turn():
         }
         s.setdefault("turns", []).append(turn_payload)
 
-        # Update flow digest
-        flow = s.get("flow_digest_10", [])
-        if isinstance(flow, list):
-            flow = deque(flow, maxlen=10)
-        if turn_payload["user_input"]:
-            flow.append((f"[{me}]", turn_payload["user_input"]))
-        for b in final_script:
-            if b.get("type") == "dialogue":
-                flow.append((b.get("character", "?"), b.get("content", "")))
-            elif b.get("type") == "narration":
-                flow.append(("[System]", b.get("content", "")))
-        s["flow_digest_10"] = list(flow)
+        # --- Flow Digest Update (NovelAI Author's Note inspired) ---
+        script = final_script
+        speakers = list(set(b.get("character", "") for b in script if b.get("type") == "dialogue" and b.get("character")))
+        emotions = list(set(normalize_emotion_tag(b.get("emotion", "joy")) for b in script if b.get("type") == "dialogue" and b.get("emotion")))
+        narr_summary = next((b["content"][:80] for b in script if b.get("type") == "narration"), "")
+        digest_entry = f"T{turn_id}: {', '.join(speakers)} — {narr_summary}... [감정: {', '.join(emotions[:3])}]"
+        s.setdefault("flow_digest_10", []).append(digest_entry)
+        if len(s["flow_digest_10"]) > 10:
+            s["flow_digest_10"] = s["flow_digest_10"][-10:]
 
-        # Part H: Update short-term memory
-        _update_short_term_memory(s, turn_payload)
+        # --- Short-Term Memory Update ---
+        user_summary = user_input[:100] if user_input and user_input != "[PLAYER_PAUSE]" else "(침묵)"
+        npc_actions = "; ".join(f"{b.get('character','?')}: {b.get('content','')[:60]}" for b in script if b.get("type") == "dialogue")[:200]
+        short_entry = f"Turn {turn_id} | Player: {user_summary} | NPCs: {npc_actions}"
+        s.setdefault("memory", {}).setdefault("short_term", []).append(short_entry)
+        if len(s["memory"]["short_term"]) > 20:
+            s["memory"]["short_term"] = s["memory"]["short_term"][-20:]
 
         # Recalculate relationship stages
         for char_name, rel in s.get("relationships", {}).items():
             rel["stage"] = calculate_relationship_stage(rel)
 
+        # --- Maestro (every 4 turns) ---
+        try:
+            run_maestro_sync(s)
+        except Exception as e:
+            logger.warning(f"Maestro error: {e}")
+
         s["traffic_light"] = "GREEN"
         save_session(s)
 
     return jsonify({"status": "ok", "sid": sid, "state": to_public_state(s)})
-
-
-# Part H: Memory helper
-def _update_short_term_memory(s: dict, turn: dict):
-    """Update short-term memory from a turn."""
-    memory = s.setdefault("memory", {"short_term": [], "long_term": [], "core_pins": [], "emotional_contagion_log": []})
-    short_term = memory.setdefault("short_term", [])
-
-    # Add turn summary to short term
-    entries = []
-    if turn.get("user_input"):
-        entries.append(f"[플레이어] {turn['user_input'][:200]}")
-    for b in turn.get("script", []):
-        if b.get("type") == "narration":
-            entries.append(f"[나레이션] {b['content'][:200]}")
-        elif b.get("type") == "dialogue":
-            entries.append(f"[{b.get('character', '?')}] {b['content'][:200]}")
-    short_term.extend(entries)
-    # Keep only last 10 entries
-    memory["short_term"] = short_term[-10:]
-
-    # Trim long_term to max 20
-    memory["long_term"] = memory.get("long_term", [])[-20:]
-    # Trim core_pins to max 10
-    memory["core_pins"] = memory.get("core_pins", [])[-10:]
 
 
 # Part B: Hot-swap endpoint
@@ -1371,6 +1491,132 @@ def reset_session_route():
     return jsonify({"status": "ok"})
 
 
+@app.route("/set_on_screen", methods=["POST"])
+def set_on_screen():
+    sid = session.get("session_id")
+    if not sid:
+        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
+
+    data = request.get_json(force=True, silent=True) or {}
+    names = data.get("on_screen_names", [])
+
+    with get_session_lock(sid):
+        s = load_session(sid)
+        if not s:
+            return jsonify({"status": "error", "message": "세션을 찾을 수 없습니다."}), 404
+
+        player_name = get_player_name(s)
+        s["on_screen"] = normalize_cast(names, player_name)
+        init_relationships(s)
+        save_session(s)
+
+    return jsonify({"status": "ok", "on_screen": s["on_screen"]})
+
+
+@app.route("/generate-illustration", methods=["POST"])
+def generate_illustration():
+    sid = session.get("session_id")
+    if not sid:
+        return jsonify({"status": "error", "message": "No session"}), 400
+
+    s = load_session(sid)
+    if not s or not s.get("turns"):
+        return jsonify({"status": "error", "message": "No turns yet"}), 400
+
+    last_turn = s["turns"][-1]
+    narration_parts = [b["content"] for b in last_turn.get("script", []) if b.get("type") == "narration"]
+    scene_desc = " ".join(narration_parts)[:300] if narration_parts else "기숙사 라운지의 따뜻한 오후"
+
+    # Character appearances
+    char_looks = []
+    for name in s.get("on_screen", [])[:3]:
+        if name == s.get("player_name"):
+            continue
+        char_db = CHARACTERS_DB.get(name, {})
+        appearance = char_db.get("appearance", {})
+        if isinstance(appearance, dict):
+            brief = ", ".join(f"{k}: {v}" for k, v in list(appearance.items())[:5])
+            char_looks.append(f"{name}({brief[:100]})")
+        elif isinstance(appearance, str):
+            char_looks.append(f"{name}({appearance[:100]})")
+
+    # Emotion from last dialogue
+    last_emotion = "gentle_affection"
+    for b in reversed(last_turn.get("script", [])):
+        if b.get("type") == "dialogue" and b.get("emotion"):
+            last_emotion = normalize_emotion_tag(b["emotion"])
+            break
+    emotion_kr = EMOTION_TAXONOMY.get(last_emotion, {}).get("kr", "잔잔한")
+
+    illustration_prompt = (
+        f"한국 판타지 라이트노벨 삽화 스타일. 부드러운 수채화 터치, 따뜻한 조명. "
+        f"장면: {scene_desc} "
+        f"등장인물: {'; '.join(char_looks) if char_looks else '기숙사 전경'}. "
+        f"전체 분위기: {emotion_kr}. "
+        f"텍스트 없음, 워터마크 없음, 고품질 일러스트."
+    )
+
+    try:
+        import base64
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=[illustration_prompt],
+            config=genai_types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                safety_settings=get_safety_settings(),
+            )
+        )
+        for part in response.parts:
+            if hasattr(part, 'inline_data') and part.inline_data:
+                img_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                return jsonify({
+                    "status": "ok",
+                    "image_base64": img_b64,
+                    "mime_type": getattr(part.inline_data, 'mime_type', "image/png"),
+                    "prompt_used": illustration_prompt
+                })
+        return jsonify({"status": "error", "message": "No image in response"}), 500
+    except Exception as e:
+        logger.warning(f"Illustration failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/novelize", methods=["POST"])
+def novelize():
+    sid = session.get("session_id")
+    if not sid:
+        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
+
+    s = load_session(sid)
+    if not s or not s.get("turns"):
+        return jsonify({"status": "error", "message": "턴이 없습니다."}), 400
+
+    turns = s.get("turns", [])
+
+    try:
+        if len(turns) > 15:
+            # Novelization in chunks of 10 turns
+            novel_parts = []
+            for chunk_start in range(0, len(turns), 10):
+                chunk = turns[chunk_start:chunk_start + 10]
+                chunk_text = json.dumps([{"turn_id": t.get("turn_id"), "user_input": t.get("user_input", ""), "script": t.get("script", [])} for t in chunk], ensure_ascii=False)
+                chunk_prompt = f"다음은 인터랙티브 소설의 {chunk_start+1}~{chunk_start+len(chunk)}턴입니다. 한국어 소설체로 변환하세요. 나레이션은 서술로, 대사는 따옴표로, 속마음은 이탤릭체(~라고 생각했다)로 표현하세요.\n\n{chunk_text}"
+                chunk_response = client.models.generate_content(model=MODEL_DIMA, contents=[chunk_prompt])
+                novel_parts.append(chunk_response.text)
+            full_novel = "\n\n---\n\n".join(novel_parts)
+        else:
+            # Original single-pass novelization for short sessions
+            turns_text = json.dumps([{"turn_id": t.get("turn_id"), "user_input": t.get("user_input", ""), "script": t.get("script", [])} for t in turns], ensure_ascii=False)
+            novel_prompt = f"다음 인터랙티브 소설 턴들을 한국어 소설체로 변환하세요.\n\n{turns_text}"
+            novel_response = client.models.generate_content(model=MODEL_DIMA, contents=[novel_prompt])
+            full_novel = novel_response.text
+
+        return jsonify({"status": "ok", "novel_text": full_novel})
+    except Exception as e:
+        logger.warning(f"Novelize failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.errorhandler(500)
 def internal_error(e):
     logger.error(f"Internal server error: {e}")
@@ -1379,8 +1625,10 @@ def internal_error(e):
 
 # ─── Run ─────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import sys
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    print(f"★ Sarura Atelier V3.1 → http://localhost:{port}")
-    from waitress import serve
-    serve(app, host="0.0.0.0", port=port)
+    try:
+        from waitress import serve
+        logger.info("Sarura Atelier V3.3 — Waitress on port 5000")
+        serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    except ImportError:
+        logger.info("Sarura Atelier V3.3 — Flask dev server on port 5000")
+        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
