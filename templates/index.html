@@ -803,42 +803,167 @@
           novelBtn.className = 'icon-btn';
           novelBtn.textContent = '📖';
           novelBtn.title = '소설화';
-          novelBtn.addEventListener('click', async () => {
+          novelBtn.addEventListener('click', () => {
             if (!isBootstrapped) return alert('먼저 이야기를 시작하세요.');
-            novelBtn.disabled = true;
-            novelBtn.textContent = '⏳';
-            try {
-              const res = await POST('/novelize', {});
-              if (res.status === 'ok' && res.novel_text) {
-                const overlay = document.createElement('div');
-                overlay.className = 'modal-overlay';
-                const modalContent = document.createElement('div');
-                modalContent.className = 'modal-content';
-                modalContent.style.cssText = 'max-height:80vh;overflow-y:auto;';
-                const header = document.createElement('div');
-                header.className = 'modal-header';
-                const h2 = document.createElement('h2');
-                h2.textContent = '소설화 결과';
-                const closeBtn = document.createElement('button');
-                closeBtn.className = 'modal-close-btn';
-                closeBtn.textContent = '×';
-                closeBtn.addEventListener('click', () => overlay.remove());
-                header.appendChild(h2);
-                header.appendChild(closeBtn);
-                const body = document.createElement('div');
-                body.style.cssText = 'white-space:pre-wrap;line-height:1.8;font-size:15px;';
-                body.textContent = res.novel_text;
-                modalContent.appendChild(header);
-                modalContent.appendChild(body);
-                overlay.appendChild(modalContent);
-                document.body.appendChild(overlay);
-              } else {
-                alert(res.message || '소설화 실패');
-              }
-            } catch(e) { alert('소설화 실패: ' + e.message); }
-            finally { novelBtn.disabled = false; novelBtn.textContent = '📖'; }
+            openNovelModal();
           });
           document.querySelector('.top-bar .buttons')?.appendChild(novelBtn);
+        }
+
+        // --- Novel Modal System ---
+        function openNovelModal() {
+          // Remove existing novel modal if any
+          document.getElementById('novel-modal')?.remove();
+
+          const overlay = document.createElement('div');
+          overlay.id = 'novel-modal';
+          overlay.className = 'modal-overlay';
+
+          const modalContent = document.createElement('div');
+          modalContent.className = 'modal-content';
+          modalContent.style.cssText = 'max-width:650px;width:95%;max-height:85vh;display:flex;flex-direction:column;';
+
+          // Header
+          const header = document.createElement('div');
+          header.className = 'modal-header';
+          const h2 = document.createElement('h2');
+          h2.textContent = '소설화';
+          const closeBtn = document.createElement('button');
+          closeBtn.className = 'modal-close-btn';
+          closeBtn.textContent = '×';
+          closeBtn.addEventListener('click', () => overlay.remove());
+          header.appendChild(h2);
+          header.appendChild(closeBtn);
+
+          // Controls
+          const controls = document.createElement('div');
+          controls.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;';
+
+          const generateAllBtn = document.createElement('button');
+          generateAllBtn.className = 'btn btn-primary';
+          generateAllBtn.textContent = '전체 소설화';
+          generateAllBtn.style.cssText = 'padding:8px 16px;font-weight:bold;';
+
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'btn btn-ghost';
+          copyBtn.textContent = '복사하기';
+          copyBtn.style.cssText = 'padding:8px 16px;';
+          copyBtn.disabled = true;
+
+          const closeBtn2 = document.createElement('button');
+          closeBtn2.className = 'btn btn-ghost';
+          closeBtn2.textContent = '닫기';
+          closeBtn2.style.cssText = 'padding:8px 16px;';
+          closeBtn2.addEventListener('click', () => overlay.remove());
+
+          controls.appendChild(generateAllBtn);
+          controls.appendChild(copyBtn);
+          controls.appendChild(closeBtn2);
+
+          // Progress bar
+          const progressWrap = document.createElement('div');
+          progressWrap.style.cssText = 'display:none;margin-bottom:12px;';
+          const progressText = document.createElement('div');
+          progressText.style.cssText = 'font-size:12px;color:var(--text-medium);margin-bottom:4px;';
+          const progressBar = document.createElement('div');
+          progressBar.style.cssText = 'height:6px;background:var(--bg-light);border-radius:3px;overflow:hidden;';
+          const progressFill = document.createElement('div');
+          progressFill.style.cssText = 'height:100%;background:var(--accent-gold);border-radius:3px;transition:width 0.3s;width:0%;';
+          progressBar.appendChild(progressFill);
+          progressWrap.appendChild(progressText);
+          progressWrap.appendChild(progressBar);
+
+          // Text area
+          const textArea = document.createElement('div');
+          textArea.style.cssText = 'flex:1;overflow-y:auto;min-height:400px;max-height:60vh;padding:16px;background:var(--bg-dark);border-radius:8px;border:1px solid var(--bg-light);white-space:pre-wrap;line-height:1.9;font-size:15px;color:var(--text-light);';
+          textArea.textContent = '\"전체 소설화\" 버튼을 눌러 소설을 생성하세요.';
+
+          // Assemble modal
+          modalContent.appendChild(header);
+          modalContent.appendChild(controls);
+          modalContent.appendChild(progressWrap);
+          modalContent.appendChild(textArea);
+          overlay.appendChild(modalContent);
+          document.body.appendChild(overlay);
+
+          // Restore from localStorage if available
+          const savedNovel = localStorage.getItem('sarura_novel_' + (STATE?.session_id || ''));
+          if (savedNovel) {
+            textArea.textContent = savedNovel;
+            copyBtn.disabled = false;
+          }
+
+          // Copy handler
+          copyBtn.addEventListener('click', () => {
+            const text = textArea.textContent || '';
+            if (!text) return;
+            if (navigator.clipboard && window.isSecureContext) {
+              navigator.clipboard.writeText(text).then(() => {
+                copyBtn.textContent = '복사됨!';
+                setTimeout(() => { copyBtn.textContent = '복사하기'; }, 1500);
+              });
+            } else {
+              const ta = document.createElement('textarea');
+              ta.value = text;
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand('copy');
+              document.body.removeChild(ta);
+              copyBtn.textContent = '복사됨!';
+              setTimeout(() => { copyBtn.textContent = '복사하기'; }, 1500);
+            }
+          });
+
+          // Generate handler
+          generateAllBtn.addEventListener('click', async () => {
+            generateAllBtn.disabled = true;
+            generateAllBtn.textContent = '생성 중...';
+            progressWrap.style.display = 'block';
+            textArea.textContent = '';
+            copyBtn.disabled = true;
+
+            try {
+              const res = await POST('/novelize', {});
+
+              if ((res.status === 'ok' || res.status === 'partial') && res.chunks) {
+                const totalChunks = res.total_chunks || res.chunks.length;
+                let fullText = '';
+
+                for (let i = 0; i < res.chunks.length; i++) {
+                  const chunk = res.chunks[i];
+                  const pct = Math.round(((i + 1) / totalChunks) * 100);
+                  progressText.textContent = `${i + 1}/${totalChunks} 청크 처리 완료`;
+                  progressFill.style.width = pct + '%';
+
+                  if (fullText) fullText += '\n\n';
+                  fullText += chunk.text || '';
+                  textArea.textContent = fullText;
+                  textArea.scrollTop = textArea.scrollHeight;
+                }
+
+                // Save to localStorage
+                if (STATE?.session_id) {
+                  localStorage.setItem('sarura_novel_' + STATE.session_id, fullText);
+                }
+
+                copyBtn.disabled = false;
+                progressText.textContent = `완료! (${totalChunks}개 청크)`;
+
+                if (res.status === 'partial' && res.message) {
+                  progressText.textContent += ` — ${res.message}`;
+                }
+              } else {
+                textArea.textContent = '❌ 소설화 실패: ' + (res.message || '알 수 없는 오류');
+                progressText.textContent = '오류 발생';
+              }
+            } catch (e) {
+              textArea.textContent = '❌ 소설화 실패: ' + e.message;
+              progressText.textContent = '오류 발생';
+            } finally {
+              generateAllBtn.disabled = false;
+              generateAllBtn.textContent = '전체 소설화';
+            }
+          });
         }
 
         document.querySelectorAll('#director-panel input[type="range"]').forEach(slider => {

@@ -1,5 +1,5 @@
 """
-Sarura Atelier V3.3 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V3.5 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -772,6 +772,31 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
             else:
                 emotional_continuity_section += f"  → 자연스러운 전환은 가능하지만, 갑작스러운 감정 리셋은 금지.\n"
 
+    # Emotion Diversity Enforcement
+    emotion_history = {}  # {char_name: [list of recent emotions]}
+    for turn in s.get("turns", [])[-4:]:
+        for block in turn.get("script", []):
+            if block.get("type") == "dialogue" and block.get("character") and block.get("emotion"):
+                char = block["character"]
+                emotion_history.setdefault(char, []).append(block["emotion"])
+
+    emotion_diversity_rules = ""
+    if emotion_history:
+        diversity_lines = []
+        for char, emotions in emotion_history.items():
+            if len(emotions) >= 2 and len(set(emotions[-2:])) == 1:
+                diversity_lines.append(
+                    f"- {char}은(는) 최근 2턴 연속 '{emotions[-1]}' 감정이었습니다. "
+                    f"이번 턴에서는 반드시 다른 감정을 사용하세요."
+                )
+            if len(emotions) >= 3 and len(set(emotions[-3:])) <= 1:
+                diversity_lines.append(
+                    f"- [경고] {char}이(가) 3턴 연속 같은 감정입니다. "
+                    f"즉시 감정 전환이 필요합니다."
+                )
+        if diversity_lines:
+            emotion_diversity_rules = "\n=== 감정 다양성 규칙 ===\n" + "\n".join(diversity_lines) + "\n"
+
     base_instruction = (
         "You are a master AI actor for a fictional theatrical play. "
         "Your primary directive is to portray the following characters based on their detailed persona blueprints. "
@@ -790,6 +815,7 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         + emotion_tags + "\n"
         + memory_section
         + emotional_continuity_section
+        + emotion_diversity_rules
     )
 
     return base_instruction
@@ -917,6 +943,29 @@ You have been given the full personas of the characters on scene via a system in
 #    유저가 "다음에 뭘 하고 싶은지" 자연스럽게 떠올리게 만들어라.
 
 # ============================
+# [STORY PROGRESSION MANDATE]
+# ============================
+# 매 턴은 반드시 이전 턴 대비 최소 하나의 새로운 요소를 포함해야 합니다:
+# - 새로운 화제(질문, 자기소개, 공통점 발견 등)
+# - 새로운 행동(메뉴 주문 완료, 자리 이동, 물건 건네기 등)
+# - 새로운 감정 변화(긴장 → 편안, 장난 → 진지 등)
+# - NPC끼리의 새로운 상호작용(의견 충돌, 협력, 비밀 귓속말 등)
+
+# ============================
+# [FORBIDDEN PATTERNS]
+# ============================
+# - 이전 턴과 동일한 구조(나레이션→같은리액션→같은놀리기)를 반복하지 마세요
+# - "어머~", "아하하!", "후후" 같은 감탄사로 매 턴 시작하지 마세요 (2턴 연속 금지)
+# - 플레이어의 새로운 행동을 무시하고 이전 턴의 상황을 다시 묘사하지 마세요
+
+# ============================
+# [NPC INITIATIVE EXAMPLES]
+# ============================
+# Turn 2에서 NPC가 해야 할 것: "그래서 김갑수 씨는 뭐 하시는 분이에요?" (질문으로 진행)
+# Turn 3에서 NPC가 해야 할 것: 음료를 실제로 주문하고, 새로운 화제로 넘어가기
+# Turn 4에서 NPC가 해야 할 것: 개인적인 이야기 공유, 또는 예상 못한 이벤트 발생
+
+# ============================
 # [PLAYER INTERACTION GUARD]
 # ============================
 # 플레이어는 외부 조작자다. 플레이어의 대사를 절대 쓰지 마라.
@@ -975,6 +1024,76 @@ def _short(txt: str, n: int = 100) -> str:
     return s if len(s) <= n else s[:n] + "..."
 
 
+def _build_event_digest(turn_id: int, user_input: str, script: list) -> str:
+    """Build a structured event-based flow digest entry."""
+    # Extract key events from the script
+    events = []
+    speakers = []
+    emotions = []
+    for b in script:
+        btype = b.get("type", "")
+        if btype == "narration":
+            # Summarize narration to key action/event
+            content = b.get("content", "")[:80]
+            if content:
+                events.append(content.rstrip("。."))
+        elif btype == "dialogue":
+            char = b.get("character", "?")
+            if char not in speakers:
+                speakers.append(char)
+            emo = b.get("emotion", "")
+            if emo and emo not in emotions:
+                emotions.append(emo)
+            # Extract key action from dialogue
+            content = b.get("content", "")
+            if content and len(content) > 5:
+                events.append(f"{char} 대사")
+
+    user_part = ""
+    if user_input and user_input not in ("[PLAYER_PAUSE]", "[CONTINUE_SCENE]"):
+        user_part = f"플레이어: {user_input[:40]}"
+
+    # Build compact event summary
+    parts = []
+    if user_part:
+        parts.append(user_part)
+    if speakers:
+        parts.append(f"{'+'.join(speakers)} 등장")
+    # Take first narration event as scene summary
+    narr_events = [b.get("content", "")[:60] for b in script if b.get("type") == "narration"]
+    if narr_events:
+        parts.append(narr_events[0].rstrip("。."))
+    if emotions:
+        parts.append(f"감정: {', '.join(emotions[:3])}")
+
+    return f"T{turn_id}: [{' → '.join(parts[:3])}] [{', '.join(emotions[:3])}]"
+
+
+def _build_event_short_term(turn_id: int, user_input: str, script: list) -> str:
+    """Build an event summary for short-term memory instead of raw dialogue."""
+    events = []
+
+    # Player action
+    if user_input and user_input not in ("[PLAYER_PAUSE]", "[CONTINUE_SCENE]"):
+        events.append(f"플레이어: {user_input[:60]}")
+    else:
+        events.append("플레이어: (침묵)")
+
+    # NPC key actions (summarize dialogue intent, not raw text)
+    seen_chars = set()
+    for b in script:
+        char = b.get("character", "")
+        if b.get("type") == "dialogue" and char and char not in seen_chars:
+            seen_chars.add(char)
+            emotion = b.get("emotion", "neutral")
+            content_preview = b.get("content", "")[:40]
+            events.append(f"{char}({emotion}): {content_preview}")
+        elif b.get("type") == "narration" and not events:
+            events.append(f"[장면] {b.get('content', '')[:50]}")
+
+    return f"Turn {turn_id} | {' | '.join(events[:4])}"
+
+
 def build_dima_prompt(s: dict, user_input: str) -> tuple:
     """Returns (system_instruction, main_prompt)."""
     player_name = s.get("player_name", "사용자")
@@ -1008,18 +1127,45 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     digest = s.get("flow_digest_10", [])
     digest_text = "\n".join(digest[-7:]) if digest else "(첫 번째 턴)"
 
-    # Last 3 turns raw (for immediate context)
-    recent_turns = s.get("turns", [])[-3:]
+    # Only last 1 turn raw (to prevent pattern-copying older dialogue)
+    all_turns = s.get("turns", [])
+    recent_turns_1 = all_turns[-1:] if all_turns else []
     raw_recent = []
-    for t in recent_turns:
+    for t in recent_turns_1:
         if t.get("user_input"):
             raw_recent.append(f"[Player]: {t['user_input'][:120]}")
         for b in t.get("script", [])[:4]:
             if b.get("type") == "dialogue":
                 raw_recent.append(f"[{b.get('character','?')}]: {b.get('content','')[:100]}")
-    raw_text = "\n".join(raw_recent[-12:])
+    raw_text = "\n".join(raw_recent[-8:])
 
-    recent_conversation_log = f"=== 흐름 요약 (최근 10턴) ===\n{digest_text}\n\n=== 직전 대화 (최근 3턴 원문) ===\n{raw_text}"
+    # Anti-repetition: extract forbidden echoes from last 3 turns
+    forbidden_echoes = []
+    for t in all_turns[-3:]:
+        for b in t.get("script", []):
+            if b.get("type") == "dialogue" and b.get("content"):
+                opening = b["content"].strip()[:15]
+                if opening and opening not in forbidden_echoes:
+                    forbidden_echoes.append(opening)
+
+    anti_repetition_block = ""
+    if forbidden_echoes:
+        echoes_bullets = "\n".join(f"- \"{echo}...\"" for echo in forbidden_echoes)
+        anti_repetition_block = (
+            "\n=== ANTI-REPETITION RULE (절대 준수) ===\n"
+            "다음은 최근 3턴에서 사용된 대사의 시작 부분입니다. "
+            "이와 동일하거나 유사한 문장으로 시작하는 대사를 절대 생성하지 마세요:\n"
+            f"{echoes_bullets}\n\n"
+            "같은 캐릭터가 연속 턴에서 같은 감정 태그를 3회 이상 사용하면 안 됩니다.\n"
+            "이전 턴에서 이미 언급된 사실(예: \"벌써 와 계셨군요\")을 다시 언급하지 마세요. "
+            "이미 알고 있는 정보입니다.\n"
+        )
+
+    recent_conversation_log = (
+        f"=== 흐름 요약 (최근 10턴) ===\n{digest_text}\n\n"
+        f"=== 직전 대화 (최근 1턴 원문) ===\n{raw_text}"
+        f"{anti_repetition_block}"
+    )
 
     # Character briefs
     briefs = []
@@ -1453,7 +1599,7 @@ Return JSON with:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "3.3",
+        "version": "3.5",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -1521,17 +1667,12 @@ def bootstrap():
     s["turns"].append(first_turn)
 
     # --- Flow Digest Update for bootstrap ---
-    speakers = list(set(b.get("character", "") for b in final_script if b.get("type") == "dialogue" and b.get("character")))
-    emotions = list(set(normalize_emotion_tag(b.get("emotion", "joy")) for b in final_script if b.get("type") == "dialogue" and b.get("emotion")))
-    narr_summary = next((b["content"][:80] for b in final_script if b.get("type") == "narration"), "")
-    digest_entry = f"T1: {', '.join(speakers)} — {narr_summary}... [감정: {', '.join(emotions[:3])}]"
+    seed_text = data.get("seed_text", "")
+    digest_entry = _build_event_digest(1, seed_text, final_script)
     s.setdefault("flow_digest_10", []).append(digest_entry)
 
     # --- Short-Term Memory Update for bootstrap ---
-    seed = data.get("seed_text", "")
-    user_summary = seed[:100] if seed and seed != "[PLAYER_PAUSE]" else "(침묵)"
-    npc_actions = "; ".join(f"{b.get('character','?')}: {b.get('content','')[:60]}" for b in final_script if b.get("type") == "dialogue")[:200]
-    short_entry = f"Turn 1 | Player: {user_summary} | NPCs: {npc_actions}"
+    short_entry = _build_event_short_term(1, seed_text, final_script)
     s.setdefault("memory", {}).setdefault("short_term", []).append(short_entry)
 
     s["traffic_light"] = "GREEN"
@@ -1591,20 +1732,14 @@ def execute_turn():
         }
         s.setdefault("turns", []).append(turn_payload)
 
-        # --- Flow Digest Update (NovelAI Author's Note inspired) ---
-        script = final_script
-        speakers = list(set(b.get("character", "") for b in script if b.get("type") == "dialogue" and b.get("character")))
-        emotions = list(set(normalize_emotion_tag(b.get("emotion", "joy")) for b in script if b.get("type") == "dialogue" and b.get("emotion")))
-        narr_summary = next((b["content"][:80] for b in script if b.get("type") == "narration"), "")
-        digest_entry = f"T{turn_id}: {', '.join(speakers)} — {narr_summary}... [감정: {', '.join(emotions[:3])}]"
+        # --- Flow Digest Update (event-based) ---
+        digest_entry = _build_event_digest(turn_id, user_input, final_script)
         s.setdefault("flow_digest_10", []).append(digest_entry)
         if len(s["flow_digest_10"]) > 10:
             s["flow_digest_10"] = s["flow_digest_10"][-10:]
 
-        # --- Short-Term Memory Update ---
-        user_summary = user_input[:100] if user_input and user_input != "[PLAYER_PAUSE]" else "(침묵)"
-        npc_actions = "; ".join(f"{b.get('character','?')}: {b.get('content','')[:60]}" for b in script if b.get("type") == "dialogue")[:200]
-        short_entry = f"Turn {turn_id} | Player: {user_summary} | NPCs: {npc_actions}"
+        # --- Short-Term Memory Update (event summary) ---
+        short_entry = _build_event_short_term(turn_id, user_input, final_script)
         s.setdefault("memory", {}).setdefault("short_term", []).append(short_entry)
         if len(s["memory"]["short_term"]) > 20:
             s["memory"]["short_term"] = s["memory"]["short_term"][-20:]
@@ -1782,6 +1917,21 @@ def generate_illustration():
         return jsonify({"status": "error", "message": "삽화 생성에 실패했습니다."}), 500
 
 
+NOVELIZE_PROMPT = """
+다음은 인터랙티브 소설의 대화 스크립트입니다. 이것을 한국어 문학 소설로 변환하세요.
+
+규칙:
+1. 모든 대사를 자연스러운 소설 문체로 풀어쓰세요 (큰따옴표 사용)
+2. narration 블록은 더 풍부한 묘사로 확장하세요
+3. monologue는 캐릭터의 내면 독백으로 자연스럽게 삽입하세요
+4. dialogue의 emotion을 행동 묘사로 표현하세요 (예: playful_tease → 입꼬리를 올리며)
+5. 플레이어의 입력도 소설의 일부로 자연스럽게 통합하세요
+6. 각 청크의 시작에 간단한 장면 전환 문구를 넣으세요
+
+출력: 순수한 소설 텍스트만 반환. JSON이나 마크다운 코드블록 없이 순수 텍스트.
+"""
+
+
 @app.route("/novelize", methods=["POST"])
 def novelize():
     sid = session.get("session_id")
@@ -1792,29 +1942,73 @@ def novelize():
     if not s or not s.get("turns"):
         return jsonify({"status": "error", "message": "턴이 없습니다."}), 400
 
-    turns = s.get("turns", [])
+    data = request.get_json(force=True, silent=True) or {}
+    turn_ids = data.get("turn_ids", [])
+    all_turns = s.get("turns", [])
+
+    # Filter turns by turn_ids if provided
+    if turn_ids:
+        turns = [t for t in all_turns if t.get("turn_id") in turn_ids]
+    else:
+        turns = all_turns
+
+    if not turns:
+        return jsonify({"status": "error", "message": "턴이 없습니다."}), 400
+
+    chunk_size = 5
+    chunks_result = []
 
     try:
-        if len(turns) > 15:
-            # Novelization in chunks of 10 turns
-            novel_parts = []
-            for chunk_start in range(0, len(turns), 10):
-                chunk = turns[chunk_start:chunk_start + 10]
-                chunk_text = json.dumps([{"turn_id": t.get("turn_id"), "user_input": t.get("user_input", ""), "script": t.get("script", [])} for t in chunk], ensure_ascii=False)
-                chunk_prompt = f"다음은 인터랙티브 소설의 {chunk_start+1}~{chunk_start+len(chunk)}턴입니다. 한국어 소설체로 변환하세요. 나레이션은 서술로, 대사는 따옴표로, 속마음은 이탤릭체(~라고 생각했다)로 표현하세요.\n\n{chunk_text}"
-                chunk_response = client.models.generate_content(model=MODEL_DIMA, contents=[chunk_prompt])
-                novel_parts.append(chunk_response.text)
-            full_novel = "\n\n---\n\n".join(novel_parts)
-        else:
-            # Original single-pass novelization for short sessions
-            turns_text = json.dumps([{"turn_id": t.get("turn_id"), "user_input": t.get("user_input", ""), "script": t.get("script", [])} for t in turns], ensure_ascii=False)
-            novel_prompt = f"다음 인터랙티브 소설 턴들을 한국어 소설체로 변환하세요.\n\n{turns_text}"
-            novel_response = client.models.generate_content(model=MODEL_DIMA, contents=[novel_prompt])
-            full_novel = novel_response.text
+        for chunk_idx, chunk_start in enumerate(range(0, len(turns), chunk_size)):
+            chunk = turns[chunk_start:chunk_start + chunk_size]
+            first_tid = chunk[0].get("turn_id", chunk_start + 1)
+            last_tid = chunk[-1].get("turn_id", chunk_start + len(chunk))
 
-        return jsonify({"status": "ok", "novel_text": full_novel})
+            chunk_data = []
+            for t in chunk:
+                entry = {
+                    "turn_id": t.get("turn_id"),
+                    "user_input": t.get("user_input", ""),
+                    "script": t.get("script", []),
+                }
+                chunk_data.append(entry)
+
+            chunk_text = json.dumps(chunk_data, ensure_ascii=False)
+            chunk_prompt = (
+                f"{NOVELIZE_PROMPT}\n\n"
+                f"### 턴 {first_tid}~{last_tid} 스크립트 ###\n"
+                f"{chunk_text}"
+            )
+
+            chunk_response = client.models.generate_content(
+                model=MODEL_DIMA, contents=[chunk_prompt]
+            )
+            result_text = (chunk_response.text or "").strip()
+            # Strip markdown code fences if present
+            result_text = re.sub(r'^```[a-z]*\s*', '', result_text)
+            result_text = re.sub(r'\s*```$', '', result_text)
+
+            chunks_result.append({
+                "chunk_id": chunk_idx + 1,
+                "turns": f"{first_tid}-{last_tid}",
+                "text": result_text,
+            })
+
+        return jsonify({
+            "status": "ok",
+            "chunks": chunks_result,
+            "total_chunks": len(chunks_result),
+        })
     except Exception as e:
         logger.warning(f"Novelize failed: {e}")
+        # Return partial results if any chunks succeeded
+        if chunks_result:
+            return jsonify({
+                "status": "partial",
+                "chunks": chunks_result,
+                "total_chunks": len(chunks_result),
+                "message": f"일부 청크 처리 중 오류 발생: {str(e)}",
+            })
         return jsonify({"status": "error", "message": "소설화에 실패했습니다."}), 500
 
 
@@ -1828,8 +2022,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V3.3 — Waitress on port 5000")
+        logger.info("Sarura Atelier V3.5 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V3.3 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V3.5 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
