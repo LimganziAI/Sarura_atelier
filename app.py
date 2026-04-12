@@ -703,7 +703,17 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
             if vs_text:
                 agenda += f"  · vs {other}: {vs_text}\n"
 
-        agenda += f"- 자율 행동 예시: 상대를 위아래로 훑어보기, 먼저 인사 대신 평가하기, 옆 사람과 눈짓 교환\n"
+        # Derive character-specific autonomous action hints from acting_heuristics
+        heuristics = bp.get("acting_heuristics", {})
+        if heuristics:
+            hint_values = list(heuristics.values())[:2]
+            hints = [h[:60] for h in hint_values if h]
+            if hints:
+                agenda += f"- 자율 행동 예시: {'; '.join(hints)}\n"
+            else:
+                agenda += f"- 자율 행동 예시: 상대를 위아래로 훑어보기, 먼저 인사 대신 평가하기, 옆 사람과 눈짓 교환\n"
+        else:
+            agenda += f"- 자율 행동 예시: 상대를 위아래로 훑어보기, 먼저 인사 대신 평가하기, 옆 사람과 눈짓 교환\n"
         character_agenda_parts.append(agenda)
 
     character_agenda_section = ""
