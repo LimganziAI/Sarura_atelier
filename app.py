@@ -789,7 +789,7 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
                     f"- {char}은(는) 최근 2턴 연속 '{emotions[-1]}' 감정이었습니다. "
                     f"이번 턴에서는 반드시 다른 감정을 사용하세요."
                 )
-            if len(emotions) >= 3 and len(set(emotions[-3:])) <= 1:
+            if len(emotions) >= 3 and len(set(emotions[-3:])) == 1:
                 diversity_lines.append(
                     f"- [경고] {char}이(가) 3턴 연속 같은 감정입니다. "
                     f"즉시 감정 전환이 필요합니다."
@@ -2007,7 +2007,7 @@ def novelize():
                 "status": "partial",
                 "chunks": chunks_result,
                 "total_chunks": len(chunks_result),
-                "message": f"일부 청크 처리 중 오류 발생: {str(e)}",
+                "message": "일부 청크 처리 중 오류가 발생했습니다.",
             })
         return jsonify({"status": "error", "message": "소설화에 실패했습니다."}), 500
 
