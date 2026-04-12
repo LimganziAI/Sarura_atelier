@@ -72,9 +72,16 @@ logger = logging.getLogger("atelier")
 client = genai.Client(api_key=GEMINI_API_KEY)
 _api_executor = ThreadPoolExecutor(max_workers=4)
 
+import atexit
+atexit.register(_api_executor.shutdown, wait=False)
+
 
 def call_gemini_with_timeout(model, contents, config, timeout_sec=30):
-    """Wrap client.models.generate_content with a timeout."""
+    """Wrap client.models.generate_content with a timeout.
+
+    Note: future.cancel() after timeout is best-effort only — the
+    underlying thread may keep running, but the caller unblocks.
+    """
     future = _api_executor.submit(
         client.models.generate_content,
         model=model, contents=contents, config=config,
@@ -2235,11 +2242,13 @@ def novelize():
                 f"{chunk_text}"
             )
 
+            novelize_config = genai_types.GenerateContentConfig(
+                safety_settings=get_safety_settings(),
+            )
             chunk_response = call_gemini_with_timeout(
-                model=MODEL_DIMA, contents=[chunk_prompt],
-                config=genai_types.GenerateContentConfig(
-                    safety_settings=get_safety_settings(),
-                ),
+                model=MODEL_DIMA,
+                contents=[chunk_prompt],
+                config=novelize_config,
             )
             if chunk_response is None:
                 logger.warning(f"Novelize chunk {chunk_idx+1} timed out")
