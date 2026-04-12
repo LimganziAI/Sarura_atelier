@@ -1,5 +1,5 @@
 """
-Sarura Atelier V3.6 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V3.7 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -7,7 +7,10 @@ Emotional Contagion, Persona Anchors, Speech Registers, Tension Curve,
 3-Layer Memory System, Maestro Memory Architect, Thought Cabinet,
 Illustration Generation, Chunked Novelization,
 Scene Card Compression, Maestro Fallback, Opening Narration,
-Secret Gating, Character Voice Contrast, Event-based Flow Digest.
+Secret Gating, Character Voice Contrast, Event-based Flow Digest,
+Variable Termination, Sensory Anchors, Self-Check Protocol,
+Oblique Dialogue, Anti-Cliché, Situation-Adaptive Speech,
+Description Focus Density, Narration Anti-Structure, Psychological Mirror.
 """
 
 import os, json, re, uuid, copy, time, threading, logging, random
@@ -514,12 +517,21 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
         acting_hint = first_val[:80] if first_val else ""
     core_rule = bp.get("core_acting_rule", "")[:80]
 
+    # Appearance summary for visual description
+    appearance = char_db.get("appearance", {})
+    app_summary = appearance.get("summary", "")[:60]
+    height = appearance.get("height", "")
+
     lines = [
         f"[{char_name}] {core_appeal}",
+    ]
+    if app_summary:
+        lines.append(f"외모: {app_summary} ({height})")
+    lines.extend([
         f"말투: {speech_habit} | 어미: {honorific}",
         f"입버릇: {', '.join(catches)}",
         f"금기: {', '.join(forbidden)}",
-    ]
+    ])
     if voice_contrast:
         lines.append(f"음성 대비: {voice_contrast}")
     lines.append(f"자율행동: {acting_hint}")
@@ -534,6 +546,11 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
             favor = rel.get("호감", 50)
             tension = rel.get("긴장", 50)
             lines.append(f"vs {other}: {comment} (호감{favor}/긴장{tension})")
+        # Psychological mirror for monologue depth
+        psych_mirror = bp.get("psychological_mirror", {})
+        mirror_text = psych_mirror.get(f"vs_{other}", "")
+        if mirror_text:
+            lines.append(f"  심리투영: {mirror_text}")
 
     return "\n".join(lines)
 
@@ -626,6 +643,10 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         sr += f"  · 단계 4 (특별): 반말 위주 + 애칭 사용\n"
         sr += f"- 취기 보정: 취기가 30 이상이면 한 단계 아래(더 친근한) 말투로 자연스럽게 변환\n"
         sr += f"- 스트레스 보정: 스트레스가 60 이상이면 말이 짧아지고, 80 이상이면 감정적 폭발로 격식 무시\n"
+        # Situation-Adaptive Speech modifiers
+        sr += f"- 위기 상황 보정: CORE-4 stress ≥ 70이면, 관계 단계와 무관하게 격식 무시. 짧고 절박한 말투.\n"
+        sr += f"- 축제/파티 보정: event_seeds에 '축제' 태그가 있으면, 한 단계 편한 말투.\n"
+        sr += f"- 비밀 대화 보정: 장소가 '비밀장소' 태그를 가지면, 속삭이듯 짧은 문장.\n"
         if quirks:
             sr += f"- {name} 고유 어미/추임새: {' / '.join(quirks)}\n"
         speech_registers.append(sr)
@@ -852,6 +873,25 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         if secret_lines:
             secret_lore_section = "\n=== 비밀 설정 (Secret Lore) ===\n" + "\n".join(secret_lines) + "\n"
 
+    # Part: Sensory Anchors — inject current location's sensory data
+    sensory_section = ""
+    world = s.get("world", {})
+    current_location = (world.get("main_stage", {}) or {}).get("name", "")
+    all_locations = WORLD_DB.get("main_stage", {}).get("locations", [])
+    all_locations += WORLD_DB.get("external_locations", {}).get("locations", [])
+    for loc in all_locations:
+        if loc.get("name") == current_location and loc.get("sensory_anchors"):
+            anchors = loc["sensory_anchors"]
+            sensory_section = "\n=== 감각 앵커 (현재 장소의 5감 묘사 참조) ===\n"
+            sensory_section += f"장소: {current_location}\n"
+            for sense, desc in anchors.items():
+                if desc:
+                    sensory_section += f"- {sense}: {desc}\n"
+            sensory_section += (
+                "\n[지시] 매 턴 나레이션에 위 감각 앵커 중 최소 2가지 비시각적 감각(청각, 후각, 촉각, 미각)을 포함하라.\n"
+            )
+            break
+
     base_instruction = (
         "You are a master AI actor for a fictional theatrical play. "
         "Your primary directive is to portray the following characters based on their detailed persona blueprints. "
@@ -872,6 +912,7 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         + emotional_continuity_section
         + emotion_diversity_rules
         + secret_lore_section
+        + sensory_section
     )
 
     return base_instruction
@@ -918,6 +959,18 @@ def inject_director_brief(ui_settings: dict) -> str:
 
     desc_focus = ui_settings.get("description_focus", 5)
     parts.append(f"- [묘사 집중도]: {desc_focus}/10")
+
+    # Description Focus density tiers
+    if desc_focus >= 7:
+        parts.append("- 묘사 밀도: HIGH. 모든 행동을 온도, 냄새, 색깔, 질감, 시간의 흐름으로 분해하라. 내면 심리는 3~5문장으로 확장하라.")
+    elif desc_focus <= 3:
+        parts.append("- 묘사 밀도: LOW. 짧은 서술문 위주. 행동과 대사에 집중하라. 묘사는 1~2문장으로 제한.")
+    else:
+        parts.append("- 묘사 밀도: NORMAL. 균형 잡힌 서술. 핵심 감각 2가지만 포함.")
+
+    # Genre-specific anti-metaphor rule for mystery/thriller/noir
+    if genre in ("mystery", "thriller", "noir"):
+        parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
 
     return "\n".join(parts)
 
@@ -987,6 +1040,22 @@ You have been given the full personas of the characters on scene via a system in
 #      실크처럼 흘러내리는 금발—그 사이로 날카로운 고양이 눈매가 카페 안을 한 번
 #      천천히 훑었다. 입꼬리가 살짝, 아주 살짝 올라갔다."
 #    - 대사 전후에 비언어적 행동(제스처, 시선, 표정 변화, 소품 활용)을 반드시 삽입
+#
+# 9. OBLIQUE DIALOGUE (간접 대화):
+#    - 캐릭터는 질문에 직접 답하지 않는다. 행동, 다른 주제, 또는 역질문으로 반응한다.
+#    - 금기: "응, 맞아" → "...(커피잔을 내려놓으며) 바깥 바람이 좀 세졌네."
+#    - 정보 전달이 아닌 분위기와 관계 역학을 대사로 표현하라.
+#    - 예외: 긴급 상황, 명령, 고백 등 직접 답변이 서사적으로 필수인 경우.
+#
+# 10. ANTI-CLICHÉ (금지 표현 목록):
+#    절대 사용하지 말 것:
+#    - "공기가 무거웠다" / "공기가 차갑게 변했다"
+#    - "심장이 빠르게 뛰었다" / "심장이 멈추는 것 같았다"
+#    - "눈에 빛이 감돌았다" / "눈에 그림자가 드리워졌다"
+#    - "그리고 밤이 깊어갔다" / "시간이 멈춘 것 같았다"
+#    - "입술을 깨물었다" (턴당 최대 1회, 캐릭터 1명에 한정)
+#    - "고개를 끄덕였다" (턴당 최대 1회)
+#    대체: 구체적이고 개별적인 신체 반응으로 교체하라.
 
 # ============================
 # [TURN CONTRACT — 턴 구성 규칙]
@@ -995,8 +1064,18 @@ You have been given the full personas of the characters on scene via a system in
 # 2. CHARACTER ACTIONS (1-2문장): NPC의 자율 행동 묘사. 유저와 무관한 자체 움직임.
 # 3. DIALOGUE EXCHANGE (4-8개 블록): 캐릭터 간 + 캐릭터-유저 대사.
 #    반드시 캐릭터끼리 대사가 1회 이상 포함되어야 한다.
-# 4. CLOSING BEAT (1-2문장): 다음 턴을 유도하는 서스펜스, 질문, 또는 분위기 전환.
-#    유저가 "다음에 뭘 하고 싶은지" 자연스럽게 떠올리게 만들어라.
+# 4. CLOSING BEAT — 14가지 종결 방식 중 매 턴 1가지를 랜덤 선택:
+#    1. Hard Cut: 긴장된 행동 도중 즉시 중단
+#    2. Dialogue Suspension: 캐릭터가 질문하거나 발언한 직후, 반응 없이 종결
+#    3. Dry Observation: 감정 없는 물리적 사물/소리 묘사로 종결
+#    4. Sensory Anchor: 비시각적 감각(냄새, 소리, 온도변화)에 집중하여 종결
+#    5. Micro-Gesture: 캐릭터의 무의식적 신체 반응(떨리는 손가락, 삼키는 침)에 줌인
+#    6. The Intrusion: 외부 자극(문 두드리는 소리, 종소리)이 씬을 끊음
+#    7. Memory Overlap: 감각 자극이 과거 기억을 끌어올리며 종결
+#    8. Spatial Shift: 카메라가 캐릭터에서 벗어나 방 구석, 창밖 풍경을 묘사
+#    9. Acoustic Void: 소리가 갑자기 멈추고 침묵이 강조됨
+#    10. The Mundane Act: 긴장과 대비되는 일상적 행동(시계 확인, 안경 닦기)으로 종결
+#    금기: 매 턴 "그리고 밤이 깊어갔다" 또는 "~하며 미소를 지었다" 식의 반복 종결은 금지.
 
 # ============================
 # [STORY PROGRESSION MANDATE]
@@ -1013,6 +1092,13 @@ You have been given the full personas of the characters on scene via a system in
 # - 이전 턴과 동일한 구조(나레이션→같은리액션→같은놀리기)를 반복하지 마세요
 # - "어머~", "아하하!", "후후" 같은 감탄사로 매 턴 시작하지 마세요 (2턴 연속 금지)
 # - 플레이어의 새로운 행동을 무시하고 이전 턴의 상황을 다시 묘사하지 마세요
+
+# ============================
+# [NARRATION RULES — 나레이션 규칙]
+# ============================
+# - 나레이션은 자연스러운 산문체여야 한다.
+# - 금지: "첫째~, 둘째~" 식 나열, 번호 매기기, 항목화.
+# - 허용: 물 흐르듯 이어지는 문장, 감각적 세부 묘사, 시간의 흐름을 담은 서술.
 
 # ============================
 # [NPC INITIATIVE EXAMPLES]
@@ -1227,8 +1313,18 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     # Director brief
     director_brief = inject_director_brief(s.get("ui_settings", {}))
 
-    # Opening Narration: first turn directive
+    # Self-Check Protocol: inject self-check block for turn >= 1
     turn_count = len(s.get("turns", []))
+    if turn_count > 0:
+        director_brief += (
+            "\n\n[턴 시작 전 자가 점검 — 이 체크리스트를 내부적으로 확인하고 결과를 반영하라]\n"
+            "□ 직전 턴과 같은 장소/시간/분위기인가? → 3턴 이상 같으면 변화를 도입하라\n"
+            "□ 직전 턴과 같은 주제로 대화하고 있는가? → 새로운 화제/사건/NPC 행동을 도입하라\n"
+            "□ NPC들이 플레이어의 반응만 기다리고 있는가? → 최소 1명은 자발적으로 행동하라\n"
+            "□ 직전 턴의 closing beat와 같은 패턴인가? → 다른 종결 방식을 선택하라"
+        )
+
+    # Opening Narration: first turn directive
     if turn_count == 0:
         char_names_str = ", ".join(
             n for n in on_screen_chars if n != player_name
@@ -1702,7 +1798,7 @@ Return JSON with:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "3.6",
+        "version": "3.7",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2125,8 +2221,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V3.5 — Waitress on port 5000")
+        logger.info("Sarura Atelier V3.7 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V3.5 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V3.7 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
