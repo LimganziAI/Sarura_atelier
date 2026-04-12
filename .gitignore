@@ -10,3 +10,4 @@ shared_novels/*
 *.egg-info/
 .env
 api_keys.txt
+.flask_secret

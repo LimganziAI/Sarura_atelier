@@ -1,5 +1,5 @@
 """
-Sarura Atelier V3.7 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V3.8 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -15,6 +15,7 @@ Description Focus Density, Narration Anti-Structure, Psychological Mirror.
 
 import os, json, re, uuid, copy, time, threading, logging, random
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime
 from collections import deque
 from typing import Dict, Any, List, Optional
@@ -49,7 +50,13 @@ DIGEST_CONTENT_MAX_LENGTH = 30
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = os.urandom(32)
+SECRET_KEY_FILE = BASE_DIR / ".flask_secret"
+if SECRET_KEY_FILE.exists():
+    app.secret_key = SECRET_KEY_FILE.read_bytes()
+else:
+    _key = os.urandom(32)
+    SECRET_KEY_FILE.write_bytes(_key)
+    app.secret_key = _key
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_FILE_DIR"] = str(FLASK_SESSIONS_DIR)
 app.config["SESSION_PERMANENT"] = False
@@ -63,6 +70,28 @@ logger = logging.getLogger("atelier")
 
 # ─── Genai Client ────────────────────────────────────────────
 client = genai.Client(api_key=GEMINI_API_KEY)
+_api_executor = ThreadPoolExecutor(max_workers=4)
+
+import atexit
+atexit.register(_api_executor.shutdown, wait=False)
+
+
+def call_gemini_with_timeout(model, contents, config, timeout_sec=30):
+    """Wrap client.models.generate_content with a timeout.
+
+    Note: future.cancel() after timeout is best-effort only — the
+    underlying thread may keep running, but the caller unblocks.
+    """
+    future = _api_executor.submit(
+        client.models.generate_content,
+        model=model, contents=contents, config=config,
+    )
+    try:
+        return future.result(timeout=timeout_sec)
+    except FuturesTimeout:
+        future.cancel()
+        logger.error(f"Gemini API timeout ({timeout_sec}s) for model={model}")
+        return None
 
 # ─── Load DB files ───────────────────────────────────────────
 def _load_json(path, default=None):
@@ -195,6 +224,12 @@ def calculate_relationship_stage(rel: dict) -> int:
 STAGE_NAMES = {1: "경계", 2: "동료", 3: "신뢰", 4: "특별"}
 
 
+def update_all_relationship_stages(s: dict):
+    """Recalculate relationship stage for every character."""
+    for name, rel in s.get("relationships", {}).items():
+        rel["stage"] = calculate_relationship_stage(rel)
+
+
 # ─── Director defaults ───────────────────────────────────────
 DEFAULT_DIRECTOR_SETTINGS = {
     "pov_first_person": True,
@@ -286,10 +321,13 @@ def save_session(s: dict):
     if not sid:
         return
     p = session_path(sid)
-    p.write_text(
-        json.dumps(_to_jsonable(s), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    try:
+        p.write_text(
+            json.dumps(_to_jsonable(s), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.error(f"Failed to save session {sid}: {e}")
 
 
 def to_public_state(s: dict) -> dict:
@@ -505,7 +543,7 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
     heuristics = bp.get("acting_heuristics", {})
     rel_matrix = char_db.get("relationship_matrix", {})
 
-    core_appeal = identity.get("core_appeal", "")[:120]
+    core_appeal = identity.get("core_appeal", "")[:180]
     speech_habit = sig.get("speech_habit", "")
     honorific = sig.get("honorific_style", "")
     catches = sig.get("catchphrases", [])[:3]
@@ -649,6 +687,11 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         sr += f"- 비밀 대화 보정: 장소가 '비밀장소' 태그를 가지면, 속삭이듯 짧은 문장.\n"
         if quirks:
             sr += f"- {name} 고유 어미/추임새: {' / '.join(quirks)}\n"
+        # C-3: Inject relationship_development stage_description
+        rd = char_db.get("relationship_development", {})
+        stage_desc = rd.get(f"stage_{stage}_description", "")
+        if stage_desc:
+            sr += f"- 현재 단계 행동 지침: {stage_desc}\n"
         speech_registers.append(sr)
 
     # Part B: CORE-4 State
@@ -1056,6 +1099,14 @@ You have been given the full personas of the characters on scene via a system in
 #    - "입술을 깨물었다" (턴당 최대 1회, 캐릭터 1명에 한정)
 #    - "고개를 끄덕였다" (턴당 최대 1회)
 #    대체: 구체적이고 개별적인 신체 반응으로 교체하라.
+#
+# 11. CHARACTER THOUGHT CHAIN (캐릭터 내부 추론):
+#    - 각 캐릭터의 대사/행동 결정 전에 내부적으로 다음을 확인 (출력에는 포함하지 말 것):
+#      1) 이 상황에서 표면적으로 원하는 것
+#      2) 그 아래 숨겨진 진짜 욕구
+#      3) background_summary의 과거가 이 반응에 미치는 영향
+#      4) 최종 반응: 위 3가지를 반영
+#    - monologue 블록에 이 추론의 결과를 1~2문장으로 요약하여 기록하라
 
 # ============================
 # [TURN CONTRACT — 턴 구성 규칙]
@@ -1398,7 +1449,7 @@ def generate_llm(
 
     for attempt in range(3):
         try:
-            response = client.models.generate_content(
+            response = call_gemini_with_timeout(
                 model=MODEL_DIMA,
                 contents=[genai_types.Content(
                     role="user",
@@ -1406,6 +1457,9 @@ def generate_llm(
                 )],
                 config=config,
             )
+            if response is None:
+                logger.warning(f"Gemini timeout on attempt {attempt+1}")
+                continue
 
             # Part K: Check for safety-blocked response
             if response.candidates:
@@ -1708,11 +1762,17 @@ Return JSON with:
 
     for attempt in range(2):
         try:
-            response = client.models.generate_content(
+            response = call_gemini_with_timeout(
                 model=MODEL_MAESTRO,
                 contents=[maestro_prompt],
                 config=config,
             )
+            if response is None:
+                logger.warning(f"Maestro timeout (attempt {attempt + 1})")
+                if attempt == 0:
+                    time.sleep(MAESTRO_RETRY_DELAY_SECONDS)
+                    continue
+                break
             text = response.text
             if not text:
                 logger.warning(f"Maestro empty response (attempt {attempt + 1})")
@@ -1798,7 +1858,7 @@ Return JSON with:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "3.7",
+        "version": "3.8",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -1876,6 +1936,7 @@ def bootstrap():
 
     s["traffic_light"] = "GREEN"
     session["session_id"] = sid
+    update_all_relationship_stages(s)
     save_session(s)
 
     return jsonify({"status": "ok", "sid": sid, "state": to_public_state(s)})
@@ -1944,8 +2005,7 @@ def execute_turn():
             s["memory"]["short_term"] = s["memory"]["short_term"][-20:]
 
         # Recalculate relationship stages
-        for char_name, rel in s.get("relationships", {}).items():
-            rel["stage"] = calculate_relationship_stage(rel)
+        update_all_relationship_stages(s)
 
         # --- Maestro (every 4 turns) ---
         try:
@@ -2093,14 +2153,17 @@ def generate_illustration():
 
     try:
         import base64
-        response = client.models.generate_content(
+        response = call_gemini_with_timeout(
             model="gemini-2.5-flash-image",
             contents=[illustration_prompt],
             config=genai_types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
                 safety_settings=get_safety_settings(),
-            )
+            ),
+            timeout_sec=60,
         )
+        if response is None:
+            return jsonify({"status": "error", "message": "삽화 생성 시간 초과"}), 504
         for part in response.parts:
             if hasattr(part, 'inline_data') and part.inline_data:
                 img_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
@@ -2179,9 +2242,17 @@ def novelize():
                 f"{chunk_text}"
             )
 
-            chunk_response = client.models.generate_content(
-                model=MODEL_DIMA, contents=[chunk_prompt]
+            novelize_config = genai_types.GenerateContentConfig(
+                safety_settings=get_safety_settings(),
             )
+            chunk_response = call_gemini_with_timeout(
+                model=MODEL_DIMA,
+                contents=[chunk_prompt],
+                config=novelize_config,
+            )
+            if chunk_response is None:
+                logger.warning(f"Novelize chunk {chunk_idx+1} timed out")
+                continue
             result_text = (chunk_response.text or "").strip()
             # Strip markdown code fences if present
             result_text = re.sub(r'^```[a-z]*\s*', '', result_text)
@@ -2221,8 +2292,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V3.7 — Waitress on port 5000")
+        logger.info("Sarura Atelier V3.8 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V3.7 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V3.8 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
