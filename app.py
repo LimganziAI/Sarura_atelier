@@ -197,6 +197,13 @@ def big5_to_behavior_hints(pdna: dict) -> str:
     return " / ".join(hints) if hints else "균형잡힌 성격"
 
 
+# Pre-compute Big5 behavior hints into runtime cache (immutable values)
+for _cname in _CHAR_RUNTIME_CACHE:
+    _CHAR_RUNTIME_CACHE[_cname]["behavior_hints"] = big5_to_behavior_hints(
+        _CHAR_RUNTIME_CACHE[_cname].get("personality_dna", {})
+    )
+
+
 # =========================================================================
 # PART A: HYBRID EMOTION ENGINE (Plutchik + PAD + Geneva Emotion Wheel)
 # =========================================================================
@@ -666,11 +673,11 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
             continue
         # Use dynamic relationship values from session, fall back to static DB
         dyn_rel = relationships.get(other, {})
-        static_rel = rel_matrix.get(other, {})
-        if dyn_rel or (static_rel and isinstance(static_rel, dict)):
-            comment = static_rel.get("comment", "")[:50] if isinstance(static_rel, dict) else ""
-            favor = dyn_rel.get("affection", static_rel.get("호감", 50) if isinstance(static_rel, dict) else 50)
-            tension = dyn_rel.get("tension", static_rel.get("긴장", 50) if isinstance(static_rel, dict) else 50)
+        static_rel = rel_matrix.get(other) if isinstance(rel_matrix.get(other), dict) else {}
+        if dyn_rel or static_rel:
+            comment = static_rel.get("comment", "")[:50]
+            favor = dyn_rel.get("affection", static_rel.get("호감", 50))
+            tension = dyn_rel.get("tension", static_rel.get("긴장", 50))
             lines.append(f"vs {other}: {comment} (호감{favor}/긴장{tension})")
         # Psychological mirror for monologue depth
         psych_mirror = bp.get("psychological_mirror", {})
@@ -714,11 +721,13 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         if speech_examples:
             anchor += f"- 말투 DNA: {' / '.join(speech_examples[:3])}\n"
         anchor += f"- 금기 행동: {name}은(는) 절대로 다음을 하지 않습니다: [다른 캐릭터의 말투를 모방, 갑자기 성격이 변함, 자신의 비밀을 관계 단계에 맞지 않게 공개]\n"
+        cached = _CHAR_RUNTIME_CACHE.get(name, {})
+        behavior_hints = cached.get("behavior_hints", big5_to_behavior_hints(pdna))
         anchor += (
             f"- 성격 불변량: Big5 = O:{pdna.get('openness', 5)} "
             f"C:{pdna.get('conscientiousness', 5)} E:{pdna.get('extraversion', 5)} "
             f"A:{pdna.get('agreeableness', 5)} N:{pdna.get('neuroticism', 5)}\n"
-            f"  → 행동 경향: {big5_to_behavior_hints(pdna)}\n"
+            f"  → 행동 경향: {behavior_hints}\n"
             f"  → 이 수치는 절대 변하지 않습니다. 대사와 행동이 항상 이 성격에 부합해야 합니다.\n"
         )
         persona_anchors.append(anchor)
