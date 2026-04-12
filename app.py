@@ -1064,7 +1064,7 @@ You have been given the full personas of the characters on scene via a system in
 # 2. CHARACTER ACTIONS (1-2문장): NPC의 자율 행동 묘사. 유저와 무관한 자체 움직임.
 # 3. DIALOGUE EXCHANGE (4-8개 블록): 캐릭터 간 + 캐릭터-유저 대사.
 #    반드시 캐릭터끼리 대사가 1회 이상 포함되어야 한다.
-# 4. CLOSING BEAT — 14가지 종결 방식 중 매 턴 1가지를 랜덤 선택:
+# 4. CLOSING BEAT — 10가지 종결 방식 중 매 턴 1가지를 랜덤 선택:
 #    1. Hard Cut: 긴장된 행동 도중 즉시 중단
 #    2. Dialogue Suspension: 캐릭터가 질문하거나 발언한 직후, 반응 없이 종결
 #    3. Dry Observation: 감정 없는 물리적 사물/소리 묘사로 종결
