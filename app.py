@@ -41,6 +41,8 @@ GEMINI_API_KEY = (
 # ─── Constants ───────────────────────────────────────────────
 MODEL_DIMA = "gemini-2.5-flash"
 MODEL_MAESTRO = "gemini-2.5-flash"
+MAESTRO_RETRY_DELAY_SECONDS = 5
+DIGEST_CONTENT_MAX_LENGTH = 30
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
@@ -1080,20 +1082,20 @@ def _short(txt: str, n: int = 100) -> str:
 
 def _build_event_digest(turn_id: int, user_input: str, script: list) -> str:
     """Build a structured event-based flow digest entry.
-    Extracts dialogue blocks' character, emotion, content[:30] into
-    'T{n}: {character}({emotion}) — {content[:30]}' format."""
+    Extracts dialogue blocks' character, emotion, content into
+    'T{n}: {character}({emotion}) — {content[:N]}' format."""
     lines = []
     for b in script:
         if b.get("type") == "dialogue" and b.get("character"):
             char = b.get("character", "?")
             emotion = b.get("emotion", "neutral")
-            content = (b.get("content") or "")[:30]
+            content = (b.get("content") or "")[:DIGEST_CONTENT_MAX_LENGTH]
             lines.append(f"{char}({emotion}) — {content}")
     if not lines:
         # Fallback: use narration summary
         for b in script:
             if b.get("type") == "narration":
-                content = (b.get("content") or "")[:30]
+                content = (b.get("content") or "")[:DIGEST_CONTENT_MAX_LENGTH]
                 lines.append(f"[나레이션] {content}")
                 break
     summary = " | ".join(lines[:4]) if lines else "(무응답)"
@@ -1619,7 +1621,7 @@ Return JSON with:
             if not text:
                 logger.warning(f"Maestro empty response (attempt {attempt + 1})")
                 if attempt == 0:
-                    time.sleep(5)
+                    time.sleep(MAESTRO_RETRY_DELAY_SECONDS)
                     continue
                 break
             cleaned = re.sub(r'```json\s*', '', text.strip())
@@ -1630,7 +1632,7 @@ Return JSON with:
             emsg = str(e).lower()
             logger.warning(f"Maestro failed (attempt {attempt + 1}): {e}")
             if ("429" in emsg or "quota" in emsg) and attempt == 0:
-                time.sleep(5)
+                time.sleep(MAESTRO_RETRY_DELAY_SECONDS)
                 continue
             break
 
