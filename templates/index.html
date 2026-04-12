@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
+<<<<<<< HEAD
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>사루라 아뜨리에</title>
@@ -251,10 +252,270 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg-darkest);color:va
     </div>
     <div class="modal-section" style="text-align:center;margin-top:12px;">
       <button class="modal-btn danger" id="btnResetSession">세션 초기화</button>
+=======
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>사루라 아뜨리에</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-darkest:#1a1a1a; --bg-dark:#2c2c2c; --bg-medium:#3a3a3a; --bg-light:#4a4a4a;
+      --text-light:#e0e0e0; --text-medium:#a0a0a0; --accent-gold:#ffdd57; --accent-blue:#007bff;
+      --status-red:#dc3545; --status-green:#28a745; --status-yellow:#ffc107;
+      --font-base: clamp(15px, 1.8vw, 18px);
+      --font-large: calc(var(--font-base)*1.1);
+    }
+    *,*::before,*::after{box-sizing:border-box}
+    html, body { height:100%; margin:0; padding:0; font-family:'Noto Sans KR',sans-serif; background:var(--bg-darkest); color:var(--text-light); }
+    .app-container { display:flex; flex-direction:column; width:100%; height:100dvh; max-width:700px; background:var(--bg-dark); box-shadow:0 0 20px rgba(0,0,0,.5); margin:0 auto; }
+
+    /* Top Bar */
+    .top-bar{flex-shrink:0;padding:8px 15px;background:var(--bg-darkest);border-bottom:1px solid #000;display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .status-indicator{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:bold}
+    .traffic-light{width:12px;height:12px;border-radius:50%;background:var(--text-medium);transition:background-color .3s}
+    .traffic-light.red{background:var(--status-red)}
+    .traffic-light.green{background:var(--status-green)}
+    .traffic-light.yellow{background:var(--status-yellow)}
+    .top-bar .buttons{display:flex;gap:8px;align-items:center}
+    .icon-btn{background:var(--bg-light);color:var(--text-light);border:1px solid #555;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer}
+    .save-code-wrap{display:flex;align-items:center;gap:6px;min-width:0}
+    .save-code-display{font-size:12px;color:var(--accent-gold);font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px}
+
+    /* Header */
+    .header{position:relative;flex-shrink:0;height:35%;min-height:150px;background:var(--bg-darkest);overflow:hidden;cursor:pointer}
+    .header-gif{width:100%;height:100%;object-fit:cover;opacity:.85;transition:opacity .2s}
+    .header-character-name{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:5px 15px;border-radius:15px;font-size:14px;font-weight:bold}
+    .header.collapsed{height:28px;min-height:28px}
+    .header.collapsed .header-gif,.header.collapsed .header-character-name{display:none}
+    .header.collapsed::after{content:'▼ 펼치기';position:absolute;bottom:4px;left:50%;transform:translateX(-50%);color:#a0a0a0;font-size:12px;font-weight:bold}
+
+    /* Info Bar */
+    .info-bar{flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:10px 15px;background:var(--bg-medium);color:var(--text-medium);font-size:13px;border-bottom:1px solid #000}
+    .participants-display{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:15px}
+    .info-bar .label{font-weight:bold;color:var(--accent-gold)}
+    .toggle-button{border:1px solid #555;border-radius:5px;padding:4px 8px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap}
+    .info-bar .buttons{display:flex;gap:10px;flex-wrap:nowrap}
+
+    /* Panels */
+    .control-panel{display:none;flex-shrink:0;padding:15px;background:var(--bg-dark);border-bottom:1px solid #000;max-height:50%;overflow-y:auto}
+    .control-group{margin-bottom:15px}
+    .control-label{font-weight:bold;color:var(--accent-gold);font-size:14px;margin-bottom:8px;display:block}
+    .control-flex{display:flex;gap:8px}
+    .control-flex input{flex-grow:1;padding:8px;border:1px solid var(--bg-light);border-radius:5px;background:var(--bg-dark);color:var(--text-light)}
+    .control-flex button{padding:8px 15px;border:none;border-radius:5px;background:var(--accent-blue);color:#fff;font-weight:bold;cursor:pointer}
+    .character-selector{display:flex;flex-wrap:wrap;gap:8px}
+    .toggles-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .toggle-container{display:flex;justify-content:space-between;align-items:center;background:var(--bg-light);padding:8px;border-radius:5px}
+
+    /* Character buttons */
+    .char-btn{padding:6px 12px;border:2px solid #fff;border-radius:15px;font-size:13px;font-weight:bold;cursor:pointer;transition:.2s;background:transparent;color:#fff;opacity:.8}
+    .char-btn:disabled{opacity:.5;cursor:not-allowed}
+    .char-btn.player-btn{border-color:var(--accent-blue)}
+    .char-btn.player-btn.active{background:var(--accent-blue);color:#fff}
+    .char-btn.active{opacity:1}
+    .char-btn.active[style*="--c"]{border-color:var(--c);color:#fff;background:rgba(0,0,0,.15);box-shadow:0 0 0 2px var(--c) inset}
+
+    /* Chat */
+    .chat-log{flex:1;overflow-y:auto;padding:10px 10px 12px}
+    .chat-log img,.chat-log canvas,.chat-log video{max-width:100%;height:auto;display:block}
+    .turn-wrapper{margin-bottom:15px}
+    .message{padding:8px 12px;border-radius:15px;max-width:85%;line-height:1.6;font-size:var(--font-base);white-space:pre-wrap}
+    .narration-message{color:var(--text-medium);font-style:italic;text-align:left;margin:10px 0;font-size:var(--font-large);line-height:1.8;white-space:pre-wrap}
+    .user-message-wrapper{display:flex;justify-content:flex-end;margin-top:5px}
+    .user-message{background:var(--accent-blue);color:#fff}
+    .character-message-wrapper{gap:0}
+    .character-message{background:var(--bg-medium)}
+    .character-name{font-weight:bold;font-size:.9em;margin-bottom:4px}
+    .monologue{color:var(--text-medium);font-style:italic;font-size:.9em;margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-light)}
+
+    /* Form */
+    .chat-form{flex-shrink:0;display:flex;padding:10px;background:var(--bg-medium);align-items:flex-end;position:sticky;bottom:0;z-index:1}
+    .chat-form textarea{flex-grow:1;padding:10px;border:none;border-radius:20px;margin-right:10px;background:var(--bg-light);color:var(--text-light);font-size:var(--font-base);resize:none;max-height:120px}
+    .chat-form button{padding:12px 20px;border:none;border-radius:20px;background:var(--accent-gold);color:var(--bg-darkest);font-weight:bold;cursor:pointer}
+    .chat-form button:disabled{background:#666;color:#fff;cursor:not-allowed;filter:saturate(0.6)}
+
+    /* Modal */
+    .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:1000;display:flex;justify-content:center;align-items:center;padding:10px}
+    .modal-content{background:var(--bg-medium);padding:25px;border-radius:10px;max-width:90%;width:520px}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bg-light);padding-bottom:15px;margin-bottom:15px}
+    .modal-header h2{margin:0;color:var(--accent-gold)}
+    .modal-close-btn{background:none;border:none;color:var(--text-medium);font-size:1.5em;cursor:pointer}
+    .modal-hidden{display:none!important}
+    .recent-list{display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto}
+    .recent-item{display:flex;gap:8px;align-items:center;justify-content:space-between;background:var(--bg-light);padding:8px;border-radius:6px}
+    .recent-id{font-family:monospace;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+    .btn{border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px}
+    .btn-primary{background:var(--accent-blue);color:#fff}
+    .btn-danger{background:var(--status-red);color:#fff}
+    .btn-ghost{background:transparent;border:1px solid #666;color:#ddd}
+    .section-title{font-weight:bold;color:#ffdd57;margin:8px 0}
+    .small{font-size:12px;color:var(--text-medium)}
+
+    /* Genre tags */
+    .genre-tags-container{display:flex;flex-wrap:wrap;gap:8px}
+    .genre-tags-container button{padding:6px 12px;border:1px solid var(--bg-light);border-radius:15px;background-color:var(--bg-dark);color:var(--text-medium);cursor:pointer;transition:all .2s}
+    .genre-tags-container button.active{background-color:var(--accent-gold);color:var(--bg-darkest);border-color:var(--accent-gold);font-weight:bold}
+
+    #director-panel select{padding:8px;border:1px solid var(--bg-light);border-radius:5px;background:var(--bg-dark);color:var(--text-light)}
+    @media (max-width:480px){.app-container{max-width:none}.chat-form textarea{min-height:48px}}
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div class="top-bar">
+      <div class="status-indicator">
+        <div id="traffic-light" class="traffic-light red"></div>
+        <span id="status-text">대기 중</span>
+      </div>
+      <div class="buttons">
+        <button id="session-menu-btn" class="icon-btn" aria-label="불러오기·새로하기" title="불러오기·새로하기">📂</button>
+      </div>
+      <div class="save-code-wrap">
+        <span id="save-code-display" class="save-code-display">새로운 이야기</span>
+        <button id="copy-save-code-btn" class="icon-btn" title="저장 코드 복사">📋</button>
+      </div>
+    </div>
+
+    <div class="header">
+      <img id="header-gif" class="header-gif" src="https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier" alt="Header">
+      <div id="header-character-name" class="header-character-name"></div>
+    </div>
+
+    <div class="info-bar">
+      <div id="participants-display" class="participants-display">
+        <span class="label">내 이름:</span> <span id="current-player-name">사용자</span> |
+        <span class="label">참여자:</span> <span id="participants-list-display">사용자</span>
+      </div>
+      <div class="buttons">
+        <div id="toggle-scene-panel" class="toggle-button">씬 설정🎬</div>
+        <div id="toggle-director-panel" class="toggle-button">연출 설정⚙️</div>
+      </div>
+    </div>
+
+    <div id="scene-panel" class="control-panel">
+      <div class="control-group">
+        <div class="control-label">내 이름 설정</div>
+        <div class="control-flex">
+          <input type="text" id="player-name-input" placeholder="이름 입력...">
+          <button id="set-player-name-btn">설정</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">참여자 선택</div>
+        <div id="character-selector" class="character-selector"></div>
+      </div>
+    </div>
+
+    <div id="director-panel" class="control-panel">
+      <div class="control-group">
+        <div class="control-label">연출 설정</div>
+        <div class="toggles-grid">
+          <div class="toggle-container"><label for="pov-toggle">1인칭 시점</label><input type="checkbox" id="pov-toggle" data-key="pov_first_person" checked></div>
+          <div class="toggle-container"><label for="monologue-toggle">속마음 표시</label><input type="checkbox" id="monologue-toggle" data-key="show_monologue" checked></div>
+          <div class="toggle-container"><label for="acquainted-toggle">지인 모드</label><input type="checkbox" id="acquainted-toggle" data-key="acquainted"></div>
+          <div class="toggle-container"><label for="adult-mode-toggle">성인 모드</label><input type="checkbox" id="adult-mode-toggle" data-key="adult_mode"></div>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">연출 스타일 미세 조정</div>
+        <div class="toggles-grid" style="grid-template-columns:1fr">
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <label for="narration-ratio-slider">대화 ↔ 나레이션 비중</label>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px">대화</span>
+              <input type="range" id="narration-ratio-slider" data-key="narration_ratio" min="0" max="100" value="40" style="flex-grow:1">
+              <span style="font-size:12px">나레이션</span>
+              <span id="narration-ratio-value" style="font-weight:bold;min-width:30px">40%</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <label for="tempo-slider">서사 진행 속도</label>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px">느긋하게</span>
+              <input type="range" id="tempo-slider" data-key="tempo" min="1" max="9" value="5" style="flex-grow:1">
+              <span style="font-size:12px">빠르게</span>
+              <span id="tempo-value" style="font-weight:bold;min-width:30px">5</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <label for="description-focus-slider">묘사 밀도</label>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px">간결하게</span>
+              <input type="range" id="description-focus-slider" data-key="description_focus" min="1" max="9" value="5" style="flex-grow:1">
+              <span style="font-size:12px">상세하게</span>
+              <span id="description-focus-value" style="font-weight:bold;min-width:30px">5</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">장르 프리셋</div>
+        <div id="genre-preset-tags" class="genre-tags-container" data-key="genre_preset">
+          <button data-value="auto" class="active">자동 (균형)</button>
+          <button data-value="slice_of_life">일상 (힐링)</button>
+          <button data-value="romance">로맨스</button>
+          <button data-value="comedy">코미디</button>
+          <button data-value="fantasy">판타지</button>
+          <button data-value="mystery">미스터리</button>
+          <button data-value="thriller">스릴러 & 서스펜스</button>
+          <button data-value="horror">호러</button>
+          <button data-value="sci-fi">SF (사이버펑크)</button>
+          <button data-value="historical">시대극</button>
+          <button data-value="noir">느와르 & 하드보일드</button>
+          <button data-value="wuxia">무협</button>
+          <button data-value="adventure">액션 & 어드벤처</button>
+          <button data-value="dark_fantasy">다크 판타지</button>
+          <button data-value="soap_opera">막장 드라마</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="chat-log" class="chat-log"></div>
+
+    <form id="chat-form" class="chat-form">
+      <textarea id="user-input" placeholder="이곳에 메시지를 입력하세요." rows="1"></textarea>
+      <button type="submit" id="chat-submit-btn">시작</button>
+    </form>
+  </div>
+
+  <!-- Session Modal -->
+  <div id="session-modal" class="modal-overlay modal-hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>이야기 이어하기 / 새로하기</h2>
+        <button class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="section-title">현재 세션</div>
+        <div class="control-group">
+          <div class="control-flex">
+            <input type="text" id="current-save-code" readonly placeholder="세션이 시작되면 코드가 표시됩니다.">
+            <button id="copy-code-in-modal" class="btn btn-primary" type="button">복사</button>
+          </div>
+          <div class="small">코드를 복사해 두면 나중에 이어서 플레이할 수 있어요.</div>
+        </div>
+        <div class="section-title">불러오기</div>
+        <div class="control-group">
+          <div class="control-flex">
+            <input type="text" id="load-code-input" placeholder="저장 코드 입력...">
+            <button id="session-load-btn" class="btn btn-primary" type="button">이어하기</button>
+          </div>
+        </div>
+        <div class="section-title">최근 세션</div>
+        <div id="recent-list" class="recent-list"></div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="clear-recents-btn" class="btn btn-ghost" type="button">최근 목록 지우기</button>
+        </div>
+        <div class="section-title">새로하기</div>
+        <button id="session-reset-btn" class="btn btn-danger" style="width:100%" type="button">모든 기록 지우고 새로 시작</button>
+      </div>
+>>>>>>> origin/main
     </div>
   </div>
-</div>
 
+<<<<<<< HEAD
 <!-- ─── Novel Modal ─── -->
 <div class="modal-overlay" id="novelModal">
   <div class="modal">
@@ -1012,5 +1273,488 @@ function autoResizeTextarea() {
 
 })();
 </script>
+=======
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const $ = id => document.getElementById(id);
+      const el = {
+        trafficLight: $('traffic-light'), statusText: $('status-text'),
+        saveCodeDisplay: $('save-code-display'), copySaveCodeBtn: $('copy-save-code-btn'),
+        sessionMenuBtn: $('session-menu-btn'), headerGif: $('header-gif'),
+        headerCharName: $('header-character-name'),
+        participantsDisplay: $('participants-display'),
+        toggleScenePanelBtn: $('toggle-scene-panel'),
+        toggleDirectorPanelBtn: $('toggle-director-panel'),
+        scenePanel: $('scene-panel'), directorPanel: $('director-panel'),
+        playerNameInput: $('player-name-input'), setPlayerNameBtn: $('set-player-name-btn'),
+        characterSelector: $('character-selector'),
+        chatLog: $('chat-log'), chatForm: $('chat-form'),
+        userInput: $('user-input'), submitBtn: $('chat-submit-btn'),
+        sessionModal: $('session-modal'),
+        loadCodeInput: $('load-code-input'), sessionLoadBtn: $('session-load-btn'),
+        sessionResetBtn: $('session-reset-btn'),
+        currentSaveCode: $('current-save-code'), copyCodeInModal: $('copy-code-in-modal'),
+        recentList: $('recent-list'), clearRecentsBtn: $('clear-recents-btn'),
+      };
+      const directorToggles = document.querySelectorAll('#director-panel input, #director-panel select');
+      let STAGED_ON_SCREEN = new Set();
+      let PLAYER_ON = true;
+      let STATE = {};
+      let characterProfiles = [];
+      let nameToEng = {};
+      let isBootstrapped = false;
+      let LAST_TURN_ID = 0;
+      const TYPEWRITER = { enabled: true, cps: 22 };
+
+      // --- Typewriter ---
+      function typeText(elem, text) {
+        return new Promise(res => {
+          const chat = $('chat-log');
+          if (!TYPEWRITER.enabled) {
+            elem.textContent = text || "";
+            if (chat) chat.scrollTop = chat.scrollHeight;
+            return res();
+          }
+          let i = 0; elem.textContent = "";
+          (function tick() {
+            if (i >= (text || "").length) return res();
+            elem.textContent += text[i++];
+            if (chat) chat.scrollTop = chat.scrollHeight;
+            setTimeout(tick, 1000 / TYPEWRITER.cps);
+          })();
+        });
+      }
+
+      function colorFromName(name) {
+        let h = 0;
+        for (let i = 0; i < String(name || "").length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+        return `hsl(${h % 360} 70% 55%)`;
+      }
+
+      // --- Player button ---
+      function makePlayerBtn(name) {
+        document.querySelectorAll('.char-btn.player-btn').forEach(b => b.remove());
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'char-btn player-btn';
+        b.dataset.charName = name;
+        b.textContent = name;
+        b.classList.toggle('active', PLAYER_ON);
+        b.addEventListener('click', () => {
+          if (isBootstrapped && STATE?.traffic_light !== 'GREEN') return;
+          PLAYER_ON = !PLAYER_ON;
+          b.classList.toggle('active', PLAYER_ON);
+          renderParticipantsPreview();
+        });
+        el.characterSelector.prepend(b);
+      }
+
+      function renderParticipantsPreview() {
+        const player = ($('current-player-name')?.textContent || '사용자').trim();
+        const out = $('participants-list-display');
+        if (!isBootstrapped) {
+          const actives = Array.from(el.characterSelector.querySelectorAll('.char-btn.active:not(.player-btn)')).map(b => b.dataset.charName);
+          const list = (PLAYER_ON ? [player] : []).concat(actives);
+          out.textContent = list.length ? Array.from(new Set(list)).join(', ') : '없음';
+          return;
+        }
+        const staged = Array.from(STAGED_ON_SCREEN);
+        const list = (PLAYER_ON ? [player] : []).concat(staged);
+        out.textContent = list.length ? list.join(', ') : '없음';
+      }
+
+      // --- Header GIF ---
+      function setHeaderGif(character, emotion) {
+        const eng = nameToEng[character] || String(character || '').toLowerCase();
+        const DEFAULT_HEADER = 'https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier';
+        const file = emotionToWebpFile(emotion || 'subtle smile');
+        const src = eng ? `/static/gifs/${eng}/${file}` : DEFAULT_HEADER;
+        el.headerGif.style.opacity = '0.6';
+        el.headerGif.onerror = () => {
+          el.headerGif.onerror = null;
+          if (eng) el.headerGif.src = `/static/gifs/${eng}/Subtle%20Smile.webp`;
+          else el.headerGif.src = DEFAULT_HEADER;
+        };
+        el.headerGif.onload = () => { el.headerGif.style.opacity = '0.85'; };
+        el.headerGif.src = src;
+        el.headerCharName.textContent = character || '';
+      }
+
+      const EMOTION_ALIASES = {
+        'amusement':'playful teasing','interest':'curiosity','surprise':'curiosity',
+        'happiness':'ecstatic joy','joy':'ecstatic joy','anger':'explosive anger',
+        'sadness':'welling sorrow','love':'warm affection','smile':'subtle smile',
+        '경멸':'cold disdain','즐거움':'ecstatic joy','기대':'curiosity','당황':'shyness',
+        '부끄러움':'shyness','웃음':'subtle smile','미소':'subtle smile','분노':'explosive anger',
+        '슬픔':'welling sorrow','사랑':'warm affection','흥미':'curiosity','재미':'playful teasing',
+        '기쁨':'ecstatic joy','긴장':'nervous tension','의심':'skeptical doubt','무표정':'neutral','평온':'calm serenity'
+      };
+      const EMOTION_FILE_OVERRIDES = { 'confident assertion':'Confident assertion', 'neutral':'Subtle Smile' };
+      function emotionToWebpFile(emotion) {
+        const raw = normalizeEmotion(emotion) || 'subtle smile';
+        const canonical = EMOTION_ALIASES[raw] || raw;
+        const base = EMOTION_FILE_OVERRIDES[canonical] || canonical.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+        return `${base}.webp`;
+      }
+      function cleanEmotionTagFromText(text) {
+        const str = String(text || '');
+        const m = str.match(/^\s*\[([^\]]+)\]\s*/i);
+        if (!m) return { cleaned: str, tag: null };
+        return { cleaned: str.slice(m[0].length), tag: m[1] };
+      }
+      function normalizeEmotion(tag) { return String(tag || '').toLowerCase().trim(); }
+
+      // --- Recent sessions (localStorage) ---
+      const RECENTS_KEY = 'sarura_recent_sessions';
+      function loadRecents() { try { return JSON.parse(localStorage.getItem(RECENTS_KEY) || '[]'); } catch { return []; } }
+      function saveRecents(list) { try { localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, 10))); } catch {} }
+      function addRecent(id) { if (!id) return; const list = loadRecents().filter(x => x.id !== id); list.unshift({ id, ts: Date.now() }); saveRecents(list); renderRecentList(); }
+      function removeRecent(id) { saveRecents(loadRecents().filter(x => x.id !== id)); renderRecentList(); }
+      function clearRecents() { saveRecents([]); renderRecentList(); }
+      function renderRecentList() {
+        const list = loadRecents();
+        el.recentList.innerHTML = '';
+        if (!list.length) { el.recentList.innerHTML = '<div class="small">최근 세션이 없습니다.</div>'; return; }
+        list.forEach(item => {
+          const row = document.createElement('div'); row.className = 'recent-item';
+          const left = document.createElement('div'); left.className = 'recent-id';
+          left.title = new Date(item.ts).toLocaleString(); left.textContent = item.id;
+          const right = document.createElement('div'); right.style.display = 'flex'; right.style.gap = '6px';
+          const loadBtn = document.createElement('button'); loadBtn.className = 'btn btn-primary'; loadBtn.textContent = '불러오기';
+          loadBtn.addEventListener('click', async () => {
+            try {
+              const res = await POST('/bootstrap', { save_code: item.id });
+              if (res && res.state) { await renderUIFromState(res.state); closeModal(el.sessionModal); }
+              else alert('세션 로드 실패');
+            } catch { alert('세션 로드 실패'); }
+          });
+          const delBtn = document.createElement('button'); delBtn.className = 'btn btn-ghost'; delBtn.textContent = '삭제';
+          delBtn.addEventListener('click', () => removeRecent(item.id));
+          right.appendChild(loadBtn); right.appendChild(delBtn);
+          row.appendChild(left); row.appendChild(right);
+          el.recentList.appendChild(row);
+        });
+      }
+
+      // --- HTTP helpers ---
+      const GET = async (endpoint) => { const r = await fetch(endpoint, {credentials:'include'}); if (!r.ok) throw new Error(`GET ${endpoint} -> ${r.status}`); return r.json(); };
+      const POST = async (endpoint, body) => {
+        const r = await fetch(endpoint, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body || {}) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.message || `서버 요청 실패 (상태: ${r.status})`);
+        return data;
+      };
+
+      // --- UI helpers ---
+      const updateTrafficLight = (status, text) => {
+        el.trafficLight.className = `traffic-light ${status}`;
+        el.statusText.textContent = text;
+      };
+
+      const addMessageToLog = async (wrapper, type, data) => {
+        const msgWrapper = document.createElement('div');
+        const msg = document.createElement('div');
+        msg.className = 'message';
+
+        if (type === 'narration') {
+          msg.className = 'narration-message';
+          wrapper.appendChild(msg);
+          await typeText(msg, data.content || '');
+          return;
+        }
+        if (type === 'user') {
+          msgWrapper.className = 'user-message-wrapper';
+          msg.classList.add('user-message');
+          msg.textContent = data.content || '';
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+          return;
+        }
+        if (type === 'dialogue') {
+          msgWrapper.className = 'character-message-wrapper';
+          msg.classList.add('character-message');
+          const profile = characterProfiles.find(p => p.name === data.character);
+          const nameEl = document.createElement('div'); nameEl.className = 'character-name';
+          nameEl.textContent = data.character;
+          nameEl.style.color = (profile && profile.color) ? profile.color : colorFromName(data.character || '?');
+          const cleaned = cleanEmotionTagFromText(data.content || "");
+          let emotion = data.emotion ? normalizeEmotion(data.emotion) : null;
+          if (!emotion && cleaned.tag) emotion = normalizeEmotion(cleaned.tag);
+          if (emotion) emotion = EMOTION_ALIASES[emotion] || emotion;
+          setHeaderGif(data.character, emotion);
+          const contentEl = document.createElement('div');
+          msg.appendChild(nameEl);
+          msg.appendChild(contentEl);
+          const wantMono = (STATE?.ui_settings?.show_monologue ?? true);
+          if (data.monologue && wantMono) {
+            const monologueEl = document.createElement('div'); monologueEl.className = 'monologue';
+            monologueEl.textContent = data.monologue || "";
+            msg.appendChild(monologueEl);
+          }
+          msgWrapper.appendChild(msg);
+          wrapper.appendChild(msgWrapper);
+          await typeText(contentEl, cleaned.cleaned || "");
+          return;
+        }
+        if (type === 'monologue') {
+          msgWrapper.className = 'character-message-wrapper';
+          msg.classList.add('character-message');
+          const who = data.character || (STATE?.player_name || '속마음');
+          const profile = (characterProfiles || []).find(p => p.name === who);
+          const nameEl = document.createElement('div'); nameEl.className = 'character-name';
+          nameEl.textContent = who;
+          nameEl.style.color = (profile && profile.color) ? profile.color : colorFromName(who);
+          const contentEl = document.createElement('div'); contentEl.className = 'monologue';
+          msg.appendChild(nameEl); msg.appendChild(contentEl);
+          msgWrapper.appendChild(msg); wrapper.appendChild(msgWrapper);
+          await typeText(contentEl, data.content || "");
+          return;
+        }
+        msg.className = 'narration-message';
+        msg.textContent = (data && data.content) ? data.content : '(unknown block)';
+        wrapper.appendChild(msg);
+      };
+
+      // --- Render full state ---
+      const renderUIFromState = async (newState) => {
+        STATE = newState;
+        isBootstrapped = !!(STATE && STATE.session_id);
+
+        const isReady = STATE?.traffic_light === 'GREEN';
+        el.submitBtn.disabled = !isReady && isBootstrapped;
+        el.submitBtn.textContent = isReady ? '전송' : '처리 중…';
+        directorToggles.forEach(t => t.disabled = STATE?.traffic_light === 'YELLOW');
+        el.setPlayerNameBtn.disabled = isBootstrapped;
+
+        if (!isBootstrapped) {
+          updateTrafficLight('red', '대기 중');
+          el.saveCodeDisplay.textContent = '새로운 이야기';
+          el.currentSaveCode.value = '';
+          el.chatLog.innerHTML = '<div class="narration-message">새로운 이야기를 시작하세요.</div>';
+          setHeaderGif(null, null);
+          el.submitBtn.textContent = '시작';
+          el.submitBtn.disabled = false;
+          return;
+        }
+
+        const sid = STATE.session_id;
+        el.saveCodeDisplay.textContent = `저장: ${sid}`;
+        el.currentSaveCode.value = sid;
+        addRecent(sid);
+
+        const lightMap = { RED:'red', GREEN:'green', YELLOW:'yellow' };
+        const textMap = { RED:'대기 중', GREEN:'입력 가능', YELLOW:'처리 중' };
+        updateTrafficLight(lightMap[STATE.traffic_light] || 'red', textMap[STATE.traffic_light] || '오류');
+
+        const player = STATE.player_name || '사용자';
+        el.playerNameInput.value = player;
+        $('current-player-name').textContent = player;
+
+        const onScreenAll = Array.isArray(STATE?.on_screen) ? STATE.on_screen.slice() : [];
+        PLAYER_ON = onScreenAll.includes(player);
+        el.characterSelector.querySelectorAll('.char-btn:not(.player-btn)').forEach(btn => {
+          btn.classList.toggle('active', onScreenAll.includes(btn.dataset.charName));
+        });
+        const pbtn = el.characterSelector.querySelector('.char-btn.player-btn');
+        if (pbtn) pbtn.classList.toggle('active', PLAYER_ON);
+        STAGED_ON_SCREEN = new Set(onScreenAll.filter(n => n !== player));
+        renderParticipantsPreview();
+
+        // Render turns
+        el.chatLog.innerHTML = '';
+        const turns = STATE.turns || [];
+        for (let i = 0; i < turns.length; i++) {
+          const turn = turns[i];
+          const wrap = document.createElement('div'); wrap.className = 'turn-wrapper';
+          el.chatLog.appendChild(wrap);
+          TYPEWRITER.enabled = (i === turns.length - 1);
+          if (turn.user_input) await addMessageToLog(wrap, 'user', { content: turn.user_input });
+          const scriptBlocks = Array.isArray(turn?.script) ? turn.script : [];
+          for (const b of scriptBlocks) { await addMessageToLog(wrap, b.type, b); }
+        }
+        if (turns.length > 0) LAST_TURN_ID = turns[turns.length - 1].turn_id;
+        TYPEWRITER.enabled = true;
+        requestAnimationFrame(() => { el.chatLog.scrollTop = el.chatLog.scrollHeight; });
+        el.submitBtn.textContent = '전송';
+
+        // Sync director panel
+        const ui = STATE?.ui_settings || {};
+        document.querySelectorAll('#director-panel [data-key]').forEach(elem => {
+          const key = elem.dataset.key;
+          if (ui[key] === undefined) return;
+          if (elem.type === 'checkbox') { elem.checked = ui[key]; }
+          else if (elem.id === 'genre-preset-tags' || elem.classList.contains('genre-tags-container')) {
+            elem.querySelectorAll('button').forEach(btn => btn.classList.toggle('active', btn.dataset.value === String(ui[key])));
+          } else {
+            elem.value = String(ui[key]);
+            const vdId = (elem.id || '').replace('-slider', '-value');
+            const vd = vdId ? document.getElementById(vdId) : null;
+            if (vd) vd.textContent = elem.id === 'narration-ratio-slider' ? `${elem.value}%` : elem.value;
+          }
+        });
+      };
+
+      // --- Get current director settings ---
+      function getCurrentDirectorSettings() {
+        const settings = {};
+        document.querySelectorAll('#director-panel [data-key]').forEach(elem => {
+          const key = elem.dataset.key;
+          if (elem.id === 'genre-preset-tags' || elem.classList.contains('genre-tags-container')) {
+            const active = elem.querySelector('button.active');
+            if (active && active.dataset.value) settings[key] = active.dataset.value;
+            return;
+          }
+          if (elem.type === 'checkbox') settings[key] = elem.checked;
+          else if (elem.type === 'range' || elem.type === 'number') settings[key] = Number(elem.value);
+          else settings[key] = elem.value;
+        });
+        return settings;
+      }
+
+      // --- Form submit ---
+      const handleFormSubmit = async (e) => {
+        e.preventDefault();
+        if (el.submitBtn.disabled) return;
+        const text = el.userInput.value.trim();
+        el.submitBtn.disabled = true;
+        el.userInput.value = '';
+
+        try {
+          if (!isBootstrapped) {
+            // Bootstrap
+            updateTrafficLight('yellow', '이야기 준비 중...');
+            el.submitBtn.textContent = '시작 중…';
+            const selectedNPCs = Array.from(el.characterSelector.querySelectorAll('.char-btn.active:not(.player-btn)')).map(btn => btn.dataset.charName);
+            const playerName = el.playerNameInput.value.trim() || '사용자';
+            const bootPayload = { player_name: playerName, on_screen_names: selectedNPCs, seed_text: text, ui_settings: getCurrentDirectorSettings() };
+            const bootResponse = await POST('/bootstrap', bootPayload);
+            if (bootResponse && bootResponse.state) { await renderUIFromState(bootResponse.state); }
+            else throw new Error(bootResponse.message || '이야기 시작 데이터가 올바르지 않습니다.');
+          } else {
+            // Execute turn (synchronous)
+            updateTrafficLight('yellow', '요청 중...');
+            el.submitBtn.textContent = '처리 중…';
+            const turnResponse = await POST('/execute-turn', {
+              user_input: text,
+              ui_settings: getCurrentDirectorSettings(),
+            });
+            if (turnResponse.status === 'ok' && turnResponse.state) {
+              await renderUIFromState(turnResponse.state);
+            } else {
+              throw new Error(turnResponse.message || '턴 생성 실패');
+            }
+          }
+        } catch (err) {
+          console.error(err);
+          updateTrafficLight('red', '생성 실패');
+          const errorMessage = `❌ 생성 실패: ${err.message}. 다시 시도해 주세요.`;
+          await addMessageToLog(el.chatLog, 'narration', { content: errorMessage });
+          el.submitBtn.disabled = false;
+          el.submitBtn.textContent = isBootstrapped ? '재시도' : '다시 시도';
+        }
+      };
+
+      const openModal = m => m.classList.remove('modal-hidden');
+      const closeModal = m => m.classList.add('modal-hidden');
+      function copyText(text) {
+        if (!text) return;
+        if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(() => updateTrafficLight('green', '코드 복사됨'));
+        else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); updateTrafficLight('green', '코드 복사됨'); }
+        setTimeout(() => { const map = { RED:'대기 중', GREEN:'입력 가능', YELLOW:'처리 중' }; const light = STATE?.traffic_light || 'RED'; updateTrafficLight(light.toLowerCase(), map[light] || '상태'); }, 900);
+      }
+
+      // --- Init ---
+      (async function init() {
+        // Load character profiles
+        try {
+          const profiles = await GET('/get-character-profiles');
+          characterProfiles = Array.isArray(profiles) ? profiles : [];
+          nameToEng = {};
+          el.characterSelector.innerHTML = '';
+          characterProfiles.forEach(p => {
+            nameToEng[p.name] = p.eng || p.name.toLowerCase();
+            const btn = document.createElement('button');
+            btn.type = 'button'; btn.className = 'char-btn'; btn.dataset.charName = p.name; btn.textContent = p.name;
+            if (p.color) btn.style.setProperty('--c', p.color);
+            btn.addEventListener('click', () => {
+              if (isBootstrapped && STATE?.traffic_light !== 'GREEN') return;
+              btn.classList.toggle('active');
+              if (btn.classList.contains('active')) STAGED_ON_SCREEN.add(btn.dataset.charName);
+              else STAGED_ON_SCREEN.delete(btn.dataset.charName);
+              renderParticipantsPreview();
+            });
+            el.characterSelector.appendChild(btn);
+          });
+          makePlayerBtn(el.playerNameInput.value.trim() || '사용자');
+          renderParticipantsPreview();
+        } catch (e) { console.error('캐릭터 프로필 로드 실패', e); }
+
+        // Restore existing session
+        try {
+          const data = await GET('/get-session-data');
+          if (data.status === 'ok' && data.state) await renderUIFromState(data.state);
+          else await renderUIFromState(null);
+        } catch { await renderUIFromState(null); }
+
+        renderRecentList();
+
+        // --- Events ---
+        el.chatForm.addEventListener('submit', handleFormSubmit);
+
+        document.querySelectorAll('#director-panel input[type="range"]').forEach(slider => {
+          const vdId = slider.id.replace('-slider', '-value');
+          const vd = document.getElementById(vdId);
+          if (vd) slider.addEventListener('input', () => { vd.textContent = slider.id === 'narration-ratio-slider' ? `${slider.value}%` : slider.value; });
+        });
+
+        $('genre-preset-tags').addEventListener('click', (e) => {
+          if (e.target.tagName === 'BUTTON') {
+            $('genre-preset-tags').querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+          }
+        });
+
+        document.querySelectorAll('#director-panel input[type="range"]').forEach(s => s.dispatchEvent(new Event('input', { bubbles: true })));
+
+        el.userInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!el.submitBtn.disabled) el.chatForm.requestSubmit(); } });
+        el.playerNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.setPlayerNameBtn.click(); } });
+        document.querySelector('.header').addEventListener('click', () => document.querySelector('.header').classList.toggle('collapsed'));
+
+        const closePanels = () => { el.scenePanel.style.display = 'none'; el.directorPanel.style.display = 'none'; };
+        el.toggleScenePanelBtn.addEventListener('click', () => { const w = el.scenePanel.style.display !== 'block'; closePanels(); if (w) el.scenePanel.style.display = 'block'; });
+        el.toggleDirectorPanelBtn.addEventListener('click', () => { const w = el.directorPanel.style.display !== 'block'; closePanels(); if (w) el.directorPanel.style.display = 'block'; });
+
+        el.setPlayerNameBtn.addEventListener('click', () => {
+          if (isBootstrapped) return;
+          const n = el.playerNameInput.value.trim() || '사용자';
+          $('current-player-name').textContent = n;
+          makePlayerBtn(n);
+          renderParticipantsPreview();
+        });
+
+        el.sessionMenuBtn.addEventListener('click', () => { el.currentSaveCode.value = STATE?.session_id || ''; openModal(el.sessionModal); });
+        el.sessionModal.querySelector('.modal-close-btn').addEventListener('click', () => closeModal(el.sessionModal));
+        el.sessionLoadBtn.addEventListener('click', async () => {
+          const code = el.loadCodeInput.value.trim();
+          if (!code) return;
+          try {
+            const res = await POST('/bootstrap', { save_code: code });
+            if (res && res.state) { await renderUIFromState(res.state); closeModal(el.sessionModal); }
+            else alert('세션 로드 실패');
+          } catch { alert('세션 로드 실패'); }
+        });
+        el.sessionResetBtn.addEventListener('click', async () => {
+          if (confirm('정말로 모든 기록을 지우고 새로 시작할까요?')) {
+            try { await GET('/reset-session'); localStorage.removeItem(RECENTS_KEY); window.location.reload(); }
+            catch (err) { console.error(err); alert("세션 초기화에 실패했습니다."); }
+          }
+        });
+        el.copySaveCodeBtn.addEventListener('click', () => copyText(STATE?.session_id || ''));
+        el.copyCodeInModal.addEventListener('click', () => copyText(el.currentSaveCode.value));
+        el.clearRecentsBtn.addEventListener('click', clearRecents);
+      })();
+    });
+  </script>
+>>>>>>> origin/main
 </body>
 </html>
