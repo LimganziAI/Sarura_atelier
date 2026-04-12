@@ -420,12 +420,17 @@
         const src = eng ? `/static/gifs/${eng}/${file}` : DEFAULT_IMG;
         el.portraitImg.style.opacity = '0.6';
         el.portraitImg.onerror = () => {
-          el.portraitImg.onerror = () => {
+          if (eng) {
+            // First fallback: try default.webp for this character
+            el.portraitImg.onerror = () => {
+              el.portraitImg.onerror = null;
+              el.portraitImg.src = DEFAULT_IMG;
+            };
+            el.portraitImg.src = `/static/gifs/${eng}/default.webp`;
+          } else {
             el.portraitImg.onerror = null;
             el.portraitImg.src = DEFAULT_IMG;
-          };
-          if (eng) el.portraitImg.src = `/static/gifs/${eng}/default.webp`;
-          else el.portraitImg.src = DEFAULT_IMG;
+          }
         };
         el.portraitImg.onload = () => { el.portraitImg.style.opacity = '0.8'; };
         el.portraitImg.src = src;
