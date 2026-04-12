@@ -1,11 +1,13 @@
 """
-Sarura Atelier V3.5 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V3.6 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
 Emotional Contagion, Persona Anchors, Speech Registers, Tension Curve,
 3-Layer Memory System, Maestro Memory Architect, Thought Cabinet,
-Illustration Generation, Chunked Novelization.
+Illustration Generation, Chunked Novelization,
+Scene Card Compression, Maestro Fallback, Opening Narration,
+Secret Gating, Character Voice Contrast, Event-based Flow Digest.
 """
 
 import os, json, re, uuid, copy, time, threading, logging, random
@@ -38,7 +40,7 @@ GEMINI_API_KEY = (
 
 # ─── Constants ───────────────────────────────────────────────
 MODEL_DIMA = "gemini-2.5-flash"
-MODEL_MAESTRO = "gemini-2.5-pro"
+MODEL_MAESTRO = "gemini-2.5-flash"
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
@@ -489,6 +491,51 @@ def apply_core4_decay(s: dict):
 # =========================================================================
 # Build system instruction for D.I.M.A
 # =========================================================================
+def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict) -> str:
+    """Build a compressed ~400-token scene card for a character."""
+    char_db = CHARACTERS_DB.get(char_name, {})
+    identity = char_db.get("identity", {})
+    bp = char_db.get("behavior_protocols", {})
+    sig = bp.get("signature_speech", {})
+    heuristics = bp.get("acting_heuristics", {})
+    rel_matrix = char_db.get("relationship_matrix", {})
+
+    core_appeal = identity.get("core_appeal", "")[:120]
+    speech_habit = sig.get("speech_habit", "")
+    honorific = sig.get("honorific_style", "")
+    catches = sig.get("catchphrases", [])[:3]
+    forbidden = sig.get("forbidden_patterns", [])[:2]
+    voice_contrast = sig.get("voice_contrast", "")
+    acting_hint = ""
+    if heuristics:
+        first_val = next(iter(heuristics.values()), "")
+        acting_hint = first_val[:80] if first_val else ""
+    core_rule = bp.get("core_acting_rule", "")[:80]
+
+    lines = [
+        f"[{char_name}] {core_appeal}",
+        f"말투: {speech_habit} | 어미: {honorific}",
+        f"입버릇: {', '.join(catches)}",
+        f"금기: {', '.join(forbidden)}",
+    ]
+    if voice_contrast:
+        lines.append(f"음성 대비: {voice_contrast}")
+    lines.append(f"자율행동: {acting_hint}")
+    lines.append(f"이번 씬 목표: {core_rule}")
+
+    for other in on_screen_chars:
+        if other == char_name:
+            continue
+        rel = rel_matrix.get(other)
+        if rel and isinstance(rel, dict):
+            comment = rel.get("comment", "")[:50]
+            favor = rel.get("호감", 50)
+            tension = rel.get("긴장", 50)
+            lines.append(f"vs {other}: {comment} (호감{favor}/긴장{tension})")
+
+    return "\n".join(lines)
+
+
 def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
     packets = []
     player_name = s.get("player_name", "사용자")
@@ -496,38 +543,14 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
     world_rules_db = WORLD_DB.get("world_rules", {})
     rules_text = json.dumps(world_rules_db, ensure_ascii=False, indent=2)
 
+    relationships = s.get("relationships", {})
+
     for name in on_screen_chars:
         if name == player_name:
             continue
 
-        char_db = CHARACTERS_DB.get(name, {})
-        full_persona = {
-            "character_name": name,
-            "appearance": char_db.get("appearance"),
-            "identity": char_db.get("identity"),
-            "personality_dna": char_db.get("personality_dna"),
-            "social_tuning": char_db.get("social_tuning"),
-            "core_values": char_db.get("core_values"),
-            "behavior_protocols": char_db.get("behavior_protocols"),
-        }
-
-        # Relationship context
-        relations_brief = []
-        full_rel_matrix = char_db.get("relationship_matrix", {})
-        for other in on_screen_chars:
-            if name == other:
-                continue
-            rel = full_rel_matrix.get(other)
-            if rel and isinstance(rel, dict):
-                relations_brief.append(
-                    f"- vs {other}: {rel.get('comment', '')} "
-                    f"(호감:{rel.get('호감', 50)}, 신뢰:{rel.get('신뢰', 50)})"
-                )
-        full_persona["relationships_in_this_scene"] = (
-            "\n".join(relations_brief) if relations_brief
-            else "No specific relationships in this scene."
-        )
-        packets.append(json.dumps(full_persona, ensure_ascii=False, indent=2))
+        scene_card = build_scene_card(name, on_screen_chars, relationships)
+        packets.append(scene_card)
 
     # Part E: Persona Anchors
     persona_anchors = []
@@ -787,6 +810,8 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
             if len(emotions) >= 2 and len(set(emotions[-2:])) == 1:
                 diversity_lines.append(
                     f"- {char}은(는) 최근 2턴 연속 '{emotions[-1]}' 감정이었습니다. "
+                    f"같은 감정이라도 표현 방식을 바꿔라. "
+                    f"예: joy가 연속이면 → 첫 턴은 밝은 웃음, 둘째 턴은 조용한 미소, 셋째 턴은 다른 감정으로 전환. "
                     f"이번 턴에서는 반드시 다른 감정을 사용하세요."
                 )
             if len(emotions) >= 3 and len(set(emotions[-3:])) == 1:
@@ -796,6 +821,34 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
                 )
         if diversity_lines:
             emotion_diversity_rules = "\n=== 감정 다양성 규칙 ===\n" + "\n".join(diversity_lines) + "\n"
+
+    # Part: Secret Gating — inject secret_lore with relationship stage check
+    secret_lore_section = ""
+    secret_lore_items = WORLD_DB.get("secret_lore", [])
+    if secret_lore_items:
+        secret_lines = []
+        for item in secret_lore_items:
+            topic = item.get("topic", "")
+            content = item.get("content", "")
+            # Check if any on-screen character is related and has stage >= 3
+            can_reveal = False
+            for name in on_screen_chars:
+                if name == player_name:
+                    continue
+                if name in topic:
+                    rel = relationships.get(name, {})
+                    stage = rel.get("stage", 1) if rel else 1
+                    if stage >= 3:
+                        can_reveal = True
+                        break
+            if can_reveal:
+                secret_lines.append(f"- [{topic}]: {content}")
+            else:
+                secret_lines.append(
+                    f"- [{topic}]: 이 캐릭터에게는 아직 밝혀지지 않은 비밀이 있습니다. 단서만 암시하세요."
+                )
+        if secret_lines:
+            secret_lore_section = "\n=== 비밀 설정 (Secret Lore) ===\n" + "\n".join(secret_lines) + "\n"
 
     base_instruction = (
         "You are a master AI actor for a fictional theatrical play. "
@@ -816,6 +869,7 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         + memory_section
         + emotional_continuity_section
         + emotion_diversity_rules
+        + secret_lore_section
     )
 
     return base_instruction
@@ -1025,48 +1079,25 @@ def _short(txt: str, n: int = 100) -> str:
 
 
 def _build_event_digest(turn_id: int, user_input: str, script: list) -> str:
-    """Build a structured event-based flow digest entry."""
-    # Extract key events from the script
-    events = []
-    speakers = []
-    emotions = []
+    """Build a structured event-based flow digest entry.
+    Extracts dialogue blocks' character, emotion, content[:30] into
+    'T{n}: {character}({emotion}) — {content[:30]}' format."""
+    lines = []
     for b in script:
-        btype = b.get("type", "")
-        if btype == "narration":
-            # Summarize narration to key action/event
-            content = b.get("content", "")[:80]
-            if content:
-                events.append(content.rstrip("。."))
-        elif btype == "dialogue":
+        if b.get("type") == "dialogue" and b.get("character"):
             char = b.get("character", "?")
-            if char not in speakers:
-                speakers.append(char)
-            emo = b.get("emotion", "")
-            if emo and emo not in emotions:
-                emotions.append(emo)
-            # Extract key action from dialogue
-            content = b.get("content", "")
-            if content and len(content) > 5:
-                events.append(f"{char} 대사")
-
-    user_part = ""
-    if user_input and user_input not in ("[PLAYER_PAUSE]", "[CONTINUE_SCENE]"):
-        user_part = f"플레이어: {user_input[:40]}"
-
-    # Build compact event summary
-    parts = []
-    if user_part:
-        parts.append(user_part)
-    if speakers:
-        parts.append(f"{'+'.join(speakers)} 등장")
-    # Take first narration event as scene summary
-    narr_events = [b.get("content", "")[:60] for b in script if b.get("type") == "narration"]
-    if narr_events:
-        parts.append(narr_events[0].rstrip("。."))
-    if emotions:
-        parts.append(f"감정: {', '.join(emotions[:3])}")
-
-    return f"T{turn_id}: [{' → '.join(parts[:3])}] [{', '.join(emotions[:3])}]"
+            emotion = b.get("emotion", "neutral")
+            content = (b.get("content") or "")[:30]
+            lines.append(f"{char}({emotion}) — {content}")
+    if not lines:
+        # Fallback: use narration summary
+        for b in script:
+            if b.get("type") == "narration":
+                content = (b.get("content") or "")[:30]
+                lines.append(f"[나레이션] {content}")
+                break
+    summary = " | ".join(lines[:4]) if lines else "(무응답)"
+    return f"T{turn_id}: {summary}"
 
 
 def _build_event_short_term(turn_id: int, user_input: str, script: list) -> str:
@@ -1193,6 +1224,21 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
 
     # Director brief
     director_brief = inject_director_brief(s.get("ui_settings", {}))
+
+    # Opening Narration: first turn directive
+    turn_count = len(s.get("turns", []))
+    if turn_count == 0:
+        char_names_str = ", ".join(
+            n for n in on_screen_chars if n != player_name
+        )
+        director_brief += (
+            "\n\n[오프닝 지시] 이번이 첫 턴입니다. 반드시 다음을 포함하세요:\n"
+            "1. 장소(라운지/주방 등)와 시간대(아침/오후/밤)를 설정하는 2~3문장 나레이션\n"
+            "2. 각 등장 캐릭터가 무엇을 하고 있었는지 1문장씩 묘사\n"
+            f"   등장 캐릭터: {char_names_str}\n"
+            "3. 그 후에 대화 시작\n"
+        )
+
     if u_text_strip == "[PLAYER_PAUSE]":
         director_brief += (
             "\n- [Player Silence Directive / 첫 턴]: 플레이어는 침묵으로 시작한다. "
@@ -1470,6 +1516,44 @@ def run_dima_turn(s: dict, user_input: str) -> list:
 # =========================================================================
 # MAESTRO — Memory architect + relationship/CORE-4 adjuster (every 4 turns)
 # =========================================================================
+def _local_maestro_fallback(recent_4: list) -> dict:
+    """Regex-based local fallback when Maestro LLM call fails.
+    Extracts character names, emotion tags, and keywords from the last 4 turns."""
+    chars = set()
+    emotions = set()
+    keywords = []
+    for turn in recent_4:
+        for block in turn.get("script", []):
+            if block.get("type") == "dialogue":
+                char = block.get("character", "")
+                if char:
+                    chars.add(char)
+                emo = block.get("emotion", "")
+                if emo:
+                    emotions.add(emo)
+                content = block.get("content", "")
+                # Extract first meaningful phrase as keyword
+                words = re.findall(r'[\w가-힣]+', content)
+                if words:
+                    keywords.extend(words[:3])
+
+    chars_str = ", ".join(chars) if chars else "등장인물"
+    emotions_str = ", ".join(list(emotions)[:4]) if emotions else "neutral"
+    kw_str = ", ".join(list(set(keywords))[:6]) if keywords else ""
+
+    summary = f"{chars_str} 간 대화 진행. 감정: {emotions_str}."
+    if kw_str:
+        summary += f" 키워드: {kw_str}"
+
+    return {
+        "long_term_summary": summary,
+        "core_pin": None,
+        "active_thought": None,
+        "relationship_deltas": {},
+        "core4_adjustments": {"energy": 0, "stress": 0, "intoxication": 0, "pain": 0},
+    }
+
+
 def run_maestro_sync(s: dict):
     """Run Maestro analysis every 4 turns to update long-term memory, relationships, and CORE-4."""
     turns = s.get("turns", [])
@@ -1516,27 +1600,44 @@ Return JSON with:
 }}
 """
 
-    try:
-        config = genai_types.GenerateContentConfig(
-            temperature=0.4,
-            max_output_tokens=2048,
-            response_mime_type="application/json",
-            safety_settings=get_safety_settings(),
-        )
-        response = client.models.generate_content(
-            model=MODEL_MAESTRO,
-            contents=[maestro_prompt],
-            config=config,
-        )
-        text = response.text
-        if not text:
-            return
-        cleaned = re.sub(r'```json\s*', '', text.strip())
-        cleaned = re.sub(r'\s*```', '', cleaned)
-        maestro_result = json.loads(cleaned)
-    except Exception as e:
-        logger.warning(f"Maestro failed: {e}")
-        return
+    maestro_result = None
+    config = genai_types.GenerateContentConfig(
+        temperature=0.4,
+        max_output_tokens=2048,
+        response_mime_type="application/json",
+        safety_settings=get_safety_settings(),
+    )
+
+    for attempt in range(2):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_MAESTRO,
+                contents=[maestro_prompt],
+                config=config,
+            )
+            text = response.text
+            if not text:
+                logger.warning(f"Maestro empty response (attempt {attempt + 1})")
+                if attempt == 0:
+                    time.sleep(5)
+                    continue
+                break
+            cleaned = re.sub(r'```json\s*', '', text.strip())
+            cleaned = re.sub(r'\s*```', '', cleaned)
+            maestro_result = json.loads(cleaned)
+            break
+        except Exception as e:
+            emsg = str(e).lower()
+            logger.warning(f"Maestro failed (attempt {attempt + 1}): {e}")
+            if ("429" in emsg or "quota" in emsg) and attempt == 0:
+                time.sleep(5)
+                continue
+            break
+
+    # If LLM failed, use local regex-based fallback
+    if maestro_result is None:
+        logger.info("Maestro LLM failed, using local fallback summary")
+        maestro_result = _local_maestro_fallback(recent_4)
 
     memory = s.setdefault("memory", {"short_term": [], "long_term": [], "core_pins": [], "emotional_contagion_log": []})
 
@@ -1599,7 +1700,7 @@ Return JSON with:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "3.5",
+        "version": "3.6",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
