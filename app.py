@@ -1,5 +1,5 @@
 """
-Sarura Atelier V3.8 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V3.9 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -70,7 +70,7 @@ logger = logging.getLogger("atelier")
 
 # ─── Genai Client ────────────────────────────────────────────
 client = genai.Client(api_key=GEMINI_API_KEY)
-_api_executor = ThreadPoolExecutor(max_workers=4)
+_api_executor = ThreadPoolExecutor(max_workers=8)
 
 import atexit
 atexit.register(_api_executor.shutdown, wait=False)
@@ -116,6 +116,30 @@ ENG_SLUG_MAP = {
     for k, v in CHARACTERS_DB.items()
 }
 
+# ─── Runtime character cache (lightweight per-turn data) ─────
+_CHAR_RUNTIME_CACHE: Dict[str, dict] = {}
+for _cname, _cdb in CHARACTERS_DB.items():
+    _identity = _cdb.get("identity", {})
+    _bp = _cdb.get("behavior_protocols", {})
+    _sig = _bp.get("signature_speech", {})
+    _CHAR_RUNTIME_CACHE[_cname] = {
+        "core_appeal": _identity.get("core_appeal", "")[:180],
+        "background_hook": _identity.get("background_summary", "")[:100],
+        "core_acting_rule": _bp.get("core_acting_rule", "")[:100],
+        "speech_habit": _sig.get("speech_habit", ""),
+        "honorific_style": _sig.get("honorific_style", ""),
+        "catchphrases": _sig.get("catchphrases", [])[:3],
+        "forbidden_patterns": _sig.get("forbidden_patterns", [])[:2],
+        "voice_contrast": _sig.get("voice_contrast", ""),
+        "example_lines": _sig.get("example_lines", [])[:2],
+        "personality_dna": _cdb.get("personality_dna", {}),
+        "appearance_summary": _cdb.get("appearance", {}).get("summary", "")[:80],
+        "height": _cdb.get("appearance", {}).get("height", ""),
+        "psychological_mirror": _bp.get("psychological_mirror", {}),
+        "relationship_development": _cdb.get("relationship_development", {}),
+        "heuristic_keys": list(_bp.get("acting_heuristics", {}).keys()),
+    }
+
 # ─── Safety ──────────────────────────────────────────────────
 SAFETY_PREAMBLE = (
     "This is a fictional creative sandbox. All characters are adults 20+. "
@@ -134,6 +158,50 @@ def get_safety_settings():
         genai_types.SafetySetting(category=c, threshold="BLOCK_ONLY_HIGH")
         for c in categories
     ]
+
+
+def big5_to_behavior_hints(pdna: dict) -> str:
+    """Convert Big Five personality scores to LLM-readable behavior tendencies."""
+    hints = []
+    o = pdna.get("openness", 5)
+    c = pdna.get("conscientiousness", 5)
+    e = pdna.get("extraversion", 5)
+    a = pdna.get("agreeableness", 5)
+    n = pdna.get("neuroticism", 5)
+
+    if o <= 3:
+        hints.append("익숙한 것을 선호하고 새로운 시도에 소극적")
+    elif o >= 8:
+        hints.append("호기심이 강하고 새로운 경험을 적극 수용")
+
+    if c >= 8:
+        hints.append("계획적이고 질서를 중시하며, 약속을 반드시 지킴")
+    elif c <= 3:
+        hints.append("즉흥적이고 규칙에 얽매이지 않으며, 계획보다 기분을 따름")
+
+    if e <= 3:
+        hints.append("대화를 먼저 시작하지 않고, 소그룹이나 1:1을 선호")
+    elif e >= 8:
+        hints.append("대화를 주도하고, 많은 사람과 어울리며 에너지를 얻음")
+
+    if a >= 8:
+        hints.append("갈등을 피하고 상대의 감정에 민감하게 반응")
+    elif a <= 3:
+        hints.append("자기 의견을 직설적으로 표현하고, 타인의 반응에 덜 흔들림")
+
+    if n >= 7:
+        hints.append("감정 기복이 크고, 스트레스에 민감하며, 불안 신호를 자주 보임")
+    elif n <= 3:
+        hints.append("정서적으로 안정적이고, 위기에도 침착함을 유지")
+
+    return " / ".join(hints) if hints else "균형잡힌 성격"
+
+
+# Pre-compute Big5 behavior hints into runtime cache (immutable values)
+for _cname in _CHAR_RUNTIME_CACHE:
+    _CHAR_RUNTIME_CACHE[_cname]["behavior_hints"] = big5_to_behavior_hints(
+        _CHAR_RUNTIME_CACHE[_cname].get("personality_dna", {})
+    )
 
 
 # =========================================================================
@@ -269,13 +337,38 @@ DIMA_SCHEMA = {
 # ─── Session helpers ─────────────────────────────────────────
 _session_locks: Dict[str, threading.RLock] = {}
 _session_locks_lock = threading.Lock()
+_session_locks_last_used: Dict[str, float] = {}
+SESSION_LOCK_TTL = 1800  # 30 minutes
 
 
 def get_session_lock(sid: str) -> threading.RLock:
     with _session_locks_lock:
+        _session_locks_last_used[sid] = time.time()
         if sid not in _session_locks:
             _session_locks[sid] = threading.RLock()
         return _session_locks[sid]
+
+
+def _cleanup_stale_locks():
+    """Remove session locks unused for more than SESSION_LOCK_TTL seconds."""
+    now = time.time()
+    with _session_locks_lock:
+        stale = [sid for sid, ts in _session_locks_last_used.items()
+                 if now - ts > SESSION_LOCK_TTL]
+        for sid in stale:
+            _session_locks.pop(sid, None)
+            _session_locks_last_used.pop(sid, None)
+    if stale:
+        logger.info(f"Cleaned up {len(stale)} stale session locks")
+
+
+def _lock_cleanup_daemon():
+    while True:
+        time.sleep(300)
+        _cleanup_stale_locks()
+
+
+threading.Thread(target=_lock_cleanup_daemon, daemon=True).start()
 
 
 def _sanitize_sid(sid: str) -> str:
@@ -578,11 +671,13 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
     for other in on_screen_chars:
         if other == char_name:
             continue
-        rel = rel_matrix.get(other)
-        if rel and isinstance(rel, dict):
-            comment = rel.get("comment", "")[:50]
-            favor = rel.get("호감", 50)
-            tension = rel.get("긴장", 50)
+        # Use dynamic relationship values from session, fall back to static DB
+        dyn_rel = relationships.get(other, {})
+        static_rel = rel_matrix.get(other) if isinstance(rel_matrix.get(other), dict) else {}
+        if dyn_rel or static_rel:
+            comment = static_rel.get("comment", "")[:50]
+            favor = dyn_rel.get("affection", static_rel.get("호감", 50))
+            tension = dyn_rel.get("tension", static_rel.get("긴장", 50))
             lines.append(f"vs {other}: {comment} (호감{favor}/긴장{tension})")
         # Psychological mirror for monologue depth
         psych_mirror = bp.get("psychological_mirror", {})
@@ -626,10 +721,13 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         if speech_examples:
             anchor += f"- 말투 DNA: {' / '.join(speech_examples[:3])}\n"
         anchor += f"- 금기 행동: {name}은(는) 절대로 다음을 하지 않습니다: [다른 캐릭터의 말투를 모방, 갑자기 성격이 변함, 자신의 비밀을 관계 단계에 맞지 않게 공개]\n"
+        cached = _CHAR_RUNTIME_CACHE.get(name, {})
+        behavior_hints = cached.get("behavior_hints", big5_to_behavior_hints(pdna))
         anchor += (
             f"- 성격 불변량: Big5 = O:{pdna.get('openness', 5)} "
             f"C:{pdna.get('conscientiousness', 5)} E:{pdna.get('extraversion', 5)} "
             f"A:{pdna.get('agreeableness', 5)} N:{pdna.get('neuroticism', 5)}\n"
+            f"  → 행동 경향: {behavior_hints}\n"
             f"  → 이 수치는 절대 변하지 않습니다. 대사와 행동이 항상 이 성격에 부합해야 합니다.\n"
         )
         persona_anchors.append(anchor)
@@ -721,8 +819,10 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
 현재 텐션에 맞게 대사의 강도와 이벤트 밀도를 조절하세요.
 """
 
-    # Part A: Emotion tags
-    emotion_tags = """
+    # Part A: Emotion tags (full list on first turn, abbreviated after)
+    turn_count = len(s.get("turns", []))
+    if turn_count <= 1:
+        emotion_tags = """
 === 사용 가능한 감정 태그 ===
 다음 감정 태그 중 하나를 각 dialogue 블록의 "emotion" 필드에 사용하세요:
 기쁨(joy), 슬픔(sadness), 분노(anger), 공포(fear), 신뢰(trust), 혐오(disgust), 놀람(surprise), 기대(anticipation),
@@ -732,6 +832,8 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
 멍한 침묵(stunned_silence), 그리움(wistful_nostalgia)
 감정 강도(1~5)도 "emotion_intensity" 필드에 숫자로 표기하세요. 1=미미, 3=보통, 5=극도
 """
+    else:
+        emotion_tags = "\n=== 감정 태그 ===\n감정 태그: 첫 턴에 제공된 26종 목록 중 선택. 강도 1~5.\n"
 
     # Part H: Memory context
     memory = s.get("memory", {})
@@ -961,10 +1063,17 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
     return base_instruction
 
 
-def inject_director_brief(ui_settings: dict) -> str:
+def inject_director_brief(ui_settings: dict, s: Optional[dict] = None) -> str:
     parts = []
     if ui_settings.get("pov_first_person"):
-        parts.append("- [시점]: 1인칭 시점으로 NPC들이 플레이어에게 직접 말하는 것처럼 연기하라.")
+        parts.append(
+            "# [절대 규칙] 시점: 1인칭 '나'\n"
+            "- 모든 narration 블록에서 시점 주체는 플레이어('나')이다.\n"
+            "- '나는', '내가', '내 눈에', '내 귀에' 등 1인칭 표현만 사용한다.\n"
+            "- 절대로 '당신은', '그는', '플레이어는' 같은 2·3인칭을 쓰지 않는다.\n"
+            "- NPC 행동 묘사도 '나'의 시선을 통해 관찰하는 형태로 기술한다.\n"
+            "  (예: \"루크가 고개를 들었다\" → \"루크가 고개를 든다. 그 파란 눈동자가 나를 향한다.\")"
+        )
     else:
         parts.append("- [시점]: 3인칭 관찰자 시점으로 서술하라.")
 
@@ -1014,6 +1123,18 @@ def inject_director_brief(ui_settings: dict) -> str:
     # Genre-specific anti-metaphor rule for mystery/thriller/noir
     if genre in ("mystery", "thriller", "noir"):
         parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
+
+    # Event hints — inject every 5 turns
+    if s is not None:
+        tc = len(s.get("turns", []))
+        event_seeds = WORLD_DB.get("event_seeds", [])
+        if tc > 0 and tc % 5 == 0 and event_seeds:
+            seed = random.choice(event_seeds)
+            beats = seed.get("beats", [])
+            first_beat = beats[0] if beats else ""
+            parts.append(
+                f"- [이벤트 힌트] '{seed.get('title', '')}' 소재를 자연스럽게 끌어와도 좋습니다: {first_beat}"
+            )
 
     return "\n".join(parts)
 
@@ -1100,13 +1221,15 @@ You have been given the full personas of the characters on scene via a system in
 #    - "고개를 끄덕였다" (턴당 최대 1회)
 #    대체: 구체적이고 개별적인 신체 반응으로 교체하라.
 #
-# 11. CHARACTER THOUGHT CHAIN (캐릭터 내부 추론):
-#    - 각 캐릭터의 대사/행동 결정 전에 내부적으로 다음을 확인 (출력에는 포함하지 말 것):
-#      1) 이 상황에서 표면적으로 원하는 것
-#      2) 그 아래 숨겨진 진짜 욕구
-#      3) background_summary의 과거가 이 반응에 미치는 영향
-#      4) 최종 반응: 위 3가지를 반영
-#    - monologue 블록에 이 추론의 결과를 1~2문장으로 요약하여 기록하라
+# 11. CHARACTER THOUGHT CHAIN (캐릭터 내부 추론) — see CCT instruction below
+
+=== CHARACTER THOUGHT CHAIN (매 dialogue 전 내부 처리) ===
+각 캐릭터가 대사를 하기 전에 다음 4단계를 거칩니다:
+1. 표면적 욕구: 이 상황에서 캐릭터가 의식적으로 원하는 것
+2. 숨겨진 욕구: 성격 DNA와 과거 경험에서 비롯된 무의식적 동기
+3. 심리적 거울: 현재 상대가 자신의 어떤 면을 비추는가? (psychological_mirror 참조)
+4. 최종 반응: 위 3가지가 충돌하거나 합치되어 나오는 실제 대사·행동
+→ monologue에 1~2문장으로 이 내적 과정의 흔적을 남기세요.
 
 # ============================
 # [TURN CONTRACT — 턴 구성 규칙]
@@ -1362,7 +1485,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     character_briefs_content = "\n".join(briefs)
 
     # Director brief
-    director_brief = inject_director_brief(s.get("ui_settings", {}))
+    director_brief = inject_director_brief(s.get("ui_settings", {}), s=s)
 
     # Self-Check Protocol: inject self-check block for turn >= 1
     turn_count = len(s.get("turns", []))
@@ -1858,7 +1981,7 @@ Return JSON with:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "3.8",
+        "version": "3.9",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2252,6 +2375,11 @@ def novelize():
             )
             if chunk_response is None:
                 logger.warning(f"Novelize chunk {chunk_idx+1} timed out")
+                chunks_result.append({
+                    "chunk_id": chunk_idx + 1,
+                    "turns": f"{first_tid}-{last_tid}",
+                    "text": "[이 구간은 생성에 실패하여 생략되었습니다]",
+                })
                 continue
             result_text = (chunk_response.text or "").strip()
             # Strip markdown code fences if present
@@ -2292,8 +2420,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V3.8 — Waitress on port 5000")
+        logger.info("Sarura Atelier V3.9 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V3.8 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V3.9 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
