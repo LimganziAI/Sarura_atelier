@@ -1,5 +1,5 @@
 """
-Sarura Atelier V3.9 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V4.0 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -10,7 +10,8 @@ Scene Card Compression, Maestro Fallback, Opening Narration,
 Secret Gating, Character Voice Contrast, Event-based Flow Digest,
 Variable Termination, Sensory Anchors, Self-Check Protocol,
 Oblique Dialogue, Anti-Cliché, Situation-Adaptive Speech,
-Description Focus Density, Narration Anti-Structure, Psychological Mirror.
+Description Focus Density, Narration Anti-Structure, Psychological Mirror,
+Pulse System (REACTIVE/NUDGE/PROACTIVE), Agency Preservation, Proactive Traction.
 """
 
 import os, json, re, uuid, copy, time, threading, logging, random
@@ -368,7 +369,8 @@ def _lock_cleanup_daemon():
         _cleanup_stale_locks()
 
 
-threading.Thread(target=_lock_cleanup_daemon, daemon=True).start()
+if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    threading.Thread(target=_lock_cleanup_daemon, daemon=True).start()
 
 
 def _sanitize_sid(sid: str) -> str:
@@ -755,11 +757,26 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         )
         relationship_instructions.append(ri)
 
-    # Part F: Speech Register System
-    speech_registers = []
+    # Part F: Speech Register System — Global rules (declared once) + per-character specifics
     core4 = s.get("core4", {})
     intoxication = core4.get("intoxication", {}).get("value", 0)
     stress_val = core4.get("stress", {}).get("value", 30)
+
+    global_speech_rules = (
+        "\n=== GLOBAL_SPEECH_REGISTER_RULES (공통 말투 규칙 — 모든 캐릭터에 적용) ===\n"
+        "- 관계 단계별 기본 말투:\n"
+        "  · 단계 1 (경계): 격식체 (~습니다, ~입니다) 또는 캐릭터 고유 초면 말투\n"
+        "  · 단계 2 (동료): 해요체 (~해요, ~이에요) 또는 약간 편해진 말투\n"
+        "  · 단계 3 (신뢰): 해체/반말 (~해, ~야) 가끔 섞임\n"
+        "  · 단계 4 (특별): 반말 위주 + 애칭 사용\n"
+        "- 취기 보정: 취기가 30 이상이면 한 단계 아래(더 친근한) 말투로 자연스럽게 변환\n"
+        "- 스트레스 보정: 스트레스가 60 이상이면 말이 짧아지고, 80 이상이면 감정적 폭발로 격식 무시\n"
+        "- 위기 상황 보정: CORE-4 stress ≥ 70이면, 관계 단계와 무관하게 격식 무시. 짧고 절박한 말투.\n"
+        "- 축제/파티 보정: event_seeds에 '축제' 태그가 있으면, 한 단계 편한 말투.\n"
+        "- 비밀 대화 보정: 장소가 '비밀장소' 태그를 가지면, 속삭이듯 짧은 문장.\n"
+    )
+
+    speech_registers = [global_speech_rules]
     for name in on_screen_chars:
         if name == player_name:
             continue
@@ -770,19 +787,8 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         istyles = bp.get("interaction_styles", [])
         quirks = [ist.get("style", "")[:80] for ist in istyles[:2] if ist.get("style")]
 
-        sr = f"\n=== 말투 레지스터 시스템 ===\n"
-        sr += f"[{name}의 현재 말투]\n"
-        sr += f"- 관계 단계 {stage}에서의 기본 말투:\n"
-        sr += f"  · 단계 1 (경계): 격식체 (~습니다, ~입니다) 또는 캐릭터 고유 초면 말투\n"
-        sr += f"  · 단계 2 (동료): 해요체 (~해요, ~이에요) 또는 약간 편해진 말투\n"
-        sr += f"  · 단계 3 (신뢰): 해체/반말 (~해, ~야) 가끔 섞임\n"
-        sr += f"  · 단계 4 (특별): 반말 위주 + 애칭 사용\n"
-        sr += f"- 취기 보정: 취기가 30 이상이면 한 단계 아래(더 친근한) 말투로 자연스럽게 변환\n"
-        sr += f"- 스트레스 보정: 스트레스가 60 이상이면 말이 짧아지고, 80 이상이면 감정적 폭발로 격식 무시\n"
-        # Situation-Adaptive Speech modifiers
-        sr += f"- 위기 상황 보정: CORE-4 stress ≥ 70이면, 관계 단계와 무관하게 격식 무시. 짧고 절박한 말투.\n"
-        sr += f"- 축제/파티 보정: event_seeds에 '축제' 태그가 있으면, 한 단계 편한 말투.\n"
-        sr += f"- 비밀 대화 보정: 장소가 '비밀장소' 태그를 가지면, 속삭이듯 짧은 문장.\n"
+        sr = f"\n[{name}의 현재 말투] (위의 공통 규칙 참조)\n"
+        sr += f"- 현재 관계 단계: {stage}\n"
         if quirks:
             sr += f"- {name} 고유 어미/추임새: {' / '.join(quirks)}\n"
         # C-3: Inject relationship_development stage_description
@@ -1063,7 +1069,108 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
     return base_instruction
 
 
-def inject_director_brief(ui_settings: dict, s: Optional[dict] = None) -> str:
+# ─── Pulse System ────────────────────────────────────────────
+def analyze_user_pulse(s: dict) -> dict:
+    """Analyze recent user input patterns and return 5 stagnation triggers."""
+    recent_user_inputs = []
+    for t in s.get("turns", [])[-5:]:
+        ui = t.get("user_input", "")
+        if ui and ui not in ("[CONTINUE_SCENE]", "[PLAYER_PAUSE]"):
+            recent_user_inputs.append(ui)
+
+    if len(recent_user_inputs) < 2:
+        return {"triggers_active": 0, "mode": "REACTIVE",
+                "triggers": {}, "suggestion": ""}
+
+    triggers = {}
+
+    # T1: Static Dialogue — user input 3 consecutive ≤ 20 chars
+    short_count = sum(1 for inp in recent_user_inputs[-3:] if len(inp.strip()) <= 20)
+    triggers["static_dialogue"] = short_count >= 3
+
+    # T2: Emotional Plateau — last 3 assistant emotions identical
+    recent_emotions = []
+    for t in s.get("turns", [])[-6:]:
+        emo = t.get("emotion")
+        if emo:
+            recent_emotions.append(emo)
+    triggers["emotional_plateau"] = (
+        len(recent_emotions) >= 3 and len(set(recent_emotions[-3:])) == 1
+    )
+
+    # T3: Location Lock — 5+ turns in same scene
+    triggers["location_lock"] = (
+        s.get("scene_context", {}).get("turn_count_in_scene", 0) >= 5
+    )
+
+    # T4: Echo Input — user repeats very short or echoes NPC
+    triggers["echo_input"] = False
+    if recent_user_inputs:
+        last_user = recent_user_inputs[-1].strip().lower()
+        for t in s.get("turns", [])[-3:]:
+            for b in t.get("script", []):
+                if b.get("type") == "dialogue":
+                    last_npc = b.get("content", "").strip().lower()
+                    if last_npc and last_user and len(last_user) < 10 and last_user in last_npc:
+                        triggers["echo_input"] = True
+                        break
+            if triggers["echo_input"]:
+                break
+
+    # T5: Question Dodge — placeholder for V4.1 NLU
+    triggers["question_dodge"] = False
+
+    active_count = sum(1 for v in triggers.values() if v)
+
+    if active_count >= 2:
+        mode = "PROACTIVE"
+    elif active_count == 1:
+        mode = "NUDGE"
+    else:
+        mode = "REACTIVE"
+
+    suggestion = ""
+    if mode == "PROACTIVE":
+        suggestions = [
+            "캐릭터 중 한 명이 갑자기 자신의 과거와 관련된 고민을 꺼내거나 새로운 제안을 합니다.",
+            "예상치 못한 환경 변화(갑작스런 비, 기묘한 소리, 예고없는 방문객)가 발생합니다.",
+            "캐릭터들 사이의 숨겨진 관계가 한 단계 드러나는 말실수나 행동이 일어납니다.",
+            "CORE-4 상태 변화(갑자기 피곤해지거나, 긴장이 고조)로 캐릭터 행동이 달라집니다.",
+            "한 캐릭터가 플레이어에게 직접 질문이나 선택지를 제시합니다.",
+        ]
+        suggestion = random.choice(suggestions)
+    elif mode == "NUDGE":
+        suggestion = "캐릭터가 자연스럽게 다음 행동이나 장소 이동을 제안합니다."
+
+    return {
+        "triggers_active": active_count,
+        "mode": mode,
+        "triggers": triggers,
+        "suggestion": suggestion,
+    }
+
+
+def select_relevant_event_seed(on_screen: list, world_db: dict) -> Optional[dict]:
+    """Select an event_seed relevant to current on_screen characters."""
+    event_seeds = world_db.get("event_seeds", [])
+    if not event_seeds:
+        return None
+
+    # Filter seeds that mention on-screen character names
+    relevant = []
+    for seed in event_seeds:
+        seed_text = json.dumps(seed, ensure_ascii=False).lower()
+        for name in on_screen:
+            if name.lower() in seed_text or name in seed_text:
+                relevant.append(seed)
+                break
+
+    if relevant:
+        return random.choice(relevant)
+    return random.choice(event_seeds)
+
+
+def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_result: Optional[dict] = None) -> str:
     parts = []
     if ui_settings.get("pov_first_person"):
         parts.append(
@@ -1124,17 +1231,54 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None) -> str:
     if genre in ("mystery", "thriller", "noir"):
         parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
 
-    # Event hints — inject every 5 turns
+    # Event hints — Pulse-aware injection
     if s is not None:
         tc = len(s.get("turns", []))
-        event_seeds = WORLD_DB.get("event_seeds", [])
-        if tc > 0 and tc % 5 == 0 and event_seeds:
-            seed = random.choice(event_seeds)
-            beats = seed.get("beats", [])
-            first_beat = beats[0] if beats else ""
+        pulse_mode = (pulse_result or {}).get("mode", "REACTIVE")
+        on_screen = s.get("on_screen", [])
+
+        if pulse_mode == "PROACTIVE":
+            # Immediately inject a relevant event seed
+            seed = select_relevant_event_seed(on_screen, WORLD_DB)
+            if seed:
+                beats = seed.get("beats", [])
+                first_beat = beats[0] if beats else ""
+                parts.append(
+                    f"- [이벤트 힌트 — PROACTIVE 즉시 투입] '{seed.get('title', '')}' "
+                    f"소재를 이번 턴에 적극 활용하세요: {first_beat}"
+                )
+        else:
+            # Default: every 5 turns
+            event_seeds = WORLD_DB.get("event_seeds", [])
+            if tc > 0 and tc % 5 == 0 and event_seeds:
+                seed = random.choice(event_seeds)
+                beats = seed.get("beats", [])
+                first_beat = beats[0] if beats else ""
+                parts.append(
+                    f"- [이벤트 힌트] '{seed.get('title', '')}' 소재를 자연스럽게 끌어와도 좋습니다: {first_beat}"
+                )
+
+    # Pulse System injection
+    if pulse_result:
+        if pulse_result["mode"] == "PROACTIVE":
             parts.append(
-                f"- [이벤트 힌트] '{seed.get('title', '')}' 소재를 자연스럽게 끌어와도 좋습니다: {first_beat}"
+                "\n=== 🔴 PROACTIVE 모드 (유저 수동 감지) ===\n"
+                "현재 유저가 짧은 입력, 감정 정체, 같은 장소 반복 등 수동적 패턴을 보이고 있습니다.\n"
+                "이번 턴에서 캐릭터가 반드시 다음 중 하나를 실행하세요:\n"
+                "1. 캐릭터가 자발적 행동(새 주제 제시, 감정 고백, 장소 이동 제안)을 합니다.\n"
+                "2. 환경 이벤트(소리, 날씨 변화, 제3자 등장)를 서술에 포함합니다.\n"
+                "3. 캐릭터가 플레이어에게 구체적 선택지(A 또는 B)를 제시합니다.\n"
+                f"힌트: {pulse_result['suggestion']}\n"
+                "중요: 유저의 기존 맥락과 자연스럽게 연결하세요. 갑작스럽거나 비현실적이면 안 됩니다."
             )
+        elif pulse_result["mode"] == "NUDGE":
+            parts.append(
+                "\n=== 🟡 NUDGE 모드 (약한 수동 신호) ===\n"
+                "유저가 약간 수동적입니다. 캐릭터의 대사나 행동에 다음 행동을 자연스럽게 유도하는 요소를 한 가지 넣으세요.\n"
+                "예: \"그나저나 오늘 시장에 새로운 가게가 생겼다던데... 같이 가볼래?\" 같은 제안.\n"
+                f"힌트: {pulse_result['suggestion']}"
+            )
+        # REACTIVE: nothing added — respect user direction
 
     return "\n".join(parts)
 
@@ -1222,6 +1366,18 @@ You have been given the full personas of the characters on scene via a system in
 #    대체: 구체적이고 개별적인 신체 반응으로 교체하라.
 #
 # 11. CHARACTER THOUGHT CHAIN (캐릭터 내부 추론) — see CCT instruction below
+#
+# 12. AGENCY PRESERVATION (유저 의도 존중):
+#    - 유저가 명시적으로 행동 방향을 제시한 경우, 캐릭터는 그 방향을 존중하고 풍부하게 반응합니다.
+#    - 캐릭터가 유저의 행동을 무시하거나 무효화하는 것은 금지합니다.
+#    - 유저가 "~하고 싶다", "~로 간다" 등 의지를 표현하면, 세계관 내에서 합리적인 한 그 행동이 실현되어야 합니다.
+#    - 단, 세계관 규칙(여탕 제한 등)이나 캐릭터 심리(경계 단계에서의 비밀 거부 등)에 의한 자연스러운 저항은 허용됩니다.
+#
+# 13. PROACTIVE TRACTION (능동적 견인):
+#    - PROACTIVE 모드가 활성화되면, 캐릭터는 자신의 내면 욕구, 스케줄, 숨겨진 사정을 기반으로 자발적 행동을 취합니다.
+#    - 이때 캐릭터의 행동은 Character Thought Chain(표면 욕구→숨겨진 욕구→배경 영향→최종 반응)을 반드시 거쳐야 합니다.
+#    - 견인은 "꼬리표 달린 선택지"가 아니라, 캐릭터가 살아있기 때문에 자연스럽게 일어나는 행동이어야 합니다.
+#    - 예: 마리가 창밖을 보다 갑자기 "오늘 시장에서 냄새 맡은 빵 진짜 맛있었는데... 같이 갈래?" 라고 자기 욕구 기반으로 말하는 것.
 
 === CHARACTER THOUGHT CHAIN (매 dialogue 전 내부 처리) ===
 각 캐릭터가 대사를 하기 전에 다음 4단계를 거칩니다:
@@ -1388,7 +1544,7 @@ def _build_event_short_term(turn_id: int, user_input: str, script: list) -> str:
 
 
 def build_dima_prompt(s: dict, user_input: str) -> tuple:
-    """Returns (system_instruction, main_prompt)."""
+    """Returns (system_instruction, main_prompt, pulse_result)."""
     player_name = s.get("player_name", "사용자")
     world = s.get("world", {})
     location = (world.get("main_stage", {}) or {}).get("name", "라운지")
@@ -1484,18 +1640,21 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         briefs.append(char_brief)
     character_briefs_content = "\n".join(briefs)
 
-    # Director brief
-    director_brief = inject_director_brief(s.get("ui_settings", {}), s=s)
+    # Director brief — with Pulse analysis
+    pulse_result = analyze_user_pulse(s)
+    director_brief = inject_director_brief(s.get("ui_settings", {}), s=s, pulse_result=pulse_result)
 
     # Self-Check Protocol: inject self-check block for turn >= 1
     turn_count = len(s.get("turns", []))
     if turn_count > 0:
         director_brief += (
-            "\n\n[턴 시작 전 자가 점검 — 이 체크리스트를 내부적으로 확인하고 결과를 반영하라]\n"
-            "□ 직전 턴과 같은 장소/시간/분위기인가? → 3턴 이상 같으면 변화를 도입하라\n"
-            "□ 직전 턴과 같은 주제로 대화하고 있는가? → 새로운 화제/사건/NPC 행동을 도입하라\n"
-            "□ NPC들이 플레이어의 반응만 기다리고 있는가? → 최소 1명은 자발적으로 행동하라\n"
-            "□ 직전 턴의 closing beat와 같은 패턴인가? → 다른 종결 방식을 선택하라"
+            "\n\n[self_check] 응답 전 확인:\n"
+            "1. POV: 1인칭 시점 유지 (나/내가/우리)\n"
+            "2. 말투: 각 캐릭터의 관계 단계 + CORE-4 보정 적용\n"
+            "3. CCT: Character Thought Chain 4단계 (표면→숨김→배경→반응) 수행\n"
+            "4. Agency: 유저가 방향을 제시했으면 그 방향으로 진행하고 있는가?\n"
+            "5. Pulse: 현재 모드가 PROACTIVE이면, 이번 턴에 캐릭터의 자발적 행동이 포함되어 있는가?\n"
+            "6. 반복 방지: 직전 턴과 동일한 감정/행동/대사 패턴이 아닌가?"
         )
 
     # Opening Narration: first turn directive
@@ -1532,7 +1691,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         user_input=user_input_for_prompt,
     )
 
-    return system_instruction, main_prompt
+    return system_instruction, main_prompt, pulse_result
 
 
 # ─── LLM call ────────────────────────────────────────────────
@@ -1756,9 +1915,9 @@ def apply_emotional_contagion(s: dict, script: list):
 
 
 # ─── Core turn engine ─────────────────────────────────────────
-def run_dima_turn(s: dict, user_input: str) -> list:
-    """Run one D.I.M.A turn and return the final script array."""
-    system_instruction, main_prompt = build_dima_prompt(s, user_input)
+def run_dima_turn(s: dict, user_input: str) -> tuple:
+    """Run one D.I.M.A turn and return (final_script, pulse_result)."""
+    system_instruction, main_prompt, pulse_result = build_dima_prompt(s, user_input)
 
     # Use tension-based temperature
     tension_info = calculate_tension_level(s)
@@ -1785,15 +1944,16 @@ def run_dima_turn(s: dict, user_input: str) -> list:
     # Part D: Apply emotional contagion
     apply_emotional_contagion(s, processed)
 
-    return processed
+    return processed, pulse_result
 
 
 # =========================================================================
 # MAESTRO — Memory architect + relationship/CORE-4 adjuster (every 4 turns)
 # =========================================================================
-def _local_maestro_fallback(recent_4: list) -> dict:
+def _local_maestro_fallback(recent_4: list, s: Optional[dict] = None) -> dict:
     """Regex-based local fallback when Maestro LLM call fails.
-    Extracts character names, emotion tags, and keywords from the last 4 turns."""
+    Extracts character names, emotion tags, and keywords from the last 4 turns.
+    Also generates a fallback summary from short_term memory if available."""
     chars = set()
     emotions = set()
     keywords = []
@@ -1816,9 +1976,19 @@ def _local_maestro_fallback(recent_4: list) -> dict:
     emotions_str = ", ".join(list(emotions)[:4]) if emotions else "neutral"
     kw_str = ", ".join(list(set(keywords))[:6]) if keywords else ""
 
-    summary = f"{chars_str} 간 대화 진행. 감정: {emotions_str}."
-    if kw_str:
-        summary += f" 키워드: {kw_str}"
+    # Build fallback from short_term memory (last 5 entries)
+    summary_parts = []
+    if s:
+        short_term = s.get("memory", {}).get("short_term", [])
+        for entry in short_term[-5:]:
+            summary_parts.append(str(entry))
+
+    if summary_parts:
+        summary = " → ".join(summary_parts[-3:])
+    else:
+        summary = f"{chars_str} 간 대화 진행. 감정: {emotions_str}."
+        if kw_str:
+            summary += f" 키워드: {kw_str}"
 
     return {
         "long_term_summary": summary,
@@ -1918,7 +2088,7 @@ Return JSON with:
     # If LLM failed, use local regex-based fallback
     if maestro_result is None:
         logger.info("Maestro LLM failed, using local fallback summary")
-        maestro_result = _local_maestro_fallback(recent_4)
+        maestro_result = _local_maestro_fallback(recent_4, s=s)
 
     memory = s.setdefault("memory", {"short_term": [], "long_term": [], "core_pins": [], "emotional_contagion_log": []})
 
@@ -1981,7 +2151,7 @@ Return JSON with:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "3.9",
+        "version": "4.0",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2033,7 +2203,7 @@ def bootstrap():
 
     # Generate first turn
     try:
-        final_script = run_dima_turn(s, seed_text)
+        final_script, _pulse = run_dima_turn(s, seed_text)
     except Exception as e:
         logger.error(f"Bootstrap DIMA error: {e}")
         final_script = safe_local_script(s)
@@ -2062,7 +2232,9 @@ def bootstrap():
     update_all_relationship_stages(s)
     save_session(s)
 
-    return jsonify({"status": "ok", "sid": sid, "state": to_public_state(s)})
+    resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
+            "personal_colors": PERSONAL_COLORS}
+    return jsonify(resp)
 
 
 @app.route("/execute-turn", methods=["POST"])
@@ -2102,7 +2274,11 @@ def execute_turn():
         # Part B: Apply CORE-4 natural decay
         apply_core4_decay(s)
 
-        final_script = run_dima_turn(s, user_input)
+        final_script, pulse_result = run_dima_turn(s, user_input)
+
+        # Increment scene turn counter
+        sc = s.setdefault("scene_context", {})
+        sc["turn_count_in_scene"] = sc.get("turn_count_in_scene", 0) + 1
 
         turn_id = (len(s.get("turns", [])) + 1)
         turn_payload = {
@@ -2139,7 +2315,24 @@ def execute_turn():
         s["traffic_light"] = "GREEN"
         save_session(s)
 
-    return jsonify({"status": "ok", "sid": sid, "state": to_public_state(s)})
+    # Build pulse suggestions for frontend
+    pulse_payload = {"mode": pulse_result.get("mode", "REACTIVE")}
+    if pulse_result.get("mode") in ("PROACTIVE", "NUDGE"):
+        on_screen = s.get("on_screen", [])
+        player_name = s.get("player_name", "사용자")
+        npc_names = [n for n in on_screen if n != player_name]
+        first_npc = npc_names[0] if npc_names else "캐릭터"
+        second_npc = npc_names[1] if len(npc_names) > 1 else first_npc
+        pulse_payload["suggestions"] = [
+            f"{first_npc}와(과) 함께 다른 장소로 이동해보기",
+            f"{second_npc}에게 오늘 기분이 어떤지 물어보기",
+            "혼자만의 시간을 갖기 위해 잠시 자리를 비우기",
+        ]
+
+    resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
+            "personal_colors": PERSONAL_COLORS,
+            "pulse": pulse_payload}
+    return jsonify(resp)
 
 
 # Part B: Hot-swap endpoint
@@ -2420,8 +2613,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V3.9 — Waitress on port 5000")
+        logger.info("Sarura Atelier V4.0 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V3.9 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V4.0 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
