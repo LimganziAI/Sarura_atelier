@@ -632,6 +632,40 @@
           if (turn.user_input) await addMessageToLog(wrap, 'user', { content: turn.user_input });
           const scriptBlocks = Array.isArray(turn?.script) ? turn.script : [];
           for (const b of scriptBlocks) { await addMessageToLog(wrap, b.type, b); }
+
+          // Illustration generation (only for last turn, only if toggle is ON)
+          if (STATE?.ui_settings?.illustration && i === turns.length - 1 && turns.length > 0) {
+            const illWrap = document.createElement('div');
+            illWrap.style.cssText = 'text-align:center;margin:12px 0;';
+            illWrap.innerHTML = '<div class="small">🎨 삽화 생성 중...</div>';
+            wrap.appendChild(illWrap);
+
+            POST('/generate-illustration', {}).then(illRes => {
+              illWrap.innerHTML = '';
+              if (illRes.status === 'ok' && illRes.image_base64) {
+                const img = document.createElement('img');
+                img.src = `data:${illRes.mime_type || 'image/png'};base64,${illRes.image_base64}`;
+                img.style.cssText = 'max-width:100%;border-radius:12px;margin:8px 0;box-shadow:0 4px 15px rgba(0,0,0,0.4);cursor:pointer;';
+                img.alt = '삽화';
+                img.title = '클릭하여 확대';
+                img.addEventListener('click', () => {
+                  const overlay = document.createElement('div');
+                  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:2000;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+                  const bigImg = document.createElement('img');
+                  bigImg.src = img.src;
+                  bigImg.style.cssText = 'max-width:95%;max-height:95%;border-radius:8px;';
+                  overlay.appendChild(bigImg);
+                  overlay.addEventListener('click', () => overlay.remove());
+                  document.body.appendChild(overlay);
+                });
+                illWrap.appendChild(img);
+              } else {
+                illWrap.innerHTML = '';
+              }
+            }).catch(() => {
+              illWrap.innerHTML = '';
+            });
+          }
         }
         if (turns.length > 0) LAST_TURN_ID = turns[turns.length - 1].turn_id;
         TYPEWRITER.enabled = true;
@@ -762,6 +796,51 @@
         // --- Events ---
         el.chatForm.addEventListener('submit', handleFormSubmit);
 
+        // Add novel button to top bar
+        if (!$('novel-btn')) {
+          const novelBtn = document.createElement('button');
+          novelBtn.id = 'novel-btn';
+          novelBtn.className = 'icon-btn';
+          novelBtn.textContent = '📖';
+          novelBtn.title = '소설화';
+          novelBtn.addEventListener('click', async () => {
+            if (!isBootstrapped) return alert('먼저 이야기를 시작하세요.');
+            novelBtn.disabled = true;
+            novelBtn.textContent = '⏳';
+            try {
+              const res = await POST('/novelize', {});
+              if (res.status === 'ok' && res.novel_text) {
+                const overlay = document.createElement('div');
+                overlay.className = 'modal-overlay';
+                const modalContent = document.createElement('div');
+                modalContent.className = 'modal-content';
+                modalContent.style.cssText = 'max-height:80vh;overflow-y:auto;';
+                const header = document.createElement('div');
+                header.className = 'modal-header';
+                const h2 = document.createElement('h2');
+                h2.textContent = '소설화 결과';
+                const closeBtn = document.createElement('button');
+                closeBtn.className = 'modal-close-btn';
+                closeBtn.textContent = '×';
+                closeBtn.addEventListener('click', () => overlay.remove());
+                header.appendChild(h2);
+                header.appendChild(closeBtn);
+                const body = document.createElement('div');
+                body.style.cssText = 'white-space:pre-wrap;line-height:1.8;font-size:15px;';
+                body.textContent = res.novel_text;
+                modalContent.appendChild(header);
+                modalContent.appendChild(body);
+                overlay.appendChild(modalContent);
+                document.body.appendChild(overlay);
+              } else {
+                alert(res.message || '소설화 실패');
+              }
+            } catch(e) { alert('소설화 실패: ' + e.message); }
+            finally { novelBtn.disabled = false; novelBtn.textContent = '📖'; }
+          });
+          document.querySelector('.top-bar .buttons')?.appendChild(novelBtn);
+        }
+
         document.querySelectorAll('#director-panel input[type="range"]').forEach(slider => {
           const vdId = slider.id.replace('-slider', '-value');
           const vd = document.getElementById(vdId);
@@ -820,9 +899,9 @@
         ['energy', 'intoxication', 'stress', 'pain'].forEach(key => {
           const slider = $(`core4-${key}`);
           const valEl = $(`core4-${key}-val`);
-          if (slider && valEl) {
-            slider.addEventListener('input', () => { valEl.textContent = slider.value; });
-            slider.addEventListener('change', sendCore4Update);
+          if (slider) {
+            slider.addEventListener('input', () => { if(valEl) valEl.textContent = slider.value; });
+            slider.addEventListener('change', () => { if(isBootstrapped) sendCore4Update(); });
           }
         });
       })();
