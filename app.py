@@ -14,7 +14,7 @@ Description Focus Density, Narration Anti-Structure, Psychological Mirror,
 Pulse System (REACTIVE/NUDGE/PROACTIVE), Agency Preservation, Proactive Traction.
 """
 
-import os, json, re, uuid, copy, time, threading, logging, random
+import os, json, re, uuid, copy, time, threading, logging, random, tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
@@ -49,6 +49,8 @@ MODEL_MAESTRO = "gemini-2.5-flash"
 MODEL_FALLBACK_CHAIN = ["gemini-2.5-flash", "gemini-2.0-flash"]
 MAESTRO_RETRY_DELAY_SECONDS = 5
 DIGEST_CONTENT_MAX_LENGTH = 30
+SLIDING_WINDOW_SIZE = 10
+MAESTRO_INTERVAL = 5
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
@@ -483,13 +485,39 @@ def save_session(s: dict):
     if not sid:
         return
     p = session_path(sid)
-    try:
-        p.write_text(
-            json.dumps(_to_jsonable(s), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except Exception as e:
-        logger.error(f"Failed to save session {sid}: {e}")
+    lock = get_session_lock(sid)
+    with lock:
+        try:
+            data = json.dumps(_to_jsonable(s), ensure_ascii=False, indent=2)
+            fd, tmp_path = tempfile.mkstemp(dir=str(SESSIONS_DIR), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(data)
+                os.replace(tmp_path, str(p))
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
+        except Exception as e:
+            logger.error(f"Failed to save session {sid}: {e}")
+
+
+def trim_turns_after_maestro(s: dict):
+    """Maestro 요약 완료 후, 최근 SLIDING_WINDOW_SIZE 턴만 남기고 나머지 삭제."""
+    turns = s.get("turns", [])
+    if len(turns) <= SLIDING_WINDOW_SIZE:
+        return
+    removed = turns[:-SLIDING_WINDOW_SIZE]
+    digest = s.setdefault("flow_digest_10", [])
+    for t in removed:
+        summary = t.get("summary", "")
+        if not summary:
+            user_input = t.get("user_input", "")
+            summary = user_input[:DIGEST_CONTENT_MAX_LENGTH] if user_input else "(turn)"
+        digest.append({"turn": t.get("turn_number", "?"), "summary": summary})
+    s["flow_digest_10"] = digest[-20:]
+    s["turns"] = turns[-SLIDING_WINDOW_SIZE:]
+    logger.info(f"Trimmed {len(removed)} old turns. Remaining: {len(s['turns'])}")
 
 
 def to_public_state(s: dict) -> dict:
@@ -760,6 +788,30 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
 def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
     packets = []
     player_name = s.get("player_name", "사용자")
+
+    # 기억 레이어 주입
+    memory = s.get("memory", {})
+    core_pins = memory.get("core_pins", [])
+    long_term = memory.get("long_term", [])
+    flow_digest = s.get("flow_digest_10", [])
+
+    memory_block = ""
+    if core_pins:
+        memory_block += "\n=== CORE PINS (절대 불변 사실) ===\n"
+        for pin in core_pins[-10:]:
+            pin_text = pin if isinstance(pin, str) else pin.get("content", pin.get("summary", str(pin)))
+            memory_block += f"- {pin_text}\n"
+    if long_term:
+        memory_block += "\n=== LONG-TERM MEMORY (과거 요약) ===\n"
+        for lt in long_term[-10:]:
+            lt_text = lt if isinstance(lt, str) else lt.get("content", lt.get("summary", str(lt)))
+            memory_block += f"- {lt_text}\n"
+    if flow_digest:
+        memory_block += "\n=== FLOW DIGEST (삭제된 턴 요약) ===\n"
+        for fd in flow_digest[-10:]:
+            memory_block += f"- Turn {fd.get('turn','?')}: {fd.get('summary','')}\n"
+
+    packets.insert(0, memory_block)
 
     world_rules_db = WORLD_DB.get("world_rules", {})
     rules_text = json.dumps(world_rules_db, ensure_ascii=False, indent=2)
@@ -2457,6 +2509,8 @@ def execute_turn():
         except Exception as e:
             logger.warning(f"Maestro error: {e}")
 
+        trim_turns_after_maestro(s)
+
         s["traffic_light"] = "GREEN"
         save_session(s)
 
@@ -2471,30 +2525,33 @@ def execute_turn():
 def hot_swap():
     sid = session.get("session_id")
     if not sid:
-        return jsonify({"status": "error", "message": "세션이 없습니다."}), 400
-
-    data = request.get_json(force=True, silent=True) or {}
-    core4_update = data.get("core4", {})
-
-    with get_session_lock(sid):
+        return jsonify({"error": "No active session"}), 400
+    lock = get_session_lock(sid)
+    with lock:
         s = load_session(sid)
         if not s:
-            return jsonify({"status": "error", "message": "세션을 찾을 수 없습니다."}), 404
-
-        core4 = s.get("core4", {})
-        for key, val in core4_update.items():
-            if key in core4:
-                try:
-                    v = int(val)
-                    v = max(core4[key]["min"], min(core4[key]["max"], v))
-                    core4[key]["value"] = v
-                except (ValueError, TypeError):
-                    pass
-
+            return jsonify({"error": "Session not found"}), 404
+        payload = request.get_json(silent=True) or {}
+        # core4 안전 업데이트
+        incoming_core4 = payload.get("core4")
+        if incoming_core4 and isinstance(incoming_core4, dict):
+            for key in ("energy", "intoxication", "stress", "pain"):
+                if key in incoming_core4:
+                    val = incoming_core4[key]
+                    if isinstance(val, (int, float)):
+                        s["core4"][key]["value"] = max(
+                            s["core4"][key]["min"],
+                            min(s["core4"][key]["max"], int(val))
+                        )
+                    elif isinstance(val, dict) and "value" in val:
+                        s["core4"][key]["value"] = max(
+                            s["core4"][key]["min"],
+                            min(s["core4"][key]["max"], int(val["value"]))
+                        )
+        # ui_settings 업데이트
+        merge_ui_settings(s, payload.get("ui_settings"))
         save_session(s)
-
-        flat = {k: v["value"] for k, v in core4.items()}
-        return jsonify({"status": "ok", "core4": flat})
+        return jsonify({"status": "ok", "state": to_public_state(s)})
 
 
 @app.route("/get-character-profiles", methods=["GET"])
