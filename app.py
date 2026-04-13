@@ -2208,7 +2208,7 @@ Return JSON with:
                 cleaned = re.sub(r'\s*```', '', cleaned)
                 if cleaned:
                     maestro_result = json.loads(cleaned)
-    except (json.JSONDecodeError, AttributeError, NameError) as e:
+    except (json.JSONDecodeError, AttributeError, NameError, TypeError) as e:
         logger.warning(f"Maestro response parse failed: {e}")
 
     # If LLM failed, use local regex-based fallback
