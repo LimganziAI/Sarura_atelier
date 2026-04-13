@@ -640,10 +640,10 @@
               monoDiv = document.createElement('div'); monoDiv.className = 'monologue';
               lastMsg.appendChild(monoDiv);
             }
-            const extraLine = document.createElement('span');
+            const monoTextSpan = document.createElement('span');
             monoDiv.appendChild(document.createElement('br'));
-            monoDiv.appendChild(extraLine);
-            await typeText(extraLine, data.content || "");
+            monoDiv.appendChild(monoTextSpan);
+            await typeText(monoTextSpan, data.content || "");
             return;
           }
           // 같은 캐릭터 dialogue가 없으면 독립 블록으로 렌더
