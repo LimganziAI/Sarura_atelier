@@ -1,5 +1,5 @@
 """
-Sarura Atelier V4.2 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V4.3 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -46,6 +46,7 @@ GEMINI_API_KEY = (
 # ─── Constants ───────────────────────────────────────────────
 MODEL_DIMA = "gemini-2.5-flash"
 MODEL_MAESTRO = "gemini-2.5-flash"
+MODEL_FALLBACK_CHAIN = ["gemini-2.5-flash", "gemini-2.0-flash"]
 MAESTRO_RETRY_DELAY_SECONDS = 5
 DIGEST_CONTENT_MAX_LENGTH = 30
 
@@ -93,6 +94,32 @@ def call_gemini_with_timeout(model, contents, config, timeout_sec=30):
         future.cancel()
         logger.error(f"Gemini API timeout ({timeout_sec}s) for model={model}")
         return None
+
+def call_gemini_with_fallback(contents, config, timeout_sec=30, max_retries=3):
+    """Try each model in the fallback chain with retries on 503/429."""
+    for model in MODEL_FALLBACK_CHAIN:
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = call_gemini_with_timeout(model, contents, config, timeout_sec)
+                if result is not None:
+                    return result
+                # result is None means timeout — try next attempt
+                logger.warning(f"Model {model} attempt {attempt}/{max_retries}: timeout, retrying...")
+            except Exception as e:
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    logger.warning(f"Model {model} attempt {attempt}/{max_retries}: 503, retrying...")
+                    time.sleep(2 ** attempt)
+                    continue
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    logger.warning(f"Model {model} attempt {attempt}/{max_retries}: 429, retrying...")
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+        logger.warning(f"Model {model} exhausted all {max_retries} retries, trying next model...")
+    logger.error("All models and retries exhausted")
+    return None
+
 
 # ─── Load DB files ───────────────────────────────────────────
 def _load_json(path, default=None):
@@ -1858,66 +1885,44 @@ def generate_llm(
         **config_kwargs,
     )
 
-    for attempt in range(3):
+    response = call_gemini_with_fallback(
+        contents=[genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=prompt)]
+        )],
+        config=config,
+    )
+    if response is None:
+        return None
+
+    # Part K: Check for safety-blocked response
+    if response.candidates:
+        candidate = response.candidates[0]
+        finish_reason = getattr(candidate, 'finish_reason', None)
+        if finish_reason and str(finish_reason).upper() in ("SAFETY", "BLOCKED", "2", "3"):
+            logger.warning(f"Response blocked by safety filter (reason: {finish_reason})")
+            return {"script": [{"type": "narration", "content": "(안전 필터에 의해 장면이 전환됩니다. 잠시 후 이야기가 계속됩니다.)"}]}
+
+    text = response.text
+    if text:
+        # Part K: Strip markdown fences before parsing
+        cleaned = re.sub(r'```json\s*', '', text.strip())
+        cleaned = re.sub(r'\s*```', '', cleaned)
         try:
-            response = call_gemini_with_timeout(
-                model=MODEL_DIMA,
-                contents=[genai_types.Content(
-                    role="user",
-                    parts=[genai_types.Part(text=prompt)]
-                )],
-                config=config,
-            )
-            if response is None:
-                logger.warning(f"Gemini timeout on attempt {attempt+1}")
-                continue
-
-            # Part K: Check for safety-blocked response
-            if response.candidates:
-                candidate = response.candidates[0]
-                finish_reason = getattr(candidate, 'finish_reason', None)
-                if finish_reason and str(finish_reason).upper() in ("SAFETY", "BLOCKED", "2", "3"):
-                    logger.warning(f"Response blocked by safety filter (reason: {finish_reason})")
-                    return {"script": [{"type": "narration", "content": "(안전 필터에 의해 장면이 전환됩니다. 잠시 후 이야기가 계속됩니다.)"}]}
-
-            text = response.text
-            if text:
-                # Part K: Strip markdown fences before parsing
-                cleaned = re.sub(r'```json\s*', '', text.strip())
-                cleaned = re.sub(r'\s*```', '', cleaned)
-                try:
-                    return json.loads(cleaned)
-                except json.JSONDecodeError:
-                    # Try to extract JSON from mixed output
-                    start = cleaned.find('{')
-                    if start >= 0:
-                        depth = 0
-                        for i, ch in enumerate(cleaned[start:], start=start):
-                            if ch == '{':
-                                depth += 1
-                            elif ch == '}':
-                                depth -= 1
-                                if depth == 0:
-                                    return json.loads(cleaned[start:i+1])
-            logger.warning(f"Empty LLM response on attempt {attempt+1}")
-        except Exception as e:
-            emsg = str(e).lower()
-            logger.error(f"LLM call error (attempt {attempt+1}): {e}")
-            if "429" in emsg or "quota" in emsg:
-                # Parse retryDelay from error message if available
-                retry_seconds = 15 * (attempt + 1)  # fallback
-                delay_match = re.search(r'retryDelay["\s:]*(\d+)', str(e))
-                if delay_match:
-                    parsed_delay = int(delay_match.group(1))
-                    if 1 <= parsed_delay <= 300:
-                        retry_seconds = parsed_delay
-                        logger.info(f"Using server retryDelay: {retry_seconds}s")
-                time.sleep(retry_seconds)
-            elif "500" in emsg:
-                time.sleep(3 * (attempt + 1))
-            else:
-                time.sleep(2)
-
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Try to extract JSON from mixed output
+            start = cleaned.find('{')
+            if start >= 0:
+                depth = 0
+                for i, ch in enumerate(cleaned[start:], start=start):
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            return json.loads(cleaned[start:i+1])
+    logger.warning("Empty LLM response after fallback chain")
     return None
 
 
@@ -2190,44 +2195,19 @@ Return JSON with:
         safety_settings=get_safety_settings(),
     )
 
-    for attempt in range(2):
-        try:
-            response = call_gemini_with_timeout(
-                model=MODEL_MAESTRO,
-                contents=[maestro_prompt],
-                config=config,
-            )
-            if response is None:
-                logger.warning(f"Maestro timeout (attempt {attempt + 1})")
-                if attempt == 0:
-                    time.sleep(MAESTRO_RETRY_DELAY_SECONDS)
-                    continue
-                break
-            text = response.text
-            if not text:
-                logger.warning(f"Maestro empty response (attempt {attempt + 1})")
-                if attempt == 0:
-                    time.sleep(MAESTRO_RETRY_DELAY_SECONDS)
-                    continue
-                break
+    response = call_gemini_with_fallback(
+        contents=[maestro_prompt],
+        config=config,
+    )
+    if response is not None:
+        text = response.text
+        if text:
             cleaned = re.sub(r'```json\s*', '', text.strip())
             cleaned = re.sub(r'\s*```', '', cleaned)
-            maestro_result = json.loads(cleaned)
-            break
-        except Exception as e:
-            emsg = str(e).lower()
-            logger.warning(f"Maestro failed (attempt {attempt + 1}): {e}")
-            if ("429" in emsg or "quota" in emsg) and attempt == 0:
-                retry_seconds = MAESTRO_RETRY_DELAY_SECONDS
-                delay_match = re.search(r'retryDelay["\s:]*(\d+)', str(e))
-                if delay_match:
-                    parsed_delay = int(delay_match.group(1))
-                    if 1 <= parsed_delay <= 300:
-                        retry_seconds = parsed_delay
-                        logger.info(f"Maestro using server retryDelay: {retry_seconds}s")
-                time.sleep(retry_seconds)
-                continue
-            break
+            try:
+                maestro_result = json.loads(cleaned)
+            except json.JSONDecodeError:
+                logger.warning("Maestro response JSON parse failed")
 
     # If LLM failed, use local regex-based fallback
     if maestro_result is None:
@@ -2312,7 +2292,7 @@ def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "4.2",
+        "version": "4.3",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2710,8 +2690,7 @@ def novelize():
             novelize_config = genai_types.GenerateContentConfig(
                 safety_settings=get_safety_settings(),
             )
-            chunk_response = call_gemini_with_timeout(
-                model=MODEL_DIMA,
+            chunk_response = call_gemini_with_fallback(
                 contents=[chunk_prompt],
                 config=novelize_config,
             )
@@ -2762,8 +2741,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V4.1 — Waitress on port 5000")
+        logger.info("Sarura Atelier V4.3 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V4.1 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V4.3 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
