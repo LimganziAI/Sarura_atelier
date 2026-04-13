@@ -462,8 +462,14 @@
       function emotionToWebpFile(emotion) {
         const raw = normalizeEmotion(emotion) || 'subtle smile';
         const canonical = EMOTION_ALIASES[raw] || raw;
-        const base = EMOTION_FILE_OVERRIDES[canonical] || canonical.split(' ').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
-        return `${base}.webp`;
+        const override = EMOTION_FILE_OVERRIDES[canonical];
+        if (override) return override + '.webp';
+        // 언더스코어를 공백으로 변환 후 Title Case
+        const base = canonical.replace(/_/g, ' ')
+          .split(' ')
+          .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+          .join(' ');
+        return base + '.webp';
       }
       function cleanEmotionTagFromText(text) {
         const str = String(text || '');
@@ -622,9 +628,27 @@
           return;
         }
         if (type === 'monologue') {
+          const who = data.character || (STATE?.player_name || '속마음');
+          // 직전 dialogue 블록이 같은 캐릭터이면 그 블록의 .monologue div에 append
+          const prevMsgs = wrapper.querySelectorAll('.character-message-wrapper');
+          const lastWrapper = prevMsgs.length ? prevMsgs[prevMsgs.length - 1] : null;
+          const lastMsg = lastWrapper ? lastWrapper.querySelector('.character-message') : null;
+          const lastNameEl = lastMsg ? lastMsg.querySelector('.character-name') : null;
+          if (lastNameEl && lastNameEl.textContent === who) {
+            let monoDiv = lastMsg.querySelector('.monologue');
+            if (!monoDiv) {
+              monoDiv = document.createElement('div'); monoDiv.className = 'monologue';
+              lastMsg.appendChild(monoDiv);
+            }
+            const extraLine = document.createElement('span');
+            monoDiv.appendChild(document.createElement('br'));
+            monoDiv.appendChild(extraLine);
+            await typeText(extraLine, data.content || "");
+            return;
+          }
+          // 같은 캐릭터 dialogue가 없으면 독립 블록으로 렌더
           msgWrapper.className = 'character-message-wrapper';
           msg.classList.add('character-message');
-          const who = data.character || (STATE?.player_name || '속마음');
           const profile = (characterProfiles || []).find(p => p.name === who);
           const nameEl = document.createElement('div'); nameEl.className = 'character-name';
           nameEl.textContent = who;
