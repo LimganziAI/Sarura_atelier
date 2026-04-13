@@ -723,19 +723,20 @@
           if (turn.user_input) await addMessageToLog(wrap, 'user', { content: turn.user_input });
           const scriptBlocks = Array.isArray(turn?.script) ? turn.script : [];
           // Polyfill: merge standalone monologue blocks into adjacent dialogue blocks
+          const blocksCopy = scriptBlocks.map(b => Object.assign({}, b));
           const mergedBlocks = [];
-          for (let bi = 0; bi < scriptBlocks.length; bi++) {
-            const block = scriptBlocks[bi];
+          for (let bi = 0; bi < blocksCopy.length; bi++) {
+            const block = blocksCopy[bi];
             if (block.type === 'monologue' && block.character && block.content) {
               // Try to merge into next dialogue block with same character
               let merged = false;
-              for (let ni = bi + 1; ni < scriptBlocks.length; ni++) {
-                if (scriptBlocks[ni].type === 'dialogue' && scriptBlocks[ni].character === block.character) {
-                  if (!scriptBlocks[ni].monologue) scriptBlocks[ni].monologue = block.content;
+              for (let ni = bi + 1; ni < blocksCopy.length; ni++) {
+                if (blocksCopy[ni].type === 'dialogue' && blocksCopy[ni].character === block.character) {
+                  if (!blocksCopy[ni].monologue) blocksCopy[ni].monologue = block.content;
                   merged = true;
                   break;
                 }
-                if (scriptBlocks[ni].type === 'dialogue') break; // different character dialogue, stop
+                if (blocksCopy[ni].type === 'dialogue') break;
               }
               // If not merged forward, try previous dialogue block
               if (!merged) {
@@ -748,7 +749,7 @@
                   if (mergedBlocks[pi].type === 'dialogue') break;
                 }
               }
-              if (!merged) mergedBlocks.push(block); // keep as-is if no match
+              if (!merged) mergedBlocks.push(block);
             } else {
               mergedBlocks.push(block);
             }
