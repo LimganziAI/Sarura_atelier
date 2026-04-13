@@ -14,7 +14,7 @@ Description Focus Density, Narration Anti-Structure, Psychological Mirror,
 Pulse System (REACTIVE/NUDGE/PROACTIVE), Agency Preservation, Proactive Traction.
 """
 
-import os, json, re, uuid, copy, time, threading, logging, random, tempfile
+import os, json, re, uuid, copy, time, threading, logging, random, tempfile, base64
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
@@ -51,6 +51,19 @@ MAESTRO_RETRY_DELAY_SECONDS = 5
 DIGEST_CONTENT_MAX_LENGTH = 30
 SLIDING_WINDOW_SIZE = 10
 MAESTRO_INTERVAL = 5
+
+SUPPORTED_EMOTIONS = [
+    "default", "joy", "sadness", "anger", "surprise",
+    "shy_embarrassment", "gentle_affection", "playful_tease",
+    "nervous_tension", "quiet_melancholy", "protective_resolve",
+    "wistful_nostalgia",
+]
+
+MODEL_ILLUSTRATION = "gemini-2.5-flash-preview-image"
+ILLUSTRATIONS_DIR = BASE_DIR / "static" / "illustrations"
+ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
+SHARED_NOVELS_DIR = BASE_DIR / "shared_novels"
+SHARED_NOVELS_DIR.mkdir(exist_ok=True)
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
@@ -314,18 +327,36 @@ EMOTION_NAMES_KR = {v["kr"]: k for k, v in EMOTION_TAXONOMY.items()}
 
 
 def normalize_emotion_tag(raw: str) -> str:
-    """Convert any emotion string (Korean or English) to canonical English key."""
-    raw_lower = raw.strip().lower()
-    if raw_lower in EMOTION_TAXONOMY:
+    """Convert any emotion string to one of SUPPORTED_EMOTIONS."""
+    raw_lower = raw.strip().lower().replace(" ", "_")
+    if raw_lower in SUPPORTED_EMOTIONS:
         return raw_lower
     kr_match = EMOTION_NAMES_KR.get(raw.strip())
-    if kr_match:
+    if kr_match and kr_match in SUPPORTED_EMOTIONS:
         return kr_match
-    # Fuzzy fallback: find closest by substring
-    for en_key, data in EMOTION_TAXONOMY.items():
-        if raw_lower in en_key or raw_lower in data["kr"]:
-            return en_key
-    return "joy"  # safe default
+    FALLBACK_MAP = {
+        "fear": "nervous_tension",
+        "trust": "gentle_affection",
+        "disgust": "anger",
+        "anticipation": "joy",
+        "love": "gentle_affection",
+        "submission": "shy_embarrassment",
+        "awe": "surprise",
+        "disapproval": "sadness",
+        "remorse": "quiet_melancholy",
+        "contempt": "anger",
+        "aggression": "anger",
+        "optimism": "joy",
+        "reluctant_warmth": "gentle_affection",
+        "bitter_amusement": "playful_tease",
+        "stunned_silence": "surprise",
+    }
+    if raw_lower in FALLBACK_MAP:
+        return FALLBACK_MAP[raw_lower]
+    for key in SUPPORTED_EMOTIONS:
+        if raw_lower in key or key in raw_lower:
+            return key
+    return "default"
 
 
 def get_emotion_pad(emotion_key: str) -> tuple:
@@ -623,6 +654,80 @@ def extract_emotion_from_script(script: list) -> str:
     return "joy"
 
 
+def generate_illustration(
+    scene_description: str,
+    character_names: list,
+    emotion: str,
+    session_id: str,
+    turn_number: int,
+    reference_slug: str = None,
+) -> Optional[str]:
+    """NanoBanana로 삽화 생성. 실패 시 None 반환."""
+    try:
+        char_appearances = []
+        for name in character_names[:3]:
+            cached = _CHAR_RUNTIME_CACHE.get(name, {})
+            app_text = cached.get("appearance_summary", "")
+            height = cached.get("height", "")
+            if app_text:
+                char_appearances.append(f"{name}: {app_text} ({height})")
+
+        prompt = (
+            f"Fantasy visual novel illustration, anime style, high quality.\n"
+            f"Scene: {scene_description[:300]}\n"
+            f"Characters: {'; '.join(char_appearances)}\n"
+            f"Mood/Emotion: {emotion}\n"
+            f"Style: soft lighting, watercolor-like background, "
+            f"detailed character expressions, 16:9 aspect ratio.\n"
+            f"Do NOT include any text, speech bubbles, or UI elements."
+        )
+
+        contents = [prompt]
+        if reference_slug:
+            ref_path = BASE_DIR / "static" / "gifs" / reference_slug / "default.webp"
+            if ref_path.exists():
+                ref_bytes = ref_path.read_bytes()
+                contents = [
+                    genai_types.Part.from_bytes(data=ref_bytes, mime_type="image/webp"),
+                    prompt,
+                ]
+
+        config = genai_types.GenerateContentConfig(
+            response_modalities=["IMAGE", "TEXT"],
+            safety_settings=get_safety_settings(),
+            automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
+        )
+
+        result = call_gemini_with_timeout(
+            MODEL_ILLUSTRATION, contents, config, timeout_sec=60
+        )
+
+        if not result or not result.candidates:
+            return None
+
+        for part in result.candidates[0].content.parts:
+            if hasattr(part, 'inline_data') and part.inline_data:
+                img_data = part.inline_data.data
+                mime = part.inline_data.mime_type or "image/png"
+                ext = "png" if "png" in mime else "webp" if "webp" in mime else "jpg"
+
+                session_illust_dir = ILLUSTRATIONS_DIR / _sanitize_sid(session_id)
+                session_illust_dir.mkdir(exist_ok=True)
+
+                filename = f"turn_{turn_number:04d}.{ext}"
+                filepath = session_illust_dir / filename
+                filepath.write_bytes(img_data)
+
+                return f"/static/illustrations/{_sanitize_sid(session_id)}/{filename}"
+
+        return None
+    except Exception as e:
+        logger.error(f"Illustration generation failed: {e}")
+        return None
+
+
 # =========================================================================
 # PART G: 3-ACT NARRATIVE TENSION CURVE (Freytag's Pyramid)
 # =========================================================================
@@ -815,7 +920,7 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         packets.insert(0, memory_block)
 
     world_rules_db = WORLD_DB.get("world_rules", {})
-    rules_text = json.dumps(world_rules_db, ensure_ascii=False, indent=2)
+    rules_text = json.dumps(world_rules_db, ensure_ascii=False, separators=(",", ":"))
 
     relationships = s.get("relationships", {})
 
@@ -1159,6 +1264,15 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
                 "\n[지시] 매 턴 나레이션에 위 감각 앵커 중 최소 2가지 비시각적 감각(청각, 후각, 촉각, 미각)을 포함하라.\n"
             )
             break
+
+    emotion_constraint = (
+        "\n=== EMOTION WHITELIST ===\n"
+        "dialogue 블록의 emotion 필드는 반드시 다음 12개 중 하나만 사용:\n"
+        + ", ".join(SUPPORTED_EMOTIONS) + "\n"
+        "위 목록에 없는 감정은 가장 가까운 것으로 대체. "
+        "예: fear→nervous_tension, love→gentle_affection, disgust→anger\n"
+    )
+    packets.append(emotion_constraint)
 
     base_instruction = (
         "You are a master AI actor for a fictional theatrical play. "
@@ -2487,6 +2601,36 @@ def execute_turn():
             "emotion": extract_emotion_from_script(final_script),
             "ui_settings_snapshot": copy.deepcopy(s.get("ui_settings", {})),
         }
+
+        # ─── 삽화 생성 ────────────────────────
+        on_screen = s.get("on_screen", [])
+        illustration_url = None
+        if s.get("ui_settings", {}).get("illustration", False):
+            scene_desc_parts = []
+            for block in final_script:
+                if block.get("type") == "narration":
+                    scene_desc_parts.append(block.get("content", ""))
+                elif block.get("type") == "dialogue":
+                    scene_desc_parts.append(
+                        f"{block.get('character','')}: {block.get('content','')[:50]}"
+                    )
+            scene_desc = " ".join(scene_desc_parts)[:500]
+            primary_emotion = extract_emotion_from_script(final_script)
+            primary_char = next(
+                (b.get("character") for b in final_script if b.get("type") == "dialogue"),
+                on_screen[0] if on_screen else None
+            )
+            ref_slug = ENG_SLUG_MAP.get(primary_char) if primary_char else None
+            illustration_url = generate_illustration(
+                scene_description=scene_desc,
+                character_names=on_screen,
+                emotion=primary_emotion,
+                session_id=s["session_id"],
+                turn_number=len(s.get("turns", [])),
+                reference_slug=ref_slug,
+            )
+
+        turn_payload["illustration_url"] = illustration_url
         s.setdefault("turns", []).append(turn_payload)
 
         # --- Flow Digest Update (event-based) ---
@@ -2517,7 +2661,8 @@ def execute_turn():
 
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
-            "pulse": _build_pulse_payload(pulse_result, s)}
+            "pulse": _build_pulse_payload(pulse_result, s),
+            "illustration_url": illustration_url}
     return jsonify(resp)
 
 
@@ -2791,6 +2936,78 @@ def novelize():
                 "message": "일부 청크 처리 중 오류가 발생했습니다.",
             })
         return jsonify({"status": "error", "message": "소설화에 실패했습니다."}), 500
+
+
+@app.route("/novelization", methods=["POST"])
+def novelization():
+    sid = session.get("session_id")
+    if not sid:
+        return jsonify({"error": "No active session"}), 400
+    lock = get_session_lock(sid)
+    with lock:
+        s = load_session(sid)
+        if not s:
+            return jsonify({"error": "Session not found"}), 404
+    chapters = []
+    for i, turn in enumerate(s.get("turns", [])):
+        script = turn.get("script", [])
+        lines = []
+        for block in script:
+            btype = block.get("type", "")
+            content = block.get("content", "")
+            char = block.get("character", "")
+            if btype == "narration":
+                lines.append(content)
+            elif btype == "dialogue":
+                lines.append(f'"{content}" \u2014 {char}')
+            elif btype == "monologue":
+                lines.append(f'({content})')
+        chapters.append({
+            "turn": i + 1,
+            "text": "\n".join(lines),
+            "illustration_url": turn.get("illustration_url"),
+        })
+    novel_data = {
+        "title": f"\uc0ac\ub8e8\ub77c \uc544\ub730\ub9ac\uc5d0 \u2014 {s.get('session_id', '')}",
+        "player_name": s.get("player_name", "\uc0ac\uc6a9\uc790"),
+        "characters": s.get("on_screen", []),
+        "core_memories": s.get("memory", {}).get("core_pins", []),
+        "chapters": chapters,
+        "created_at": now_ts(),
+    }
+    return jsonify({"novel": novel_data})
+
+
+@app.route("/share-novel", methods=["POST"])
+def share_novel():
+    data = request.get_json(silent=True) or {}
+    novel = data.get("novel")
+    if not novel:
+        return jsonify({"error": "No novel data"}), 400
+    share_code = f"NV-{uuid.uuid4().hex[:8].upper()}"
+    share_path = SHARED_NOVELS_DIR / f"{share_code}.json"
+    try:
+        share_path.write_text(
+            json.dumps(novel, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.error(f"Failed to save shared novel: {e}")
+        return jsonify({"error": "Save failed"}), 500
+    return jsonify({"share_code": share_code})
+
+
+@app.route("/read-novel/<share_code>", methods=["GET"])
+def read_novel(share_code):
+    safe_code = re.sub(r'[^A-Za-z0-9\-]', '', share_code)
+    share_path = SHARED_NOVELS_DIR / f"{safe_code}.json"
+    if not share_path.exists():
+        return jsonify({"error": "Novel not found"}), 404
+    try:
+        novel = json.loads(share_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.error(f"Failed to read shared novel: {e}")
+        return jsonify({"error": "Read failed"}), 500
+    return jsonify({"novel": novel})
 
 
 @app.errorhandler(500)
