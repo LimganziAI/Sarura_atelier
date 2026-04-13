@@ -1,5 +1,5 @@
 """
-Sarura Atelier V4.3 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V4.4 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -72,7 +72,7 @@ logger = logging.getLogger("atelier")
 
 # ─── Genai Client ────────────────────────────────────────────
 client = genai.Client(api_key=GEMINI_API_KEY)
-_api_executor = ThreadPoolExecutor(max_workers=8)
+_api_executor = ThreadPoolExecutor(max_workers=3)
 
 import atexit
 atexit.register(_api_executor.shutdown, wait=False)
@@ -105,6 +105,7 @@ def call_gemini_with_fallback(contents, config, timeout_sec=30, max_retries=3):
                     return result
                 # result is None means timeout — try next attempt
                 logger.warning(f"Model {model} attempt {attempt}/{max_retries}: timeout, retrying...")
+                time.sleep(2)
             except Exception as e:
                 err_str = str(e)
                 if "503" in err_str or "UNAVAILABLE" in err_str:
@@ -785,9 +786,6 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
 
         anchor = f"\n=== PERSONA ANCHOR (절대 변하지 않는 핵심 정체성) ===\n"
         anchor += f"[{name}의 앵커]\n"
-        anchor += f"- 절대 규칙: {bp.get('core_acting_rule', '캐릭터 고유 연기 규칙')}\n"
-        if speech_examples:
-            anchor += f"- 말투 DNA: {' / '.join(speech_examples[:3])}\n"
         anchor += f"- 금기 행동: {name}은(는) 절대로 다음을 하지 않습니다: [다른 캐릭터의 말투를 모방, 갑자기 성격이 변함, 자신의 비밀을 관계 단계에 맞지 않게 공개]\n"
         cached = _CHAR_RUNTIME_CACHE.get(name, {})
         behavior_hints = cached.get("behavior_hints", big5_to_behavior_hints(pdna))
@@ -1882,6 +1880,7 @@ def generate_llm(
 
     config = genai_types.GenerateContentConfig(
         system_instruction=system_instruction,
+        automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
         **config_kwargs,
     )
 
@@ -2188,26 +2187,29 @@ Return JSON with:
 """
 
     maestro_result = None
+    cleaned = None
     config = genai_types.GenerateContentConfig(
         temperature=0.4,
         max_output_tokens=2048,
         response_mime_type="application/json",
         safety_settings=get_safety_settings(),
+        automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
     )
 
     response = call_gemini_with_fallback(
         contents=[maestro_prompt],
         config=config,
     )
-    if response is not None:
-        text = response.text
-        if text:
-            cleaned = re.sub(r'```json\s*', '', text.strip())
-            cleaned = re.sub(r'\s*```', '', cleaned)
-            try:
-                maestro_result = json.loads(cleaned)
-            except json.JSONDecodeError:
-                logger.warning("Maestro response JSON parse failed")
+    try:
+        if response is not None:
+            text = response.text
+            if text:
+                cleaned = re.sub(r'```json\s*', '', text.strip())
+                cleaned = re.sub(r'\s*```', '', cleaned)
+                if cleaned:
+                    maestro_result = json.loads(cleaned)
+    except (json.JSONDecodeError, AttributeError, NameError) as e:
+        logger.warning(f"Maestro response parse failed: {e}")
 
     # If LLM failed, use local regex-based fallback
     if maestro_result is None:
@@ -2292,7 +2294,7 @@ def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "4.3",
+        "version": "4.4",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2604,6 +2606,7 @@ def generate_illustration():
             config=genai_types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
                 safety_settings=get_safety_settings(),
+                automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
             ),
             timeout_sec=60,
         )
@@ -2689,6 +2692,7 @@ def novelize():
 
             novelize_config = genai_types.GenerateContentConfig(
                 safety_settings=get_safety_settings(),
+                automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
             )
             chunk_response = call_gemini_with_fallback(
                 contents=[chunk_prompt],
@@ -2741,8 +2745,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V4.3 — Waitress on port 5000")
+        logger.info("Sarura Atelier V4.4 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V4.3 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V4.4 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
