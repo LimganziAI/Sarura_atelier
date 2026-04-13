@@ -1,5 +1,5 @@
 """
-Sarura Atelier V4.1 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V4.2 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -1603,6 +1603,7 @@ Each element: {{"type": "narration"|"dialogue", "content": "...", "character": "
 [MONOLOGUE OUTPUT RULE — 필수 준수]
 속마음은 반드시 해당 캐릭터의 dialogue 블록 안에 "monologue" 필드로 넣으세요.
 별도의 {{"type": "monologue"}} 블록을 만들지 마세요.
+캐릭터의 속마음(monologue)은 반드시 해당 캐릭터의 dialogue 블록 내부 'monologue' 필드에 넣으세요. 독립 monologue 블록은 최소화하세요.
 
 올바른 예시:
 {{"type": "dialogue", "character": "라이니", "content": "어머~ 자기, 벌써부터...", "emotion": "playful_tease", "monologue": "이 사람, 표정이 읽히네. 재미있겠어."}}
@@ -1693,8 +1694,9 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         )
     else:
         user_input_for_prompt = (
-            "[유저 입력 — 아래 내용에 포함된 장소, 상황, 시간, 행동을 최우선으로 반영하세요]: "
-            f"'{user_input}'"
+            "[유저 입력 — 아래 내용에 명시된 장소·상황·시간·인물 설정을 반드시 최우선으로 반영하세요. "
+            "DB 기본값보다 유저 입력이 항상 우선합니다.]\n"
+            f"{user_input}"
         )
 
     # Recent conversation log for DIMA prompt
@@ -1780,9 +1782,8 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             "4. Agency: 유저가 방향을 제시했으면 그 방향으로 진행하고 있는가?\n"
             "5. Pulse: 현재 모드가 PROACTIVE이면, 이번 턴에 캐릭터의 자발적 행동이 포함되어 있는가?\n"
             "6. 반복 방지: 직전 턴과 동일한 감정/행동/대사 패턴이 아닌가?\n"
-            "7. 유저 장소: 유저가 지정한 장소에서 장면이 진행되고 있는가? "
-            "유저가 \"카페\"라고 했으면 카페인가?\n"
-            "8. 유저 내면: 나레이션이 플레이어의 감정, 생각, 시선을 대신 서술하고 있지 않은가?"
+            "(7) 유저가 명시한 장소·상황이 내 출력에 정확히 반영되었는가? 무시하고 기본 장소로 대체하지 않았는가?\n"
+            "(8) 나레이션에서 유저의 내면(감정, 생각, 시선, 판단)을 대신 서술하지 않았는가? 유저의 내면은 절대 서술 금지."
         )
 
     # Opening Narration: first turn directive
@@ -2311,7 +2312,7 @@ def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "4.1",
+        "version": "4.2",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
