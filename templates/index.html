@@ -380,6 +380,17 @@
         return `hsl(${h % 360} 70% 55%)`;
       }
 
+      // --- Apply personal_colors from server to characterProfiles ---
+      function applyPersonalColors(personalColors) {
+        if (!personalColors || typeof personalColors !== 'object') return;
+        for (const [name, color] of Object.entries(personalColors)) {
+          const profile = characterProfiles.find(p => p.name === name);
+          if (profile) {
+            profile.color = color;
+          }
+        }
+      }
+
       // --- Player button ---
       function makePlayerBtn(name) {
         document.querySelectorAll('.char-btn.player-btn').forEach(b => b.remove());
@@ -806,8 +817,9 @@
             const bootResponse = await POST('/bootstrap', bootPayload);
             hideTypingIndicator();
             if (bootResponse && bootResponse.state) {
+              applyPersonalColors(bootResponse.personal_colors);
               await renderUIFromState(bootResponse.state);
-              renderPulseChips(null); // No pulse on first turn
+              renderPulseChips(bootResponse.pulse || null);
             }
             else throw new Error(bootResponse.message || '이야기 시작 데이터가 올바르지 않습니다.');
           } else {
@@ -822,6 +834,7 @@
             });
             hideTypingIndicator();
             if (turnResponse.status === 'ok' && turnResponse.state) {
+              applyPersonalColors(turnResponse.personal_colors);
               await renderUIFromState(turnResponse.state);
               renderPulseChips(turnResponse.pulse || null);
             } else {
