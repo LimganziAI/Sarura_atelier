@@ -2192,6 +2192,23 @@ Return JSON with:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
+def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
+    """Build pulse payload dict for frontend from pulse analysis result."""
+    pulse_payload: dict = {"mode": (pulse_result or {}).get("mode", "REACTIVE")}
+    if pulse_result and pulse_result.get("mode") in ("PROACTIVE", "NUDGE"):
+        on_screen = s.get("on_screen", [])
+        player_name = s.get("player_name", "사용자")
+        npc_names = [n for n in on_screen if n != player_name]
+        first_npc = npc_names[0] if npc_names else "캐릭터"
+        second_npc = npc_names[1] if len(npc_names) > 1 else first_npc
+        pulse_payload["suggestions"] = [
+            f"{first_npc}와(과) 함께 다른 장소로 이동해보기",
+            f"{second_npc}에게 오늘 기분이 어떤지 물어보기",
+            "혼자만의 시간을 갖기 위해 잠시 자리를 비우기",
+        ]
+    return pulse_payload
+
+
 # Part K: Health endpoint
 @app.route("/health", methods=["GET"])
 def health():
@@ -2279,22 +2296,9 @@ def bootstrap():
     update_all_relationship_stages(s)
     save_session(s)
 
-    # Build pulse payload for frontend
-    pulse_payload = {"mode": (_pulse or {}).get("mode", "REACTIVE")}
-    if _pulse and _pulse.get("mode") in ("PROACTIVE", "NUDGE"):
-        on_screen = s.get("on_screen", [])
-        npc_names = [n for n in on_screen if n != s.get("player_name", "사용자")]
-        first_npc = npc_names[0] if npc_names else "캐릭터"
-        second_npc = npc_names[1] if len(npc_names) > 1 else first_npc
-        pulse_payload["suggestions"] = [
-            f"{first_npc}와(과) 함께 다른 장소로 이동해보기",
-            f"{second_npc}에게 오늘 기분이 어떤지 물어보기",
-            "혼자만의 시간을 갖기 위해 잠시 자리를 비우기",
-        ]
-
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
-            "pulse": pulse_payload}
+            "pulse": _build_pulse_payload(_pulse, s)}
     return jsonify(resp)
 
 
@@ -2376,23 +2380,9 @@ def execute_turn():
         s["traffic_light"] = "GREEN"
         save_session(s)
 
-    # Build pulse suggestions for frontend
-    pulse_payload = {"mode": pulse_result.get("mode", "REACTIVE")}
-    if pulse_result.get("mode") in ("PROACTIVE", "NUDGE"):
-        on_screen = s.get("on_screen", [])
-        player_name = s.get("player_name", "사용자")
-        npc_names = [n for n in on_screen if n != player_name]
-        first_npc = npc_names[0] if npc_names else "캐릭터"
-        second_npc = npc_names[1] if len(npc_names) > 1 else first_npc
-        pulse_payload["suggestions"] = [
-            f"{first_npc}와(과) 함께 다른 장소로 이동해보기",
-            f"{second_npc}에게 오늘 기분이 어떤지 물어보기",
-            "혼자만의 시간을 갖기 위해 잠시 자리를 비우기",
-        ]
-
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
-            "pulse": pulse_payload}
+            "pulse": _build_pulse_payload(pulse_result, s)}
     return jsonify(resp)
 
 
