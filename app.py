@@ -2998,13 +2998,11 @@ def share_novel():
 
 @app.route("/read-novel/<share_code>", methods=["GET"])
 def read_novel(share_code):
-    safe_code = re.sub(r'[^A-Za-z0-9\-]', '', share_code)
-    if not safe_code:
+    if not re.fullmatch(r'NV-[A-F0-9]{8}', share_code):
         return jsonify({"error": "Invalid share code"}), 400
-    share_path = (SHARED_NOVELS_DIR / f"{safe_code}.json").resolve()
-    if not str(share_path).startswith(str(SHARED_NOVELS_DIR.resolve())):
-        return jsonify({"error": "Invalid share code"}), 400
-    if not share_path.exists():
+    filename = f"{share_code}.json"
+    share_path = SHARED_NOVELS_DIR / filename
+    if not share_path.is_file():
         return jsonify({"error": "Novel not found"}), 404
     try:
         novel = json.loads(share_path.read_text(encoding="utf-8"))
