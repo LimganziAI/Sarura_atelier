@@ -811,7 +811,8 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         for fd in flow_digest[-10:]:
             memory_block += f"- Turn {fd.get('turn','?')}: {fd.get('summary','')}\n"
 
-    packets.insert(0, memory_block)
+    if memory_block:
+        packets.insert(0, memory_block)
 
     world_rules_db = WORLD_DB.get("world_rules", {})
     rules_text = json.dumps(world_rules_db, ensure_ascii=False, indent=2)
