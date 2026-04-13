@@ -722,7 +722,39 @@
           TYPEWRITER.enabled = (i === turns.length - 1);
           if (turn.user_input) await addMessageToLog(wrap, 'user', { content: turn.user_input });
           const scriptBlocks = Array.isArray(turn?.script) ? turn.script : [];
-          for (const b of scriptBlocks) { await addMessageToLog(wrap, b.type, b); }
+          // Polyfill: merge standalone monologue blocks into adjacent dialogue blocks
+          const blocksCopy = scriptBlocks.map(b => Object.assign({}, b));
+          const mergedBlocks = [];
+          for (let bi = 0; bi < blocksCopy.length; bi++) {
+            const block = blocksCopy[bi];
+            if (block.type === 'monologue' && block.character && block.content) {
+              // Try to merge into next dialogue block with same character
+              let merged = false;
+              for (let ni = bi + 1; ni < blocksCopy.length; ni++) {
+                if (blocksCopy[ni].type === 'dialogue' && blocksCopy[ni].character === block.character) {
+                  if (!blocksCopy[ni].monologue) blocksCopy[ni].monologue = block.content;
+                  merged = true;
+                  break;
+                }
+                if (blocksCopy[ni].type === 'dialogue') break;
+              }
+              // If not merged forward, try previous dialogue block
+              if (!merged) {
+                for (let pi = mergedBlocks.length - 1; pi >= 0; pi--) {
+                  if (mergedBlocks[pi].type === 'dialogue' && mergedBlocks[pi].character === block.character) {
+                    if (!mergedBlocks[pi].monologue) mergedBlocks[pi].monologue = block.content;
+                    merged = true;
+                    break;
+                  }
+                  if (mergedBlocks[pi].type === 'dialogue') break;
+                }
+              }
+              if (!merged) mergedBlocks.push(block);
+            } else {
+              mergedBlocks.push(block);
+            }
+          }
+          for (const b of mergedBlocks) { await addMessageToLog(wrap, b.type, b); }
 
           // Illustration generation (only for last turn, only if toggle is ON)
           if (STATE?.ui_settings?.illustration && i === turns.length - 1 && turns.length > 0) {

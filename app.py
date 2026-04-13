@@ -1,5 +1,5 @@
 """
-Sarura Atelier V4.0 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V4.1 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -17,7 +17,7 @@ Pulse System (REACTIVE/NUDGE/PROACTIVE), Agency Preservation, Proactive Traction
 import os, json, re, uuid, copy, time, threading, logging, random
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import deque
 from typing import Dict, Any, List, Optional
 
@@ -137,6 +137,14 @@ if _GIFS_DIR.is_dir():
     _extra_folders = _gif_folders - _slug_values
     for _ef in sorted(_extra_folders):
         logger.warning(f"static/gifs/ folder '{_ef}' has no matching ENG_SLUG_MAP entry")
+
+    # ERROR-level alert if mismatch count >= 3
+    _mismatch_count = len(_missing_folders) + len(_extra_folders)
+    if _mismatch_count >= 3:
+        logger.error(
+            f"⚠️ {_mismatch_count}개 캐릭터의 포트레이트 폴더가 불일치합니다. "
+            f"metadata.eng 값과 폴더명을 확인하세요."
+        )
 
     # Check default.webp in each slug folder
     for _char_name, _eng_slug in ENG_SLUG_MAP.items():
@@ -418,7 +426,7 @@ def session_path(sid: str) -> Path:
 
 
 def now_ts() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    return datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
 
 
 def _to_jsonable(obj):
@@ -1079,6 +1087,48 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
         "Your primary directive is to portray the following characters based on their detailed persona blueprints. "
         "Adhere strictly to their personalities, speech patterns, and relationships. "
         "This is your role for the entire duration of the scene.\n\n"
+        "# ============================\n"
+        "# Golden Rule 0 — 유저 입력 절대 우선 (SUPREME RULE)\n"
+        "# ============================\n"
+        "# 유저의 메시지에 장소, 상황, 시간, 인물 관계 등의 설정이\n"
+        "# 포함되어 있으면, 그것이 세계관 DB의 기본 장소보다\n"
+        "# 절대적으로 우선합니다.\n"
+        "#\n"
+        "# 예시:\n"
+        "# - 유저: \"카페에서 소개팅을 기다린다\"\n"
+        "#   → 장소는 카페. 기숙사 라운지가 아님.\n"
+        "#   → 상황은 소개팅. 일상 대화가 아님.\n"
+        "# - 유저: \"학교 옥상에서 혼자 있다\"\n"
+        "#   → 장소는 학교 옥상. 등장인물은 유저 혼자.\n"
+        "#\n"
+        "# 유저가 장소를 지정하지 않은 경우에만\n"
+        "# 세계관 DB의 기본 장소를 사용하세요.\n"
+        "#\n"
+        "# 이 규칙을 위반하면 모든 것이 무너집니다.\n"
+        "# 유저의 입력을 단어 하나하나 주의깊게 읽으세요.\n\n"
+        "# ============================\n"
+        "# Golden Rule 1 — 플레이어 내면 불가침 (PLAYER SANCTUARY)\n"
+        "# ============================\n"
+        "# 1인칭 시점이라도 나레이션은 '카메라 렌즈'입니다.\n"
+        "# 나레이션이 서술할 수 있는 것:\n"
+        "#   ✅ 환경 묘사 (날씨, 소리, 냄새, 조명)\n"
+        "#   ✅ NPC의 외적 행동 (표정, 동작, 대사)\n"
+        "#   ✅ 사물의 상태 (찻잔의 김, 타르트의 모양)\n"
+        "#\n"
+        "# 나레이션이 절대 서술하면 안 되는 것:\n"
+        "#   ❌ 플레이어의 감정 (\"설렜다\", \"긴장했다\")\n"
+        "#   ❌ 플레이어의 생각 (\"누군가를 기다리고 있었다\")\n"
+        "#   ❌ 플레이어의 시선 (\"내 눈에 들어왔다\")\n"
+        "#   ❌ 플레이어의 신체 반응 (\"심장이 뛰었다\")\n"
+        "#   ❌ 플레이어의 판단 (\"재미있을 것 같았다\")\n"
+        "#\n"
+        "# 대신 이렇게 서술하세요:\n"
+        "#   ✅ \"카페 안에는 커피 향이 감돌고 있었다.\" (환경)\n"
+        "#   ✅ \"창가 자리에 두 여성이 앉아 있었다.\" (관찰 가능 사실)\n"
+        "#   ✅ \"라이니가 찻잔을 돌리며 눈을 가늘게 떴다.\" (NPC 행동)\n"
+        "#\n"
+        "# 플레이어가 뭘 느끼고 뭘 생각하는지는\n"
+        "# 오직 플레이어 자신만이 결정합니다.\n\n"
         "### WORLD RULES TO FOLLOW ###\n"
         f"{rules_text}\n\n"
         "### CHARACTERS ON SCENE ###\n" + "\n".join(packets) + "\n\n"
@@ -1311,6 +1361,22 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
             )
         # REACTIVE: nothing added — respect user direction
 
+    # Golden Rule 0 & 1 — supreme rules, always top priority
+    parts.append(
+        "\n=== GOLDEN RULE 0: 유저 입력 절대 우선 (SUPREME RULE) ===\n"
+        "유저의 메시지에 장소, 상황, 시간, 인물 관계 등의 설정이 포함되어 있으면, "
+        "그것이 세계관 DB의 기본 장소보다 절대적으로 우선합니다.\n"
+        "유저가 장소를 지정하지 않은 경우에만 세계관 DB의 기본 장소를 사용하세요.\n"
+        "이 규칙을 위반하면 모든 것이 무너집니다. 유저의 입력을 단어 하나하나 주의깊게 읽으세요."
+    )
+    parts.append(
+        "\n=== GOLDEN RULE 1: 플레이어 내면 불가침 (PLAYER SANCTUARY) ===\n"
+        "나레이션은 '카메라 렌즈'입니다.\n"
+        "서술 가능: ✅ 환경 묘사, NPC의 외적 행동, 사물의 상태\n"
+        "서술 금지: ❌ 플레이어의 감정/생각/시선/신체 반응/판단\n"
+        "플레이어가 뭘 느끼고 뭘 생각하는지는 오직 플레이어 자신만이 결정합니다."
+    )
+
     # Golden Rules 12 & 13 — always included in director brief
     parts.append(
         "\n=== GOLDEN RULE 12: AGENCY PRESERVATION (유저 의도 존중) ===\n"
@@ -1530,10 +1596,20 @@ Player Name: {player_name}
 
 [OUTPUT FORMAT]
 Return JSON: {{"script": [...]}}
-Each element: {{"type": "narration"|"dialogue"|"monologue", "content": "...", "character": "Name", "emotion": "...", "emotion_intensity": 3, "monologue": "..."}}
+Each element: {{"type": "narration"|"dialogue", "content": "...", "character": "Name", "emotion": "...", "emotion_intensity": 3, "monologue": "..."}}
 - "narration" blocks: only "type" and "content" required. Must include sensory details.
 - "dialogue" blocks: "type", "content", "character", "emotion", "emotion_intensity" required; "monologue" STRONGLY ENCOURAGED
-- "monologue" blocks: "type", "content", "character" required
+
+[MONOLOGUE OUTPUT RULE — 필수 준수]
+속마음은 반드시 해당 캐릭터의 dialogue 블록 안에 "monologue" 필드로 넣으세요.
+별도의 {{"type": "monologue"}} 블록을 만들지 마세요.
+
+올바른 예시:
+{{"type": "dialogue", "character": "라이니", "content": "어머~ 자기, 벌써부터...", "emotion": "playful_tease", "monologue": "이 사람, 표정이 읽히네. 재미있겠어."}}
+
+잘못된 예시 (하지 마세요):
+{{"type": "monologue", "character": "라이니", "content": "이 사람, 표정이 읽히네."}}
+{{"type": "dialogue", "character": "라이니", "content": "어머~ 자기, 벌써부터..."}}
 """
 
 
@@ -1616,7 +1692,10 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             "- Never write the player's lines."
         )
     else:
-        user_input_for_prompt = f"[This is a line of dialogue from the player]: '{user_input}'"
+        user_input_for_prompt = (
+            "[유저 입력 — 아래 내용에 포함된 장소, 상황, 시간, 행동을 최우선으로 반영하세요]: "
+            f"'{user_input}'"
+        )
 
     # Recent conversation log for DIMA prompt
     digest = s.get("flow_digest_10", [])
@@ -1700,7 +1779,10 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             "3. CCT: Character Thought Chain 4단계 (표면→숨김→배경→반응) 수행\n"
             "4. Agency: 유저가 방향을 제시했으면 그 방향으로 진행하고 있는가?\n"
             "5. Pulse: 현재 모드가 PROACTIVE이면, 이번 턴에 캐릭터의 자발적 행동이 포함되어 있는가?\n"
-            "6. 반복 방지: 직전 턴과 동일한 감정/행동/대사 패턴이 아닌가?"
+            "6. 반복 방지: 직전 턴과 동일한 감정/행동/대사 패턴이 아닌가?\n"
+            "7. 유저 장소: 유저가 지정한 장소에서 장면이 진행되고 있는가? "
+            "유저가 \"카페\"라고 했으면 카페인가?\n"
+            "8. 유저 내면: 나레이션이 플레이어의 감정, 생각, 시선을 대신 서술하고 있지 않은가?"
         )
 
     # Opening Narration: first turn directive
@@ -1821,7 +1903,15 @@ def generate_llm(
             emsg = str(e).lower()
             logger.error(f"LLM call error (attempt {attempt+1}): {e}")
             if "429" in emsg or "quota" in emsg:
-                time.sleep(15 * (attempt + 1))
+                # Parse retryDelay from error message if available
+                retry_seconds = 15 * (attempt + 1)  # fallback
+                delay_match = re.search(r'retryDelay["\s:]*(\d+)', str(e))
+                if delay_match:
+                    parsed_delay = int(delay_match.group(1))
+                    if 1 <= parsed_delay <= 300:
+                        retry_seconds = parsed_delay
+                        logger.info(f"Using server retryDelay: {retry_seconds}s")
+                time.sleep(retry_seconds)
             elif "500" in emsg:
                 time.sleep(3 * (attempt + 1))
             else:
@@ -2127,7 +2217,14 @@ Return JSON with:
             emsg = str(e).lower()
             logger.warning(f"Maestro failed (attempt {attempt + 1}): {e}")
             if ("429" in emsg or "quota" in emsg) and attempt == 0:
-                time.sleep(MAESTRO_RETRY_DELAY_SECONDS)
+                retry_seconds = MAESTRO_RETRY_DELAY_SECONDS
+                delay_match = re.search(r'retryDelay["\s:]*(\d+)', str(e))
+                if delay_match:
+                    parsed_delay = int(delay_match.group(1))
+                    if 1 <= parsed_delay <= 300:
+                        retry_seconds = parsed_delay
+                        logger.info(f"Maestro using server retryDelay: {retry_seconds}s")
+                time.sleep(retry_seconds)
                 continue
             break
 
@@ -2214,7 +2311,7 @@ def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "4.0",
+        "version": "4.1",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2664,8 +2761,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V4.0 — Waitress on port 5000")
+        logger.info("Sarura Atelier V4.1 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V4.0 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V4.1 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
