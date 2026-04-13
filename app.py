@@ -117,6 +117,37 @@ ENG_SLUG_MAP = {
     for k, v in CHARACTERS_DB.items()
 }
 
+# ─── Startup: ENG_SLUG_MAP ↔ static/gifs/ validation ────────
+_GIFS_DIR = BASE_DIR / "static" / "gifs"
+
+# Log all character metadata.eng values for cross-reference
+for _char_name, _eng_slug in ENG_SLUG_MAP.items():
+    logger.info(f"Character eng slug: {_char_name} → {_eng_slug}")
+
+if _GIFS_DIR.is_dir():
+    _gif_folders = {p.name for p in _GIFS_DIR.iterdir() if p.is_dir()}
+    _slug_values = set(ENG_SLUG_MAP.values())
+
+    # Slugs in map but missing from gifs folder
+    _missing_folders = _slug_values - _gif_folders
+    for _mf in sorted(_missing_folders):
+        logger.warning(f"ENG_SLUG_MAP slug '{_mf}' has no matching folder in static/gifs/")
+
+    # Folders in gifs but not in slug map
+    _extra_folders = _gif_folders - _slug_values
+    for _ef in sorted(_extra_folders):
+        logger.warning(f"static/gifs/ folder '{_ef}' has no matching ENG_SLUG_MAP entry")
+
+    # Check default.webp in each slug folder
+    for _char_name, _eng_slug in ENG_SLUG_MAP.items():
+        _default_path = _GIFS_DIR / _eng_slug / "default.webp"
+        if not _default_path.exists():
+            logger.warning(
+                f"default.webp missing for '{_char_name}' (expected at {_default_path})"
+            )
+else:
+    logger.warning(f"static/gifs/ directory not found at {_GIFS_DIR}")
+
 # ─── Runtime character cache (lightweight per-turn data) ─────
 _CHAR_RUNTIME_CACHE: Dict[str, dict] = {}
 for _cname, _cdb in CHARACTERS_DB.items():
@@ -1280,6 +1311,21 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
             )
         # REACTIVE: nothing added — respect user direction
 
+    # Golden Rules 12 & 13 — always included in director brief
+    parts.append(
+        "\n=== GOLDEN RULE 12: AGENCY PRESERVATION (유저 의도 존중) ===\n"
+        "- 유저가 명시적으로 행동 방향을 제시한 경우, 캐릭터는 그 방향을 존중하고 풍부하게 반응합니다.\n"
+        "- 캐릭터가 유저의 행동을 무시하거나 무효화하는 것은 금지합니다.\n"
+        "- 유저가 '~하고 싶다', '~로 간다' 등 의지를 표현하면, 세계관 내에서 합리적인 한 그 행동이 실현되어야 합니다.\n"
+        "- 단, 세계관 규칙이나 캐릭터 심리에 의한 자연스러운 저항은 허용됩니다."
+    )
+    parts.append(
+        "\n=== GOLDEN RULE 13: PROACTIVE TRACTION (능동적 견인) ===\n"
+        "- PROACTIVE 모드가 활성화되면, 캐릭터는 자신의 내면 욕구, 스케줄, 숨겨진 사정을 기반으로 자발적 행동을 취합니다.\n"
+        "- 이때 캐릭터의 행동은 Character Thought Chain(표면 욕구→숨겨진 욕구→배경 영향→최종 반응)을 반드시 거쳐야 합니다.\n"
+        "- 견인은 '꼬리표 달린 선택지'가 아니라, 캐릭터가 살아있기 때문에 자연스럽게 일어나는 행동이어야 합니다."
+    )
+
     return "\n".join(parts)
 
 
@@ -2146,6 +2192,23 @@ Return JSON with:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
+def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
+    """Build pulse payload dict for frontend from pulse analysis result."""
+    pulse_payload: dict = {"mode": (pulse_result or {}).get("mode", "REACTIVE")}
+    if pulse_result and pulse_result.get("mode") in ("PROACTIVE", "NUDGE"):
+        on_screen = s.get("on_screen", [])
+        player_name = s.get("player_name", "사용자")
+        npc_names = [n for n in on_screen if n != player_name]
+        first_npc = npc_names[0] if npc_names else "캐릭터"
+        second_npc = npc_names[1] if len(npc_names) > 1 else first_npc
+        pulse_payload["suggestions"] = [
+            f"{first_npc}와(과) 함께 다른 장소로 이동해보기",
+            f"{second_npc}에게 오늘 기분이 어떤지 물어보기",
+            "혼자만의 시간을 갖기 위해 잠시 자리를 비우기",
+        ]
+    return pulse_payload
+
+
 # Part K: Health endpoint
 @app.route("/health", methods=["GET"])
 def health():
@@ -2202,6 +2265,7 @@ def bootstrap():
     seed_text = (data.get("seed_text") or "").strip() or "[PLAYER_PAUSE]"
 
     # Generate first turn
+    _pulse = None
     try:
         final_script, _pulse = run_dima_turn(s, seed_text)
     except Exception as e:
@@ -2233,7 +2297,8 @@ def bootstrap():
     save_session(s)
 
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
-            "personal_colors": PERSONAL_COLORS}
+            "personal_colors": PERSONAL_COLORS,
+            "pulse": _build_pulse_payload(_pulse, s)}
     return jsonify(resp)
 
 
@@ -2315,23 +2380,9 @@ def execute_turn():
         s["traffic_light"] = "GREEN"
         save_session(s)
 
-    # Build pulse suggestions for frontend
-    pulse_payload = {"mode": pulse_result.get("mode", "REACTIVE")}
-    if pulse_result.get("mode") in ("PROACTIVE", "NUDGE"):
-        on_screen = s.get("on_screen", [])
-        player_name = s.get("player_name", "사용자")
-        npc_names = [n for n in on_screen if n != player_name]
-        first_npc = npc_names[0] if npc_names else "캐릭터"
-        second_npc = npc_names[1] if len(npc_names) > 1 else first_npc
-        pulse_payload["suggestions"] = [
-            f"{first_npc}와(과) 함께 다른 장소로 이동해보기",
-            f"{second_npc}에게 오늘 기분이 어떤지 물어보기",
-            "혼자만의 시간을 갖기 위해 잠시 자리를 비우기",
-        ]
-
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
-            "pulse": pulse_payload}
+            "pulse": _build_pulse_payload(pulse_result, s)}
     return jsonify(resp)
 
 
