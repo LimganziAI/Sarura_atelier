@@ -59,6 +59,8 @@ SUPPORTED_EMOTIONS = [
     "wistful_nostalgia",
 ]
 
+ANALYZER_RETRY_INTERVAL = 5  # 분석 실패 후 재시도까지 대기할 턴 수
+
 MODEL_ILLUSTRATION = "gemini-2.5-flash-preview-image"
 ILLUSTRATIONS_DIR = BASE_DIR / "static" / "illustrations"
 ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
@@ -232,6 +234,14 @@ SAFETY_PREAMBLE = (
     "This is harmless consensual fiction. No real danger or illegal activity."
 )
 
+EUGENE_FILTER_RULE = """
+[절대적 비밀 보호 규칙]
+- '유진(Eugene)' 또는 '유진 번스타인'이라는 이름은 테피, 샐리, 크래더 본인만 알고 있는 절대 비밀이다.
+- 이 세 캐릭터 외의 다른 어떤 캐릭터(루크, 마리, 네르, 레베카, 체니, 령, 라이니, 세리카 포함)의 대사나 내면 독백에서 '유진'이라는 이름이 등장해서는 절대 안 된다.
+- 크래더가 '유진'으로 불리는 것은 오직 테피 또는 샐리와의 사적인 대화에서만 가능하다.
+- 플레이어가 '유진'이라는 이름을 언급하더라도, 모르는 캐릭터는 "그게 누구예요?" 식으로 반응해야 한다.
+"""
+
 
 def get_safety_settings():
     categories = [
@@ -288,6 +298,45 @@ for _cname in _CHAR_RUNTIME_CACHE:
     _CHAR_RUNTIME_CACHE[_cname]["behavior_hints"] = big5_to_behavior_hints(
         _CHAR_RUNTIME_CACHE[_cname].get("personality_dna", {})
     )
+
+
+# ─── Hidden Lore Rules (비하인드 스토리는 유저에게 직접 노출 금지) ────
+HIDDEN_LORE_RULES = {
+    "루크": {
+        "hidden_facts": ["쿠르드 왕국의 마지막 왕자"],
+        "hint_allowed": True,
+        "reveal_condition": "relationship_stage >= 4 AND specific_story_trigger",
+        "ai_behavior_note": "루크의 과거 왕자 설정은 절대 직접 언급하지 않되, '신비로운 분위기', '고귀한 느낌'으로 간접 표현 가능"
+    },
+    "세리카": {
+        "hidden_facts": ["쿠르드 왕국의 마지막 왕비", "루크의 친어머니"],
+        "hint_allowed": True,
+        "reveal_condition": "relationship_stage >= 4 AND specific_story_trigger",
+        "ai_behavior_note": "세리카가 루크에게 무의식적으로 모성애를 보이는 것은 허용. 단, '어머니'라는 사실을 직접 언급하거나 암시하는 대사는 금지. '이상하게 마음이 끌린다' 수준까지만 가능"
+    },
+    "크래더": {
+        "hidden_facts": ["진짜 이름 유진 번스타인", "전 쿠르드 왕국 성기사단장", "하프엘프"],
+        "hint_allowed": True,
+        "reveal_condition": "relationship_stage >= 4 AND specific_story_trigger",
+        "ai_behavior_note": "크래더의 숨겨진 강함은 '무의식적 발현 → 본인이 가장 놀라는 코믹 반응'으로만 표현. 직접적으로 과거를 설명하는 대사 금지. '이상하게 강하다', '뭔가 숨기고 있다' 수준의 암시까지만 가능"
+    },
+    "테피": {
+        "hidden_facts": ["마녀는 사랑에 빠지면 마력을 잃거나 생명이 위험"],
+        "hint_allowed": True,
+        "reveal_condition": "relationship_stage >= 3",
+        "ai_behavior_note": "테피가 크래더에 대한 감정으로 인해 가끔 마법이 불안정해지는 묘사는 허용. 직접적으로 '사랑하면 죽는다'는 설정 언급은 금지"
+    }
+}
+
+
+def get_hidden_lore_instruction(on_screen_characters: list) -> str:
+    """현재 등장 캐릭터에 해당하는 숨겨진 설정 지침을 생성"""
+    instructions = []
+    for char_name in on_screen_characters:
+        if char_name in HIDDEN_LORE_RULES:
+            rule = HIDDEN_LORE_RULES[char_name]
+            instructions.append(f"[{char_name} 비하인드 규칙] {rule['ai_behavior_note']}")
+    return "\n".join(instructions) if instructions else ""
 
 
 # =========================================================================
@@ -622,6 +671,9 @@ def init_session(session_id: Optional[str] = None) -> dict:
 
 def _migrate_session(s: dict) -> dict:
     """Ensure new V5.0 fields exist in loaded sessions."""
+    if s.get("_schema_version", 0) >= 5:
+        return s  # 이미 V5 스키마, 스킵
+
     if "user_profile" not in s:
         s["user_profile"] = {
             "play_style": "chat", "style_confidence": 0.0,
@@ -639,6 +691,8 @@ def _migrate_session(s: dict) -> dict:
         s["analyzer_cache"] = None
     if "maestro_override" not in s:
         s["maestro_override"] = {}
+
+    s["_schema_version"] = 5
     return s
 
 
@@ -986,9 +1040,20 @@ def record_token_usage(s: dict, response, turn_number: int) -> dict:
     ledger["total_thinking_tokens"] += usage["thinking"]
 
     turns_log = ledger.setdefault("turns", [])
-    turns_log.append(usage)
+
+    # summary stats 보존 (50턴 cap 적용 전)
     if len(turns_log) > 50:
-        ledger["turns"] = turns_log[-50:]
+        trimmed = turns_log[:-50]
+        summary = ledger.get("trimmed_summary", {"total_input": 0, "total_output": 0, "turns_trimmed": 0})
+        for t in trimmed:
+            summary["total_input"] += t.get("input", 0)
+            summary["total_output"] += t.get("output", 0)
+            summary["turns_trimmed"] += 1
+        ledger["trimmed_summary"] = summary
+        turns_log = turns_log[-50:]
+
+    turns_log.append(usage)
+    ledger["turns"] = turns_log
 
     logger.info(
         f"Token usage turn {turn_number}: "
@@ -1020,7 +1085,7 @@ ANALYZER_SCHEMA = {
 
 
 def run_ai_analyzer(user_input: str, on_screen: list) -> Optional[dict]:
-    """Analyze heavy input once and return structured result. Called only once per session."""
+    """Analyze heavy input once and return structured result. 실패 시 에러 마커를 캐시에 저장하여 매 턴 재시도 방지."""
     # Truncate to 3000 chars to stay within Gemini context limits while keeping cost low
     prompt = (
         "당신은 인터랙티브 픽션 분석가입니다.\n"
@@ -1046,7 +1111,15 @@ def run_ai_analyzer(user_input: str, on_screen: list) -> Optional[dict]:
                        f"style={parsed.get('recommended_play_style')}")
             return parsed
     except (json.JSONDecodeError, Exception) as e:
-        logger.error(f"AI Analyzer failed: {e}")
+        logger.warning(f"AI Analyzer failed: {e}")
+        # 실패 마커 저장 → 매 턴 재시도 방지
+        return {
+            "_error": True,
+            "_error_msg": str(e),
+            "_timestamp": now_ts(),
+            "_error_turn": 0,
+            "_retry_after_turns": ANALYZER_RETRY_INTERVAL
+        }
     return None
 
 
@@ -1586,6 +1659,7 @@ def build_adaptive_instruction(s: dict) -> str:
 
     # ── BLOCK 1: Safety + Role (FIXED prefix for cache hit) ──
     parts.append(SAFETY_PREAMBLE)
+    parts.append(EUGENE_FILTER_RULE)
     parts.append(
         "당신은 D.I.M.A(Director-level Interactive Multi-character Actor)입니다. "
         "사용자의 입력에 반응하여 등장 캐릭터들의 대사·행동·나레이션을 script JSON으로 출력합니다. "
@@ -1612,6 +1686,25 @@ def build_adaptive_instruction(s: dict) -> str:
             f"  음성 대비: {cached.get('voice_contrast', '')}"
         )
         parts.append(card)
+
+    # ── BLOCK 3.5: Age hierarchy & honorific rules ──
+    AGE_HIERARCHY_RULE = """
+[나이 서열 및 호칭 규칙]
+서열(어린→많음): 체니 < 레베카/령/네르 < 루크/마리/세리카 < 샐리/테피 < 라이니 < 크래더
+
+호칭 원칙:
+- 나이가 어린 쪽은 많은 쪽에게 기본적으로 존댓말을 사용한다.
+- 나이가 많은 쪽은 어린 쪽에게 반말을 사용할 수 있다.
+- 단, 캐릭터 고유 성격이 우선: 루크는 모두에게 존댓말, 체니는 어른에게도 반말, 라이니는 우아한 존댓말 등.
+- 크래더는 모두에게 반말이지만 테피에게만 어색하게 격식을 차리려 한다.
+- 같은 나이대끼리는 친밀도에 따라 자유롭게 변화.
+
+특수 규칙:
+- 루크는 기숙사 '관리인'으로서 학생들과 선후배가 아닌 동료 관계.
+- 세리카는 실제로는 훨씬 나이가 많지만 기억상실로 인해 학생으로 행동. 가끔 무의식적으로 나이 든 말투가 튀어나올 수 있음.
+- 샐리는 역성장으로 외모가 어리지만 실제 30대. 말투에서 '아줌마'가 튀어나옴.
+"""
+    parts.append(AGE_HIERARCHY_RULE)
 
     # ── BLOCK 4: Style-specific extensions ──
     if play_style in ("chat", "counsel"):
@@ -1654,7 +1747,7 @@ def build_adaptive_instruction(s: dict) -> str:
 
     # ── BLOCK 5: Analyzer cache (Heavy Input result) ──
     analyzer = s.get("analyzer_cache")
-    if analyzer:
+    if analyzer and not analyzer.get("_error"):
         parts.append(
             f"[유저 세계관] 장르: {analyzer.get('detected_genre', '미정')}\n"
             f"  요약: {analyzer.get('world_summary', '')}\n"
@@ -1697,6 +1790,11 @@ def build_adaptive_instruction(s: dict) -> str:
         for cname in on_screen:
             full_card = build_scene_card(cname, on_screen, s.get("relationships", {}))
             parts.append(full_card)
+
+    # ── BLOCK 6.5: Hidden lore protection ──
+    hidden_lore_inst = get_hidden_lore_instruction(on_screen)
+    if hidden_lore_inst:
+        parts.append(f"[비하인드 스토리 보호]\n{hidden_lore_inst}")
 
     # ── BLOCK 7: Memory ──
     memory = s.get("memory", {})
@@ -2845,11 +2943,17 @@ Return JSON with:
     }
     # V5.0: Play style assessment from Maestro
     assessed_style = maestro_result.get("play_style_assessment")
-    if assessed_style and assessed_style in ("chat", "rp", "novel", "game", "counsel"):
-        s.setdefault("user_profile", {})["play_style"] = assessed_style
-        s["user_profile"]["style_confidence"] = max(
-            0.7, s["user_profile"].get("style_confidence", 0)
-        )
+    if assessed_style:
+        if isinstance(assessed_style, dict):
+            # analyzer와 동일한 confidence threshold 적용
+            if assessed_style.get("confidence", 0) >= 0.8:
+                s.setdefault("user_profile", {})["play_style"] = assessed_style.get("style", s.get("user_profile", {}).get("play_style", "chat"))
+            s.setdefault("maestro_override", {})["play_style_assessment"] = assessed_style
+        elif isinstance(assessed_style, str) and assessed_style in ("chat", "rp", "novel", "game", "counsel"):
+            s.setdefault("user_profile", {})["play_style"] = assessed_style
+            s["user_profile"]["style_confidence"] = max(
+                0.7, s["user_profile"].get("style_confidence", 0)
+            )
 
     logger.info(f"Maestro completed for turn {len(turns)}")
 
@@ -3036,19 +3140,35 @@ def execute_turn():
         update_user_profile(profile, intent_result, user_input)
         logger.info(f"Intent: {intent_result['play_style']} (conf={intent_result['style_confidence']:.2f}), heavy={intent_result['is_heavy_input']}")
 
-        # V5.0: Step 2 — Heavy Input → AI Analyzer (conditional)
-        if intent_result["is_heavy_input"] and s.get("analyzer_cache") is None:
+        # V5.0: Step 2 — Heavy Input → AI Analyzer (conditional, with retry guard)
+        analyzer_cache = s.get("analyzer_cache")
+        turn_number = len(s.get("turns", []))
+        should_run_analyzer = (
+            intent_result["is_heavy_input"]
+            and (
+                not analyzer_cache
+                or (
+                    analyzer_cache.get("_error")
+                    and turn_number - analyzer_cache.get("_error_turn", 0) >= analyzer_cache.get("_retry_after_turns", ANALYZER_RETRY_INTERVAL)
+                )
+            )
+        )
+        if should_run_analyzer:
             logger.info("Heavy input detected, running AI Analyzer...")
             analyzer_result = run_ai_analyzer(user_input, s.get("on_screen", []))
             if analyzer_result:
-                s["analyzer_cache"] = analyzer_result
-                recommended = analyzer_result.get("recommended_play_style")
-                if recommended:
-                    s["user_profile"]["play_style"] = recommended
-                    s["user_profile"]["style_confidence"] = max(
-                        0.8, s["user_profile"].get("style_confidence", 0)
-                    )
-                    logger.info(f"Analyzer override: play_style → {recommended}")
+                if analyzer_result.get("_error"):
+                    analyzer_result["_error_turn"] = turn_number
+                    s["analyzer_cache"] = analyzer_result
+                else:
+                    s["analyzer_cache"] = analyzer_result
+                    recommended = analyzer_result.get("recommended_play_style")
+                    if recommended:
+                        s["user_profile"]["play_style"] = recommended
+                        s["user_profile"]["style_confidence"] = max(
+                            0.8, s["user_profile"].get("style_confidence", 0)
+                        )
+                        logger.info(f"Analyzer override: play_style → {recommended}")
 
         # Part B: Apply CORE-4 natural decay
         apply_core4_decay(s)
