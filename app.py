@@ -59,6 +59,8 @@ SUPPORTED_EMOTIONS = [
     "wistful_nostalgia",
 ]
 
+ANALYZER_RETRY_INTERVAL = 5  # 분석 실패 후 재시도까지 대기할 턴 수
+
 MODEL_ILLUSTRATION = "gemini-2.5-flash-preview-image"
 ILLUSTRATIONS_DIR = BASE_DIR / "static" / "illustrations"
 ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
@@ -1040,15 +1042,15 @@ def record_token_usage(s: dict, response, turn_number: int) -> dict:
     turns_log = ledger.setdefault("turns", [])
 
     # summary stats 보존 (50턴 cap 적용 전)
-    if len(turns_log) >= 50:
-        trimmed = turns_log[:len(turns_log) - 49]
+    if len(turns_log) > 50:
+        trimmed = turns_log[:-50]
         summary = ledger.get("trimmed_summary", {"total_input": 0, "total_output": 0, "turns_trimmed": 0})
         for t in trimmed:
             summary["total_input"] += t.get("input", 0)
             summary["total_output"] += t.get("output", 0)
             summary["turns_trimmed"] += 1
         ledger["trimmed_summary"] = summary
-        turns_log = turns_log[-(49):]  # 최근 49개 유지 + 새 1개 = 50개
+        turns_log = turns_log[-50:]
 
     turns_log.append(usage)
     ledger["turns"] = turns_log
@@ -1115,7 +1117,8 @@ def run_ai_analyzer(user_input: str, on_screen: list) -> Optional[dict]:
             "_error": True,
             "_error_msg": str(e),
             "_timestamp": now_ts(),
-            "_retry_after_turns": 5
+            "_error_turn": 0,
+            "_retry_after_turns": ANALYZER_RETRY_INTERVAL
         }
     return None
 
@@ -3146,7 +3149,7 @@ def execute_turn():
                 not analyzer_cache
                 or (
                     analyzer_cache.get("_error")
-                    and turn_number - analyzer_cache.get("_error_turn", 0) >= analyzer_cache.get("_retry_after_turns", 5)
+                    and turn_number - analyzer_cache.get("_error_turn", 0) >= analyzer_cache.get("_retry_after_turns", ANALYZER_RETRY_INTERVAL)
                 )
             )
         )
