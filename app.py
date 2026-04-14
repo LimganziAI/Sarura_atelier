@@ -61,6 +61,11 @@ SUPPORTED_EMOTIONS = [
 
 ANALYZER_RETRY_INTERVAL = 5  # 분석 실패 후 재시도까지 대기할 턴 수
 
+# Event seed injection guards
+EVENT_SEED_MIN_TURNS = 15        # 이벤트 시드 주입에 필요한 최소 턴 수
+EVENT_SEED_LOCATION = "기숙사"   # 이벤트 시드가 발동 가능한 장소 키워드
+MAX_ACTION_SUMMARY_LENGTH = 80   # 장면 연속성 블록의 행동 요약 최대 길이
+
 MODEL_ILLUSTRATION = "gemini-2.5-flash-preview-image"
 ILLUSTRATIONS_DIR = BASE_DIR / "static" / "illustrations"
 ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
@@ -2059,8 +2064,8 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
 
         # Event seeds only inject when: player is at a relevant location (기숙사)
         # AND at least 15 turns have passed. Only as hints, not forced events.
-        _event_location_eligible = "기숙사" in current_location
-        _event_turn_eligible = tc >= 15
+        _event_location_eligible = EVENT_SEED_LOCATION in current_location
+        _event_turn_eligible = tc >= EVENT_SEED_MIN_TURNS
 
         if pulse_mode == "PROACTIVE" and _event_location_eligible and _event_turn_eligible:
             seed = select_relevant_event_seed(on_screen, WORLD_DB)
@@ -2453,7 +2458,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         last_scripts = last_turn.get("script", [])
         for b in reversed(last_scripts):
             if b.get("content"):
-                last_action_summary = b["content"][:80]
+                last_action_summary = b["content"][:MAX_ACTION_SUMMARY_LENGTH]
                 break
 
     scene_continuity_block = (
