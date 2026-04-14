@@ -427,7 +427,7 @@
       function updatePortrait(character, emotion) {
         const eng = nameToEng[character] || String(character || '').toLowerCase();
         const DEFAULT_IMG = 'https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier';
-        const file = emotionToWebpFile(emotion || 'subtle smile');
+        const file = emotionToWebpFile(emotion || 'default');
         const src = eng ? `/static/gifs/${eng}/${file}` : DEFAULT_IMG;
         el.portraitImg.style.opacity = '0.6';
         el.portraitImg.onerror = () => {
@@ -450,26 +450,37 @@
       }
 
       const EMOTION_ALIASES = {
-        'amusement':'playful teasing','interest':'curiosity','surprise':'curiosity',
-        'happiness':'ecstatic joy','anger':'explosive anger',
-        'sadness':'welling sorrow','love':'warm affection','smile':'subtle smile',
-        '경멸':'cold disdain','즐거움':'ecstatic joy','기대':'curiosity','당황':'shyness',
-        '부끄러움':'shyness','웃음':'subtle smile','미소':'subtle smile','분노':'explosive anger',
-        '슬픔':'welling sorrow','사랑':'warm affection','흥미':'curiosity','재미':'playful teasing',
-        '기쁨':'ecstatic joy','긴장':'nervous tension','의심':'skeptical doubt','무표정':'neutral','평온':'calm serenity'
+        'amusement':'playful_tease','interest':'surprise','curiosity':'surprise',
+        'happiness':'joy','ecstatic joy':'joy','ecstatic_joy':'joy',
+        'explosive anger':'anger','explosive_anger':'anger',
+        'welling sorrow':'sadness','welling_sorrow':'sadness',
+        'warm affection':'gentle_affection','warm_affection':'gentle_affection',
+        'love':'gentle_affection','smile':'default','subtle smile':'default','subtle_smile':'default',
+        'shyness':'shy_embarrassment','embarrassment':'shy_embarrassment',
+        'playful teasing':'playful_tease','playful_teasing':'playful_tease',
+        'nervous tension':'nervous_tension',
+        'calm serenity':'default','calm_serenity':'default',
+        'cold disdain':'anger','cold_disdain':'anger',
+        'confident assertion':'protective_resolve','confident_assertion':'protective_resolve',
+        'skeptical doubt':'surprise','skeptical_doubt':'surprise',
+        'neutral':'default',
+        '경멸':'anger','즐거움':'joy','기대':'surprise','당황':'shy_embarrassment',
+        '부끄러움':'shy_embarrassment','웃음':'default','미소':'default','분노':'anger',
+        '슬픔':'sadness','사랑':'gentle_affection','흥미':'surprise','재미':'playful_tease',
+        '기쁨':'joy','긴장':'nervous_tension','의심':'surprise','무표정':'default','평온':'default'
       };
-      const EMOTION_FILE_OVERRIDES = { 'confident assertion':'Confident assertion', 'neutral':'Subtle Smile' };
+      const SUPPORTED_EMOTIONS = [
+        'default','joy','sadness','anger','surprise',
+        'shy_embarrassment','gentle_affection','playful_tease',
+        'nervous_tension','quiet_melancholy','protective_resolve',
+        'wistful_nostalgia'
+      ];
       function emotionToWebpFile(emotion) {
-        const raw = normalizeEmotion(emotion) || 'subtle smile';
+        const raw = normalizeEmotion(emotion) || 'default';
         const canonical = EMOTION_ALIASES[raw] || raw;
-        const override = EMOTION_FILE_OVERRIDES[canonical];
-        if (override) return override + '.webp';
-        // 언더스코어를 공백으로 변환 후 Title Case
-        const base = canonical.replace(/_/g, ' ')
-          .split(' ')
-          .map(s => s.charAt(0).toUpperCase() + s.slice(1))
-          .join(' ');
-        return base + '.webp';
+        // If canonical is a supported emotion, use it directly as filename
+        const filename = SUPPORTED_EMOTIONS.includes(canonical) ? canonical : 'default';
+        return filename + '.webp';
       }
       function cleanEmotionTagFromText(text) {
         const str = String(text || '');
@@ -967,6 +978,81 @@
             openNovelModal();
           });
           document.querySelector('.top-bar .buttons')?.appendChild(novelBtn);
+        }
+
+        // Add gallery button to top bar
+        if (!$('gallery-btn')) {
+          const galleryBtn = document.createElement('button');
+          galleryBtn.id = 'gallery-btn';
+          galleryBtn.className = 'icon-btn';
+          galleryBtn.textContent = '🖼️';
+          galleryBtn.title = '갤러리';
+          galleryBtn.addEventListener('click', () => {
+            if (!isBootstrapped) return alert('먼저 이야기를 시작하세요.');
+            openGalleryModal();
+          });
+          document.querySelector('.top-bar .buttons')?.appendChild(galleryBtn);
+        }
+
+        // --- Gallery Modal System ---
+        function openGalleryModal() {
+          document.getElementById('gallery-modal')?.remove();
+
+          const overlay = document.createElement('div');
+          overlay.id = 'gallery-modal';
+          overlay.className = 'modal-overlay';
+
+          const modalContent = document.createElement('div');
+          modalContent.className = 'modal-content';
+          modalContent.style.cssText = 'max-width:650px;width:95%;max-height:85vh;display:flex;flex-direction:column;';
+
+          const header = document.createElement('div');
+          header.className = 'modal-header';
+          const h2 = document.createElement('h2');
+          h2.textContent = '삽화 갤러리';
+          const closeBtn = document.createElement('button');
+          closeBtn.className = 'modal-close-btn';
+          closeBtn.textContent = '×';
+          closeBtn.addEventListener('click', () => overlay.remove());
+          header.appendChild(h2);
+          header.appendChild(closeBtn);
+
+          const body = document.createElement('div');
+          body.style.cssText = 'flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;';
+          body.innerHTML = '<div class="small" style="grid-column:1/-1;text-align:center;padding:24px;">불러오는 중...</div>';
+
+          modalContent.appendChild(header);
+          modalContent.appendChild(body);
+          overlay.appendChild(modalContent);
+          document.body.appendChild(overlay);
+
+          GET('/gallery').then(res => {
+            body.innerHTML = '';
+            const images = (res && res.images) || [];
+            if (!images.length) {
+              body.innerHTML = '<div class="small" style="grid-column:1/-1;text-align:center;padding:24px;color:var(--text-medium);">아직 생성된 삽화가 없습니다.</div>';
+              return;
+            }
+            images.forEach(url => {
+              const img = document.createElement('img');
+              img.src = url;
+              img.alt = '삽화';
+              img.style.cssText = 'width:100%;border-radius:8px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+              img.addEventListener('click', () => {
+                const full = document.createElement('div');
+                full.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:2000;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+                const bigImg = document.createElement('img');
+                bigImg.src = url;
+                bigImg.style.cssText = 'max-width:95%;max-height:95%;border-radius:8px;';
+                full.appendChild(bigImg);
+                full.addEventListener('click', () => full.remove());
+                document.body.appendChild(full);
+              });
+              body.appendChild(img);
+            });
+          }).catch(() => {
+            body.innerHTML = '<div class="small" style="grid-column:1/-1;text-align:center;padding:24px;color:#999;">갤러리 로드 실패</div>';
+          });
         }
 
         // --- Novel Modal System ---

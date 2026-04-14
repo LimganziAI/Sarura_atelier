@@ -1,5 +1,5 @@
 """
-Sarura Atelier V4.4 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V4.5 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -2461,11 +2461,30 @@ def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "4.4",
+        "version": "V4.5",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
+        "supported_emotions": SUPPORTED_EMOTIONS,
+        "illustration_model": MODEL_ILLUSTRATION,
     })
+
+
+@app.route("/gallery", methods=["GET"])
+def gallery():
+    """Return list of illustration URLs for the current session."""
+    sid = session.get("session_id")
+    if not sid:
+        return jsonify({"status": "ok", "images": []})
+    session_illust_dir = ILLUSTRATIONS_DIR / _sanitize_sid(sid)
+    if not session_illust_dir.is_dir():
+        return jsonify({"status": "ok", "images": []})
+    images = sorted(
+        f"/static/illustrations/{_sanitize_sid(sid)}/{f.name}"
+        for f in session_illust_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+    )
+    return jsonify({"status": "ok", "images": images})
 
 
 @app.route("/")
@@ -3022,8 +3041,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V4.4 — Waitress on port 5000")
+        logger.info("Sarura Atelier V4.5 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V4.4 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V4.5 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
