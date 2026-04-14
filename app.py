@@ -879,7 +879,7 @@ def apply_core4_decay(s: dict):
 # V5.0: Stage Manager — Intent Classification (No API call)
 # =========================================================================
 _PAT_RP = re.compile(
-    r'(\*[^*]+\*|「[^」]+」|"[^"]+(?:"|$)|'
+    r'(\*[^*]{1,500}\*|「[^」]{1,500}」|"[^"]{1,500}"|'
     r'\(행동\)|\(표정\)|~다\.|~했다\.|~이다\.)',
     re.MULTILINE
 )
@@ -1021,6 +1021,7 @@ ANALYZER_SCHEMA = {
 
 def run_ai_analyzer(user_input: str, on_screen: list) -> Optional[dict]:
     """Analyze heavy input once and return structured result. Called only once per session."""
+    # Truncate to 3000 chars to stay within Gemini context limits while keeping cost low
     prompt = (
         "당신은 인터랙티브 픽션 분석가입니다.\n"
         "아래 사용자 입력에서 장르, 세계관 요약(200자 이내), 톤 키워드, "
@@ -2958,6 +2959,9 @@ def bootstrap():
     except Exception as e:
         logger.error(f"Bootstrap DIMA error: {e}")
         final_script = safe_local_script(s)
+
+    # V5.0: Record token usage for bootstrap turn
+    record_token_usage(s, _bootstrap_response, 1)
 
     first_turn = {
         "turn_id": 1,
