@@ -424,7 +424,19 @@
       }
 
       // --- Portrait Header (Part I) ---
-      function updatePortrait(character, emotion) {
+      function updatePortrait(character, emotion, illustrationUrl) {
+        if (illustrationUrl) {
+          el.portraitImg.style.opacity = '0.6';
+          el.portraitImg.onerror = () => {
+            el.portraitImg.onerror = null;
+            updatePortrait(character, emotion, null);
+          };
+          el.portraitImg.onload = () => { el.portraitImg.style.opacity = '0.8'; };
+          el.portraitImg.src = illustrationUrl;
+          el.portraitName.textContent = character || '';
+          el.portraitEmotion.textContent = emotion || '';
+          return;
+        }
         const eng = nameToEng[character] || String(character || '').toLowerCase();
         const DEFAULT_IMG = 'https://placehold.co/700x250/1a1a1a/e0e0e0?text=Sarura+Atelier';
         const file = emotionToWebpFile(emotion || 'default');
@@ -467,7 +479,9 @@
         '경멸':'anger','즐거움':'joy','기대':'surprise','당황':'shy_embarrassment',
         '부끄러움':'shy_embarrassment','웃음':'default','미소':'default','분노':'anger',
         '슬픔':'sadness','사랑':'gentle_affection','흥미':'surprise','재미':'playful_tease',
-        '기쁨':'joy','긴장':'nervous_tension','의심':'surprise','무표정':'default','평온':'default'
+        '기쁨':'joy','긴장':'nervous_tension','의심':'surprise','무표정':'default','평온':'default',
+        '잔잔한 애정':'gentle_affection','고요한 우울':'quiet_melancholy','보호 본능':'protective_resolve',
+        '그리움':'wistful_nostalgia','마지못한 다정함':'gentle_affection','씁쓸한 재미':'playful_tease','멍한 침묵':'surprise'
       };
       const SUPPORTED_EMOTIONS = [
         'default','joy','sadness','anger','surprise',
@@ -593,6 +607,12 @@
         POST('/hot-swap', payload).catch(e => console.warn('CORE-4 hot-swap failed:', e));
       }
 
+      let _core4Timer = null;
+      function debouncedCore4Update() {
+        clearTimeout(_core4Timer);
+        _core4Timer = setTimeout(() => sendCore4Update(), 300);
+      }
+
       const addMessageToLog = async (wrapper, type, data) => {
         const msgWrapper = document.createElement('div');
         const msg = document.createElement('div');
@@ -623,7 +643,7 @@
           let emotion = data.emotion ? normalizeEmotion(data.emotion) : null;
           if (!emotion && cleaned.tag) emotion = normalizeEmotion(cleaned.tag);
           if (emotion) emotion = EMOTION_ALIASES[emotion] || emotion;
-          updatePortrait(data.character, emotion);
+          updatePortrait(data.character, emotion, data.illustration_url || null);
           const contentEl = document.createElement('div');
           msg.appendChild(nameEl);
           msg.appendChild(contentEl);
@@ -789,7 +809,15 @@
               mergedBlocks.push(block);
             }
           }
-          for (const b of mergedBlocks) { await addMessageToLog(wrap, b.type, b); }
+          const illustUrl = turn.illustration_url || null;
+          let illustApplied = false;
+          for (const b of mergedBlocks) {
+            if (b.type === 'dialogue' && !illustApplied && illustUrl) {
+              b.illustration_url = illustUrl;
+              illustApplied = true;
+            }
+            await addMessageToLog(wrap, b.type, b);
+          }
 
           // Illustration generation (only for last turn, only if toggle is ON)
           if (STATE?.ui_settings?.illustration && i === turns.length - 1 && turns.length > 0) {
@@ -1270,7 +1298,7 @@
           const slider = $(`core4-${key}`);
           const valEl = $(`core4-${key}-val`);
           if (slider) {
-            slider.addEventListener('input', () => { if(valEl) valEl.textContent = slider.value; });
+            slider.addEventListener('input', () => { if(valEl) valEl.textContent = slider.value; if(isBootstrapped) debouncedCore4Update(); });
             slider.addEventListener('change', () => { if(isBootstrapped) sendCore4Update(); });
           }
         });
