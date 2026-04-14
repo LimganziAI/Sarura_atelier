@@ -2476,11 +2476,12 @@ def gallery():
     sid = session.get("session_id")
     if not sid:
         return jsonify({"status": "ok", "images": []})
-    session_illust_dir = ILLUSTRATIONS_DIR / _sanitize_sid(sid)
+    safe_sid = _sanitize_sid(sid)
+    session_illust_dir = ILLUSTRATIONS_DIR / safe_sid
     if not session_illust_dir.is_dir():
         return jsonify({"status": "ok", "images": []})
     images = sorted(
-        f"/static/illustrations/{_sanitize_sid(sid)}/{f.name}"
+        f"/static/illustrations/{safe_sid}/{f.name}"
         for f in session_illust_dir.iterdir()
         if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
     )
