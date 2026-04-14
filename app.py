@@ -684,7 +684,8 @@ def generate_illustration(
 
         contents = [prompt]
         if reference_slug:
-            ref_path = BASE_DIR / "static" / "gifs" / reference_slug / "default.webp"
+            safe_slug = re.sub(r"[^a-zA-Z0-9_\-]", "", reference_slug)
+            ref_path = BASE_DIR / "static" / "gifs" / safe_slug / "default.webp"
             if ref_path.exists():
                 ref_bytes = ref_path.read_bytes()
                 contents = [
