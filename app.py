@@ -1,5 +1,5 @@
 """
-Sarura Atelier V4.5 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V5.0 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -111,25 +111,28 @@ def call_gemini_with_timeout(model, contents, config, timeout_sec=30):
         return None
 
 def call_gemini_with_fallback(contents, config, timeout_sec=30, max_retries=3):
-    """Try each model in the fallback chain with retries on 503/429."""
+    """Try each model in the fallback chain with exponential backoff + jitter."""
     for model in MODEL_FALLBACK_CHAIN:
         for attempt in range(1, max_retries + 1):
             try:
                 result = call_gemini_with_timeout(model, contents, config, timeout_sec)
                 if result is not None:
                     return result
-                # result is None means timeout — try next attempt
-                logger.warning(f"Model {model} attempt {attempt}/{max_retries}: timeout, retrying...")
-                time.sleep(2)
+                # timeout
+                wait = min(60, (2 ** attempt) + random.uniform(0, 1))
+                logger.warning(f"Model {model} attempt {attempt}/{max_retries}: timeout, wait {wait:.1f}s")
+                time.sleep(wait)
             except Exception as e:
                 err_str = str(e)
-                if "503" in err_str or "UNAVAILABLE" in err_str:
-                    logger.warning(f"Model {model} attempt {attempt}/{max_retries}: 503, retrying...")
-                    time.sleep(2 ** attempt)
-                    continue
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    logger.warning(f"Model {model} attempt {attempt}/{max_retries}: 429, retrying...")
-                    time.sleep(2 ** attempt)
+                    wait = min(60, (2 ** (attempt + 1)) + random.uniform(0, 2))
+                    logger.warning(f"Model {model} attempt {attempt}/{max_retries}: 429 rate limit, wait {wait:.1f}s")
+                    time.sleep(wait)
+                    continue
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    wait = min(30, (2 ** attempt) + random.uniform(0, 1))
+                    logger.warning(f"Model {model} attempt {attempt}/{max_retries}: 503 unavailable, wait {wait:.1f}s")
+                    time.sleep(wait)
                     continue
                 raise
         logger.warning(f"Model {model} exhausted all {max_retries} retries, trying next model...")
@@ -505,7 +508,8 @@ def load_session(sid: str) -> Optional[dict]:
     p = session_path(sid)
     if p.exists():
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
+            s = json.loads(p.read_text(encoding="utf-8"))
+            return _migrate_session(s)
         except Exception:
             return None
     return None
@@ -590,7 +594,51 @@ def init_session(session_id: Optional[str] = None) -> dict:
         },
         # Part C: Relationships (initialized per on_screen)
         "relationships": {},
+        # V5.0: User profile for intent classification
+        "user_profile": {
+            "play_style": "chat",
+            "style_confidence": 0.0,
+            "turn_style_history": [],
+            "heavy_input_count": 0,
+            "avg_input_length": 0,
+            "total_input_chars": 0,
+            "preference_tags": [],
+        },
+        # V5.0: Token usage tracking
+        "token_ledger": {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cached_tokens": 0,
+            "total_thinking_tokens": 0,
+            "turns": [],
+        },
+        # V5.0: AI Analyzer cache (for heavy input)
+        "analyzer_cache": None,
+        # V5.0: Maestro override directives
+        "maestro_override": {},
     }
+    return s
+
+
+def _migrate_session(s: dict) -> dict:
+    """Ensure new V5.0 fields exist in loaded sessions."""
+    if "user_profile" not in s:
+        s["user_profile"] = {
+            "play_style": "chat", "style_confidence": 0.0,
+            "turn_style_history": [], "heavy_input_count": 0,
+            "avg_input_length": 0, "total_input_chars": 0,
+            "preference_tags": [],
+        }
+    if "token_ledger" not in s:
+        s["token_ledger"] = {
+            "total_input_tokens": 0, "total_output_tokens": 0,
+            "total_cached_tokens": 0, "total_thinking_tokens": 0,
+            "turns": [],
+        }
+    if "analyzer_cache" not in s:
+        s["analyzer_cache"] = None
+    if "maestro_override" not in s:
+        s["maestro_override"] = {}
     return s
 
 
@@ -828,6 +876,181 @@ def apply_core4_decay(s: dict):
 
 
 # =========================================================================
+# V5.0: Stage Manager — Intent Classification (No API call)
+# =========================================================================
+_PAT_RP = re.compile(
+    r'(\*[^*]{1,500}\*|「[^」]{1,500}」|"[^"]{1,500}"|'
+    r'\(행동\)|\(표정\)|~다\.|~했다\.|~이다\.)',
+    re.MULTILINE
+)
+_PAT_NOVEL = re.compile(
+    r'(장르|세계관|설정|배경|시놉시스|프롤로그|1장|제\d+장|'
+    r'주인공|빌런|플롯|클라이맥스|엔딩|시나리오)',
+    re.IGNORECASE
+)
+_PAT_GAME = re.compile(
+    r'(스탯|HP|MP|레벨|인벤토리|퀘스트|전투|판정|주사위|'
+    r'TRPG|D&D|다이스|능력치)',
+    re.IGNORECASE
+)
+_PAT_COUNSEL = re.compile(
+    r'(고민|상담|힘들|슬퍼|외로|우울|불안|위로|도움|걱정)',
+    re.IGNORECASE
+)
+_PAT_HEAVY_SETUP = re.compile(
+    r'(세계관|설정|배경|시대|종족|마법체계|국가|역사|'
+    r'캐릭터\s*설정|스토리\s*설정|세계\s*설정)',
+    re.IGNORECASE
+)
+
+
+def classify_user_intent(user_input: str, profile: dict) -> dict:
+    """Python-only intent classification. No API call."""
+    text = user_input.strip()
+    length = len(text)
+
+    scores = {
+        "chat": 1.0,
+        "rp": len(_PAT_RP.findall(text)) * 2.0,
+        "novel": len(_PAT_NOVEL.findall(text)) * 2.5,
+        "game": len(_PAT_GAME.findall(text)) * 3.0,
+        "counsel": len(_PAT_COUNSEL.findall(text)) * 2.0,
+    }
+
+    if length > 500:
+        scores["novel"] += 2.0
+        scores["rp"] += 1.0
+    if length > 1000:
+        scores["novel"] += 3.0
+
+    # 이전 스타일 관성
+    prev_style = profile.get("play_style", "chat")
+    prev_conf = profile.get("style_confidence", 0.0)
+    scores[prev_style] += prev_conf * 2.0
+
+    is_heavy = (length > 300 and _PAT_HEAVY_SETUP.search(text) is not None)
+
+    best = max(scores, key=scores.get)
+    total = sum(scores.values()) or 1.0
+    confidence = scores[best] / total
+
+    return {
+        "play_style": best,
+        "style_confidence": round(confidence, 3),
+        "signals": {k: round(v, 2) for k, v in scores.items()},
+        "is_heavy_input": is_heavy,
+        "input_length": length,
+    }
+
+
+def update_user_profile(profile: dict, intent_result: dict, input_text: str):
+    """Update user_profile with this turn's classification."""
+    profile["play_style"] = intent_result["play_style"]
+    profile["style_confidence"] = intent_result["style_confidence"]
+
+    history = profile.setdefault("turn_style_history", [])
+    history.append(intent_result["play_style"])
+    profile["turn_style_history"] = history[-10:]
+
+    if intent_result["is_heavy_input"]:
+        profile["heavy_input_count"] = profile.get("heavy_input_count", 0) + 1
+
+    total_chars = profile.get("total_input_chars", 0) + len(input_text)
+    total_turns = len(profile["turn_style_history"])
+    profile["total_input_chars"] = total_chars
+    profile["avg_input_length"] = total_chars // max(1, total_turns)
+
+
+# =========================================================================
+# V5.0: Token Metering
+# =========================================================================
+def record_token_usage(s: dict, response, turn_number: int) -> dict:
+    """Extract token usage from Gemini response and record to session."""
+    ledger = s.setdefault("token_ledger", {
+        "total_input_tokens": 0, "total_output_tokens": 0,
+        "total_cached_tokens": 0, "total_thinking_tokens": 0, "turns": [],
+    })
+
+    usage = {"turn": turn_number, "input": 0, "output": 0, "cached": 0, "thinking": 0}
+
+    if response and hasattr(response, 'usage_metadata') and response.usage_metadata:
+        um = response.usage_metadata
+        usage["input"] = getattr(um, 'prompt_token_count', 0) or 0
+        usage["output"] = getattr(um, 'candidates_token_count', 0) or 0
+        usage["cached"] = getattr(um, 'cached_content_token_count', 0) or 0
+        usage["thinking"] = getattr(um, 'thoughts_token_count', 0) or 0
+
+    ledger["total_input_tokens"] += usage["input"]
+    ledger["total_output_tokens"] += usage["output"]
+    ledger["total_cached_tokens"] += usage["cached"]
+    ledger["total_thinking_tokens"] += usage["thinking"]
+
+    turns_log = ledger.setdefault("turns", [])
+    turns_log.append(usage)
+    if len(turns_log) > 50:
+        ledger["turns"] = turns_log[-50:]
+
+    logger.info(
+        f"Token usage turn {turn_number}: "
+        f"in={usage['input']} out={usage['output']} "
+        f"cached={usage['cached']} thinking={usage['thinking']}"
+    )
+    return usage
+
+
+# =========================================================================
+# V5.0: AI Analyzer for Heavy Input (called once, cached)
+# =========================================================================
+ANALYZER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "detected_genre": {"type": "string"},
+        "world_summary": {"type": "string"},
+        "tone_keywords": {"type": "array", "items": {"type": "string"}},
+        "character_directives": {"type": "array", "items": {"type": "string"}},
+        "key_elements": {"type": "array", "items": {"type": "string"}},
+        "recommended_play_style": {
+            "type": "string",
+            "enum": ["chat", "rp", "novel", "game", "counsel"]
+        },
+        "opening_hook": {"type": "string"},
+    },
+    "required": ["detected_genre", "world_summary", "tone_keywords", "recommended_play_style"],
+}
+
+
+def run_ai_analyzer(user_input: str, on_screen: list) -> Optional[dict]:
+    """Analyze heavy input once and return structured result. Called only once per session."""
+    # Truncate to 3000 chars to stay within Gemini context limits while keeping cost low
+    prompt = (
+        "당신은 인터랙티브 픽션 분석가입니다.\n"
+        "아래 사용자 입력에서 장르, 세계관 요약(200자 이내), 톤 키워드, "
+        "캐릭터 연기 지시, 핵심 서사 요소, 추천 플레이 스타일을 추출하세요.\n"
+        "JSON 스키마에 맞게 응답하세요.\n\n"
+        f"현재 등장 캐릭터: {', '.join(on_screen)}\n\n"
+        f"사용자 입력:\n{user_input[:3000]}"
+    )
+
+    config = genai_types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=ANALYZER_SCHEMA,
+        safety_settings=get_safety_settings(),
+        temperature=0.3,
+    )
+
+    try:
+        result = call_gemini_with_fallback([prompt], config, timeout_sec=20, max_retries=2)
+        if result and result.text:
+            parsed = json.loads(result.text)
+            logger.info(f"AI Analyzer result: genre={parsed.get('detected_genre')}, "
+                       f"style={parsed.get('recommended_play_style')}")
+            return parsed
+    except (json.JSONDecodeError, Exception) as e:
+        logger.error(f"AI Analyzer failed: {e}")
+    return None
+
+
+# =========================================================================
 # Build system instruction for D.I.M.A
 # =========================================================================
 def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict) -> str:
@@ -891,7 +1114,8 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
     return "\n".join(lines)
 
 
-def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
+def _build_system_instruction_legacy(s: dict, on_screen_chars: list) -> str:
+    """Legacy V4.5 system instruction builder. Kept as backup."""
     packets = []
     player_name = s.get("player_name", "사용자")
 
@@ -1341,6 +1565,169 @@ def build_system_instruction_for_scene(s: dict, on_screen_chars: list) -> str:
     )
 
     return base_instruction
+
+
+# =========================================================================
+# V5.0: Adaptive System Instruction Builder (replaces build_system_instruction_for_scene)
+# =========================================================================
+def build_adaptive_instruction(s: dict) -> str:
+    """V5.0 adaptive system instruction builder.
+
+    Assembles prompt based on play_style, turn count, and session state.
+    Designed for Gemini implicit caching: keeps prefix stable across turns.
+    """
+    parts = []
+    turn_count = len(s.get("turns", []))
+    profile = s.get("user_profile", {})
+    play_style = profile.get("play_style", "chat")
+    on_screen = s.get("on_screen", [])
+    player = get_player_name(s)
+    ui = s.get("ui_settings", {})
+
+    # ── BLOCK 1: Safety + Role (FIXED prefix for cache hit) ──
+    parts.append(SAFETY_PREAMBLE)
+    parts.append(
+        "당신은 D.I.M.A(Director-level Interactive Multi-character Actor)입니다. "
+        "사용자의 입력에 반응하여 등장 캐릭터들의 대사·행동·나레이션을 script JSON으로 출력합니다. "
+        "모든 캐릭터는 성인(20세 이상)입니다."
+    )
+
+    # ── BLOCK 2: Player + UI settings ──
+    pov = "1인칭(나)" if ui.get("pov_first_person") else "3인칭"
+    parts.append(
+        f"[설정] 플레이어: {player} | 시점: {pov} | "
+        f"나레이션 비율: {ui.get('narration_ratio', 40)}% | "
+        f"템포: {ui.get('tempo', 5)}/10 | "
+        f"묘사밀도: {ui.get('description_focus', 5)}/10"
+    )
+
+    # ── BLOCK 3: Character core summaries (always included, ~120 tok each) ──
+    for cname in on_screen:
+        cached = _CHAR_RUNTIME_CACHE.get(cname, {})
+        card = (
+            f"[{cname}] {cached.get('core_appeal', '')[:120]}\n"
+            f"  말투: {cached.get('speech_habit', '')} | 어미: {cached.get('honorific_style', '')}\n"
+            f"  입버릇: {', '.join(cached.get('catchphrases', []))}\n"
+            f"  금기: {', '.join(cached.get('forbidden_patterns', []))}\n"
+            f"  음성 대비: {cached.get('voice_contrast', '')}"
+        )
+        parts.append(card)
+
+    # ── BLOCK 4: Style-specific extensions ──
+    if play_style in ("chat", "counsel"):
+        parts.append(
+            "[스타일: 대화/상담] 자연스러운 일상 대화 중심. 나레이션 최소화. "
+            "캐릭터 감정과 반응에 집중. 따뜻하고 공감적인 톤."
+        )
+    elif play_style == "rp":
+        parts.append(
+            "[스타일: RP] 몰입감 있는 롤플레이. 나레이션과 대사 균형. "
+            "환경·표정·동작 묘사. 캐릭터 간 상호작용."
+        )
+        for cname in on_screen:
+            cached = _CHAR_RUNTIME_CACHE.get(cname, {})
+            if cached.get("appearance_summary"):
+                parts.append(
+                    f"  [{cname} 외모] {cached['appearance_summary']} ({cached.get('height','')})\n"
+                    f"  행동 성향: {cached.get('behavior_hints', '')}"
+                )
+    elif play_style == "novel":
+        parts.append(
+            "[스타일: 소설] 문학적 표현. 심리묘사·복선·긴장감. "
+            "내면 독백 적극 활용. 장면 전환 시 5감 묘사. "
+            "서술의 리듬과 반전을 고려."
+        )
+        for cname in on_screen:
+            cached = _CHAR_RUNTIME_CACHE.get(cname, {})
+            mirror = cached.get("psychological_mirror", {})
+            if mirror:
+                parts.append(f"  [{cname} 심리거울] " +
+                    "; ".join(f"{k}: {v}" for k, v in mirror.items()))
+            if cached.get("appearance_summary"):
+                parts.append(f"  [{cname} 외모] {cached['appearance_summary']}")
+    elif play_style == "game":
+        parts.append(
+            "[스타일: 게임/TRPG] 선택지 제시. 판정·결과 묘사. "
+            "CORE-4 변화를 게임적 피드백으로 전달. "
+            "환경 상호작용과 아이템 활용."
+        )
+
+    # ── BLOCK 5: Analyzer cache (Heavy Input result) ──
+    analyzer = s.get("analyzer_cache")
+    if analyzer:
+        parts.append(
+            f"[유저 세계관] 장르: {analyzer.get('detected_genre', '미정')}\n"
+            f"  요약: {analyzer.get('world_summary', '')}\n"
+            f"  톤: {', '.join(analyzer.get('tone_keywords', []))}\n"
+            f"  핵심 요소: {', '.join(analyzer.get('key_elements', []))}"
+        )
+        directives = analyzer.get("character_directives", [])
+        if directives:
+            parts.append(f"  캐릭터 지시: {'; '.join(directives[:5])}")
+
+    # ── BLOCK 6: Progressive Disclosure (turn-gated) ──
+    if turn_count >= 3:
+        rels = s.get("relationships", {})
+        rel_lines = []
+        for cname in on_screen:
+            rel = rels.get(cname, {})
+            stage = STAGE_NAMES.get(rel.get("stage", 1), "경계")
+            rel_lines.append(
+                f"{cname}: {stage}(호감{rel.get('affection',50)}/신뢰{rel.get('trust',50)})"
+            )
+        if rel_lines:
+            parts.append(f"[관계] {' | '.join(rel_lines)}")
+
+    if turn_count >= 5:
+        core4 = s.get("core4", {})
+        c4_parts = []
+        for key in ["energy", "stress", "intoxication", "pain"]:
+            val = core4.get(key, {}).get("value", 0)
+            c4_parts.append(f"{key}={val}({get_core4_description(key, val)})")
+        parts.append(f"[CORE-4] {' | '.join(c4_parts)}")
+
+    if turn_count >= 7:
+        tension = calculate_tension_level(s)
+        parts.append(
+            f"[텐션] 막: {tension['act']} | 긴장도: {tension['tension']}"
+        )
+
+    if turn_count >= 10 and (play_style in ("novel", "rp", "game")):
+        # Full scene cards for deep play
+        for cname in on_screen:
+            full_card = build_scene_card(cname, on_screen, s.get("relationships", {}))
+            parts.append(full_card)
+
+    # ── BLOCK 7: Memory ──
+    memory = s.get("memory", {})
+    core_pins = memory.get("core_pins", [])
+    if core_pins:
+        parts.append("[핵심 기억] " + "; ".join(
+            (p[:80] if isinstance(p, str) else str(p)[:80]) for p in core_pins[-5:]
+        ))
+    long_term = memory.get("long_term", [])
+    if long_term:
+        parts.append("[장기 기억] " + "; ".join(str(m)[:60] for m in long_term[-3:]))
+
+    # ── BLOCK 8: Maestro override ──
+    mo = s.get("maestro_override", {})
+    if mo.get("style_correction"):
+        parts.append(f"[마에스트로 보정] {mo['style_correction']}")
+    if mo.get("world_inject"):
+        parts.append(f"[세계관 추가] {mo['world_inject']}")
+
+    # ── BLOCK 9: Output format + Emotion whitelist (FIXED suffix) ──
+    parts.append(
+        f"[EMOTION WHITELIST] {', '.join(SUPPORTED_EMOTIONS)}\n"
+        "emotion 필드는 반드시 위 목록에서만 선택하세요."
+    )
+    parts.append(
+        '출력 형식: {"script": [{"type":"narration"|"dialogue"|"monologue", '
+        '"content":"텍스트", "character":"캐릭터명", "emotion":"감정태그", '
+        '"emotion_intensity":1~10, "monologue":"내면독백(선택)"}]}'
+    )
+
+    return "\n".join(parts)
 
 
 # ─── Pulse System ────────────────────────────────────────────
@@ -1866,7 +2253,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     location = (world.get("main_stage", {}) or {}).get("name", "라운지")
     on_screen_chars = s.get("on_screen", [])
 
-    system_instruction = build_system_instruction_for_scene(s, on_screen_chars)
+    system_instruction = build_adaptive_instruction(s)
 
     # Build user input for prompt
     u_text_strip = user_input.strip()
@@ -2027,7 +2414,9 @@ def generate_llm(
     temperature: float = 0.75,
     response_schema: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Call Gemini and return parsed JSON dict."""
+    """Call Gemini and return parsed JSON dict.
+    Also stores the raw response in generate_llm.last_response for token metering.
+    """
     global _last_call_time
 
     with _rate_lock:
@@ -2059,6 +2448,9 @@ def generate_llm(
         )],
         config=config,
     )
+    # V5.0: Store raw response for token metering
+    generate_llm.last_response = response
+
     if response is None:
         return None
 
@@ -2091,6 +2483,8 @@ def generate_llm(
                             return json.loads(cleaned[start:i+1])
     logger.warning("Empty LLM response after fallback chain")
     return None
+
+generate_llm.last_response = None  # V5.0: Initialize attribute for token metering
 
 
 # ─── Script post-processing ──────────────────────────────────
@@ -2225,7 +2619,7 @@ def apply_emotional_contagion(s: dict, script: list):
 
 # ─── Core turn engine ─────────────────────────────────────────
 def run_dima_turn(s: dict, user_input: str) -> tuple:
-    """Run one D.I.M.A turn and return (final_script, pulse_result)."""
+    """Run one D.I.M.A turn and return (final_script, pulse_result, dima_response)."""
     system_instruction, main_prompt, pulse_result = build_dima_prompt(s, user_input)
 
     # Use tension-based temperature
@@ -2238,6 +2632,8 @@ def run_dima_turn(s: dict, user_input: str) -> tuple:
         temperature=temperature,
         response_schema=DIMA_SCHEMA,
     )
+    # V5.0: Capture raw Gemini response for token metering
+    dima_response = generate_llm.last_response
 
     script = (raw or {}).get("script") or []
 
@@ -2253,7 +2649,7 @@ def run_dima_turn(s: dict, user_input: str) -> tuple:
     # Part D: Apply emotional contagion
     apply_emotional_contagion(s, processed)
 
-    return processed, pulse_result
+    return processed, pulse_result, dima_response
 
 
 # =========================================================================
@@ -2338,6 +2734,12 @@ Also analyze and return:
   Positive values = increase, negative = decrease.
   Example: if a fight happened, stress +15, pain +10. If characters had a warm meal, energy +5, stress -5.
 
+추가 분석 사항:
+1. play_style_assessment: 지금까지의 대화 흐름에서 유저의 플레이 스타일을 판단하세요 (chat/rp/novel/game/counsel)
+2. style_correction: D.I.M.A에게 전달할 연기 보정 지시 (예: "나레이션을 줄이고 대화 비율을 높여라", "더 문학적으로 써라")
+3. world_inject: 다음 턴에 시스템 프롬프트에 추가할 세계관 정보 (필요시에만)
+4. emotional_tone_summary: 현재 대화의 감정적 톤 요약
+
 Return JSON with:
 {{
   "long_term_summary": "이번 4턴의 핵심 줄거리 1~2문장 요약",
@@ -2350,7 +2752,11 @@ Return JSON with:
       "reason": "왜 이 축이 변했는지 한 줄 설명"
     }}
   }},
-  "core4_adjustments": {{"energy": 0, "stress": 0, "intoxication": 0, "pain": 0}}
+  "core4_adjustments": {{"energy": 0, "stress": 0, "intoxication": 0, "pain": 0}},
+  "play_style_assessment": "chat|rp|novel|game|counsel",
+  "style_correction": "D.I.M.A 연기 보정 지시 (없으면 빈 문자열)",
+  "world_inject": "세계관 추가 정보 (없으면 빈 문자열)",
+  "emotional_tone_summary": "현재 감정 톤 요약"
 }}
 """
 
@@ -2432,6 +2838,19 @@ Return JSON with:
         if stat:
             stat["value"] = max(stat["min"], min(stat["max"], stat["value"] + delta))
 
+    # V5.0: Maestro override — style correction and world inject
+    s["maestro_override"] = {
+        "style_correction": maestro_result.get("style_correction", ""),
+        "world_inject": maestro_result.get("world_inject", ""),
+    }
+    # V5.0: Play style assessment from Maestro
+    assessed_style = maestro_result.get("play_style_assessment")
+    if assessed_style and assessed_style in ("chat", "rp", "novel", "game", "counsel"):
+        s.setdefault("user_profile", {})["play_style"] = assessed_style
+        s["user_profile"]["style_confidence"] = max(
+            0.7, s["user_profile"].get("style_confidence", 0)
+        )
+
     logger.info(f"Maestro completed for turn {len(turns)}")
 
 
@@ -2462,7 +2881,7 @@ def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "V4.5",
+        "version": "V5.0",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2534,11 +2953,15 @@ def bootstrap():
 
     # Generate first turn
     _pulse = None
+    _bootstrap_response = None
     try:
-        final_script, _pulse = run_dima_turn(s, seed_text)
+        final_script, _pulse, _bootstrap_response = run_dima_turn(s, seed_text)
     except Exception as e:
         logger.error(f"Bootstrap DIMA error: {e}")
         final_script = safe_local_script(s)
+
+    # V5.0: Record token usage for bootstrap turn
+    record_token_usage(s, _bootstrap_response, 1)
 
     first_turn = {
         "turn_id": 1,
@@ -2592,6 +3015,9 @@ def execute_turn():
         if not s:
             return jsonify({"status": "error", "message": "세션을 찾을 수 없습니다."}), 404
 
+        # V5.0: Session migration (ensure new fields exist)
+        s = _migrate_session(s)
+
         merge_ui_settings(s, data.get("ui_settings") or {})
 
         me = get_player_name(s)
@@ -2604,10 +3030,35 @@ def execute_turn():
         # Part C: Ensure relationships initialized
         init_relationships(s)
 
+        # V5.0: Step 1 — Intent classification (no API call)
+        profile = s.get("user_profile", {})
+        intent_result = classify_user_intent(user_input, profile)
+        update_user_profile(profile, intent_result, user_input)
+        logger.info(f"Intent: {intent_result['play_style']} (conf={intent_result['style_confidence']:.2f}), heavy={intent_result['is_heavy_input']}")
+
+        # V5.0: Step 2 — Heavy Input → AI Analyzer (conditional)
+        if intent_result["is_heavy_input"] and s.get("analyzer_cache") is None:
+            logger.info("Heavy input detected, running AI Analyzer...")
+            analyzer_result = run_ai_analyzer(user_input, s.get("on_screen", []))
+            if analyzer_result:
+                s["analyzer_cache"] = analyzer_result
+                recommended = analyzer_result.get("recommended_play_style")
+                if recommended:
+                    s["user_profile"]["play_style"] = recommended
+                    s["user_profile"]["style_confidence"] = max(
+                        0.8, s["user_profile"].get("style_confidence", 0)
+                    )
+                    logger.info(f"Analyzer override: play_style → {recommended}")
+
         # Part B: Apply CORE-4 natural decay
         apply_core4_decay(s)
 
-        final_script, pulse_result = run_dima_turn(s, user_input)
+        # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
+        final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
+
+        # V5.0: Step 4 — Token metering
+        turn_number = len(s.get("turns", []))
+        current_turn_usage = record_token_usage(s, dima_response, turn_number)
 
         # Increment scene turn counter
         sc = s.setdefault("scene_context", {})
@@ -2680,10 +3131,19 @@ def execute_turn():
         s["traffic_light"] = "GREEN"
         save_session(s)
 
+    # V5.0: Step 5 — Include token_usage in response
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
             "pulse": _build_pulse_payload(pulse_result, s),
-            "illustration_url": illustration_url}
+            "illustration_url": illustration_url,
+            "token_usage": {
+                "this_turn": current_turn_usage,
+                "session_total": {
+                    "input": s["token_ledger"]["total_input_tokens"],
+                    "output": s["token_ledger"]["total_output_tokens"],
+                    "cached": s["token_ledger"]["total_cached_tokens"],
+                }
+            }}
     return jsonify(resp)
 
 
@@ -3043,8 +3503,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V4.5 — Waitress on port 5000")
+        logger.info("Sarura Atelier V5.0 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V4.5 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V5.0 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
