@@ -160,6 +160,7 @@
       <div id="participants-display" class="participants-display">
         <span class="label">내 이름:</span> <span id="current-player-name">사용자</span> |
         <span class="label">참여자:</span> <span id="participants-list-display">사용자</span>
+        <span id="token-display" style="margin-left:10px;font-size:11px;color:var(--text-medium);opacity:0.7"></span>
       </div>
       <div class="buttons">
         <div id="toggle-scene-panel" class="toggle-button">씬 설정🎬</div>
@@ -932,6 +933,16 @@
               applyPersonalColors(turnResponse.personal_colors);
               await renderUIFromState(turnResponse.state);
               renderPulseChips(turnResponse.pulse || null);
+              // V5.0: Token usage display
+              if (turnResponse.token_usage) {
+                const tu = turnResponse.token_usage;
+                console.log(`Token usage - This turn: in=${tu.this_turn.input} out=${tu.this_turn.output} cached=${tu.this_turn.cached}`);
+                console.log(`Session total: in=${tu.session_total.input} out=${tu.session_total.output}`);
+                const tokenDisplay = document.getElementById('token-display');
+                if (tokenDisplay) {
+                  tokenDisplay.textContent = `토큰: ${(tu.session_total.input + tu.session_total.output).toLocaleString()}`;
+                }
+              }
             } else {
               throw new Error(turnResponse.message || '턴 생성 실패');
             }

@@ -1,5 +1,5 @@
 """
-Sarura Atelier V4.5 — Advanced Multi-Character Ensemble Theater Backend
+Sarura Atelier V5.0 — Advanced Multi-Character Ensemble Theater Backend
 D.I.M.A (Director-level Interactive Multi-character Actor) system.
 
 Features: Hybrid Emotion Engine, CORE-4 State, Multi-axis Relationships,
@@ -2413,7 +2413,9 @@ def generate_llm(
     temperature: float = 0.75,
     response_schema: Optional[dict] = None,
 ) -> Optional[dict]:
-    """Call Gemini and return parsed JSON dict."""
+    """Call Gemini and return parsed JSON dict.
+    Also stores the raw response in generate_llm.last_response for token metering.
+    """
     global _last_call_time
 
     with _rate_lock:
@@ -2445,6 +2447,9 @@ def generate_llm(
         )],
         config=config,
     )
+    # V5.0: Store raw response for token metering
+    generate_llm.last_response = response
+
     if response is None:
         return None
 
@@ -2477,6 +2482,8 @@ def generate_llm(
                             return json.loads(cleaned[start:i+1])
     logger.warning("Empty LLM response after fallback chain")
     return None
+
+generate_llm.last_response = None  # V5.0: Initialize attribute for token metering
 
 
 # ─── Script post-processing ──────────────────────────────────
@@ -2611,7 +2618,7 @@ def apply_emotional_contagion(s: dict, script: list):
 
 # ─── Core turn engine ─────────────────────────────────────────
 def run_dima_turn(s: dict, user_input: str) -> tuple:
-    """Run one D.I.M.A turn and return (final_script, pulse_result)."""
+    """Run one D.I.M.A turn and return (final_script, pulse_result, dima_response)."""
     system_instruction, main_prompt, pulse_result = build_dima_prompt(s, user_input)
 
     # Use tension-based temperature
@@ -2624,6 +2631,8 @@ def run_dima_turn(s: dict, user_input: str) -> tuple:
         temperature=temperature,
         response_schema=DIMA_SCHEMA,
     )
+    # V5.0: Capture raw Gemini response for token metering
+    dima_response = generate_llm.last_response
 
     script = (raw or {}).get("script") or []
 
@@ -2639,7 +2648,7 @@ def run_dima_turn(s: dict, user_input: str) -> tuple:
     # Part D: Apply emotional contagion
     apply_emotional_contagion(s, processed)
 
-    return processed, pulse_result
+    return processed, pulse_result, dima_response
 
 
 # =========================================================================
@@ -2724,6 +2733,12 @@ Also analyze and return:
   Positive values = increase, negative = decrease.
   Example: if a fight happened, stress +15, pain +10. If characters had a warm meal, energy +5, stress -5.
 
+추가 분석 사항:
+1. play_style_assessment: 지금까지의 대화 흐름에서 유저의 플레이 스타일을 판단하세요 (chat/rp/novel/game/counsel)
+2. style_correction: D.I.M.A에게 전달할 연기 보정 지시 (예: "나레이션을 줄이고 대화 비율을 높여라", "더 문학적으로 써라")
+3. world_inject: 다음 턴에 시스템 프롬프트에 추가할 세계관 정보 (필요시에만)
+4. emotional_tone_summary: 현재 대화의 감정적 톤 요약
+
 Return JSON with:
 {{
   "long_term_summary": "이번 4턴의 핵심 줄거리 1~2문장 요약",
@@ -2736,7 +2751,11 @@ Return JSON with:
       "reason": "왜 이 축이 변했는지 한 줄 설명"
     }}
   }},
-  "core4_adjustments": {{"energy": 0, "stress": 0, "intoxication": 0, "pain": 0}}
+  "core4_adjustments": {{"energy": 0, "stress": 0, "intoxication": 0, "pain": 0}},
+  "play_style_assessment": "chat|rp|novel|game|counsel",
+  "style_correction": "D.I.M.A 연기 보정 지시 (없으면 빈 문자열)",
+  "world_inject": "세계관 추가 정보 (없으면 빈 문자열)",
+  "emotional_tone_summary": "현재 감정 톤 요약"
 }}
 """
 
@@ -2818,6 +2837,19 @@ Return JSON with:
         if stat:
             stat["value"] = max(stat["min"], min(stat["max"], stat["value"] + delta))
 
+    # V5.0: Maestro override — style correction and world inject
+    s["maestro_override"] = {
+        "style_correction": maestro_result.get("style_correction", ""),
+        "world_inject": maestro_result.get("world_inject", ""),
+    }
+    # V5.0: Play style assessment from Maestro
+    assessed_style = maestro_result.get("play_style_assessment")
+    if assessed_style and assessed_style in ("chat", "rp", "novel", "game", "counsel"):
+        s.setdefault("user_profile", {})["play_style"] = assessed_style
+        s["user_profile"]["style_confidence"] = max(
+            0.7, s["user_profile"].get("style_confidence", 0)
+        )
+
     logger.info(f"Maestro completed for turn {len(turns)}")
 
 
@@ -2848,7 +2880,7 @@ def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
 def health():
     return jsonify({
         "status": "ok",
-        "version": "V4.5",
+        "version": "V5.0",
         "model_dima": MODEL_DIMA,
         "model_maestro": MODEL_MAESTRO,
         "characters_loaded": len(ALL_CHARACTER_NAMES),
@@ -2920,8 +2952,9 @@ def bootstrap():
 
     # Generate first turn
     _pulse = None
+    _bootstrap_response = None
     try:
-        final_script, _pulse = run_dima_turn(s, seed_text)
+        final_script, _pulse, _bootstrap_response = run_dima_turn(s, seed_text)
     except Exception as e:
         logger.error(f"Bootstrap DIMA error: {e}")
         final_script = safe_local_script(s)
@@ -2978,6 +3011,9 @@ def execute_turn():
         if not s:
             return jsonify({"status": "error", "message": "세션을 찾을 수 없습니다."}), 404
 
+        # V5.0: Session migration (ensure new fields exist)
+        s = _migrate_session(s)
+
         merge_ui_settings(s, data.get("ui_settings") or {})
 
         me = get_player_name(s)
@@ -2990,10 +3026,35 @@ def execute_turn():
         # Part C: Ensure relationships initialized
         init_relationships(s)
 
+        # V5.0: Step 1 — Intent classification (no API call)
+        profile = s.get("user_profile", {})
+        intent_result = classify_user_intent(user_input, profile)
+        update_user_profile(profile, intent_result, user_input)
+        logger.info(f"Intent: {intent_result['play_style']} (conf={intent_result['style_confidence']:.2f}), heavy={intent_result['is_heavy_input']}")
+
+        # V5.0: Step 2 — Heavy Input → AI Analyzer (conditional)
+        if intent_result["is_heavy_input"] and s.get("analyzer_cache") is None:
+            logger.info("Heavy input detected, running AI Analyzer...")
+            analyzer_result = run_ai_analyzer(user_input, s.get("on_screen", []))
+            if analyzer_result:
+                s["analyzer_cache"] = analyzer_result
+                recommended = analyzer_result.get("recommended_play_style")
+                if recommended:
+                    s["user_profile"]["play_style"] = recommended
+                    s["user_profile"]["style_confidence"] = max(
+                        0.8, s["user_profile"].get("style_confidence", 0)
+                    )
+                    logger.info(f"Analyzer override: play_style → {recommended}")
+
         # Part B: Apply CORE-4 natural decay
         apply_core4_decay(s)
 
-        final_script, pulse_result = run_dima_turn(s, user_input)
+        # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
+        final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
+
+        # V5.0: Step 4 — Token metering
+        turn_number = len(s.get("turns", []))
+        current_turn_usage = record_token_usage(s, dima_response, turn_number)
 
         # Increment scene turn counter
         sc = s.setdefault("scene_context", {})
@@ -3066,10 +3127,19 @@ def execute_turn():
         s["traffic_light"] = "GREEN"
         save_session(s)
 
+    # V5.0: Step 5 — Include token_usage in response
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
             "pulse": _build_pulse_payload(pulse_result, s),
-            "illustration_url": illustration_url}
+            "illustration_url": illustration_url,
+            "token_usage": {
+                "this_turn": current_turn_usage,
+                "session_total": {
+                    "input": s["token_ledger"]["total_input_tokens"],
+                    "output": s["token_ledger"]["total_output_tokens"],
+                    "cached": s["token_ledger"]["total_cached_tokens"],
+                }
+            }}
     return jsonify(resp)
 
 
@@ -3429,8 +3499,8 @@ def internal_error(e):
 if __name__ == "__main__":
     try:
         from waitress import serve
-        logger.info("Sarura Atelier V4.5 — Waitress on port 5000")
+        logger.info("Sarura Atelier V5.0 — Waitress on port 5000")
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
     except ImportError:
-        logger.info("Sarura Atelier V4.5 — Flask dev server on port 5000")
+        logger.info("Sarura Atelier V5.0 — Flask dev server on port 5000")
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
