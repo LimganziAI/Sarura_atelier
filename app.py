@@ -378,6 +378,28 @@ EMOTION_NAMES_EN = list(EMOTION_TAXONOMY.keys())
 EMOTION_NAMES_KR = {v["kr"]: k for k, v in EMOTION_TAXONOMY.items()}
 
 
+def extract_first_json_block(text: str) -> Optional[dict]:
+    """Extract and parse the first balanced JSON object from mixed output."""
+    if not text:
+        return None
+    cleaned = re.sub(r'```json\s*|\s*```', '', text.strip())
+    start = cleaned.find('{')
+    if start < 0:
+        return None
+    depth = 0
+    for i, ch in enumerate(cleaned[start:], start=start):
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(cleaned[start:i + 1])
+                except Exception:
+                    return None
+    return None
+
+
 def normalize_emotion_tag(raw: str) -> str:
     """Convert any emotion string to one of SUPPORTED_EMOTIONS."""
     raw_lower = raw.strip().lower().replace(" ", "_")
@@ -1940,6 +1962,14 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
             "- NPC 행동 묘사도 '나'의 시선을 통해 관찰하는 형태로 기술한다.\n"
             "  (예: \"루크가 고개를 들었다\" → \"루크가 고개를 든다. 그 파란 눈동자가 나를 향한다.\")"
         )
+        # FIX-4: 1인칭 에이전시 보호
+        parts.append(
+            "\n[1인칭 에이전시 보호]\n"
+            "- pov_first_person=true일 때, 플레이어의 감정, 신체 반응, 내면 독백을 AI가 임의로 작성하지 마라.\n"
+            "- \"나는 심장이 두근거렸다\", \"내 얼굴이 붉어졌다\" 같은 표현 금지.\n"
+            "- 대신 캐릭터의 반응과 환경 묘사로 간접 전달하라.\n"
+            "  예: \"샐리의 눈이 동그래진다\" (O) vs \"나는 당황했다\" (X)"
+        )
     else:
         parts.append("- [시점]: 3인칭 관찰자 시점으로 서술하라.")
 
@@ -1972,6 +2002,20 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
     tempo = ui_settings.get("tempo", 5)
     parts.append(f"- [템포]: {tempo}/10 (낮을수록 느리고 묘사적, 높을수록 빠르고 액션 중심)")
 
+    # FIX-5: tempo를 구체적 행동 지시로 변환
+    if tempo >= 8:
+        parts.append(
+            "- [템포 지시]: 대사 위주로 빠르게 진행. 나레이션은 1~2문장으로 최소화. script 블록 총 3개 이내."
+        )
+    elif tempo >= 5:
+        parts.append(
+            "- [템포 지시]: 대사와 나레이션 균형. script 블록 총 4~5개."
+        )
+    else:
+        parts.append(
+            "- [템포 지시]: 나레이션과 심리묘사 중심. 대사는 짧게. script 블록 총 5~7개."
+        )
+
     narr_ratio = ui_settings.get("narration_ratio", 40)
     parts.append(f"- [나레이션 비율]: {narr_ratio}% (나레이션과 대사의 비율)")
 
@@ -1990,24 +2034,44 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
     if genre in ("mystery", "thriller", "noir"):
         parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
 
-    # Event hints — Pulse-aware injection
+    # FIX-6: 캐릭터별 대사 차별화 강화
+    parts.append(
+        "\n[캐릭터 행동 분배]\n"
+        "- 2캐릭터 씬에서 둘이 같은 반응(둘 다 놀리기, 둘 다 칭찬)을 하지 마라.\n"
+        "- 한 캐릭터가 유저에게 질문하면, 다른 캐릭터는 다른 행동(관찰, 딴짓, 자기 이야기)을 하라.\n"
+        "- 샐리는 유저와 직접 소통에 집중하고, 라이니는 상황을 관찰하며 간접적으로 개입하라. "
+        "(캐릭터 DB의 specific_interactions 참조)"
+    )
+
+    # FIX-7: 감정 다양성 강제
+    parts.append(
+        "\n[감정 다양성]\n"
+        "- 같은 캐릭터가 3턴 연속 동일 감정을 사용하는 것을 금지한다.\n"
+        "- emotion_intensity는 1~10 범위에서 상황에 따라 변동시켜라. 항상 5는 금지."
+    )
+
+    # Event hints — Pulse-aware injection (guarded by location + turn count)
     if s is not None:
         tc = len(s.get("turns", []))
         pulse_mode = (pulse_result or {}).get("mode", "REACTIVE")
         on_screen = s.get("on_screen", [])
+        current_location = (s.get("world", {}).get("main_stage", {}) or {}).get("name", "")
 
-        if pulse_mode == "PROACTIVE":
-            # Immediately inject a relevant event seed
+        # Event seeds only inject when: player is at a relevant location (기숙사)
+        # AND at least 15 turns have passed. Only as hints, not forced events.
+        _event_location_eligible = "기숙사" in current_location
+        _event_turn_eligible = tc >= 15
+
+        if pulse_mode == "PROACTIVE" and _event_location_eligible and _event_turn_eligible:
             seed = select_relevant_event_seed(on_screen, WORLD_DB)
             if seed:
                 beats = seed.get("beats", [])
                 first_beat = beats[0] if beats else ""
                 parts.append(
-                    f"- [이벤트 힌트 — PROACTIVE 즉시 투입] '{seed.get('title', '')}' "
-                    f"소재를 이번 턴에 적극 활용하세요: {first_beat}"
+                    f"- [이벤트 힌트 — PROACTIVE] '{seed.get('title', '')}' "
+                    f"소재를 힌트 수준으로 암시하세요 (강제 삽입 금지): {first_beat}"
                 )
-        else:
-            # Default: every 5 turns
+        elif _event_location_eligible and _event_turn_eligible:
             event_seeds = WORLD_DB.get("event_seeds", [])
             if tc > 0 and tc % 5 == 0 and event_seeds:
                 seed = random.choice(event_seeds)
@@ -2381,8 +2445,24 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     digest = s.get("flow_digest_10", [])
     digest_text = "\n".join(digest[-7:]) if digest else "(첫 번째 턴)"
 
-    # Only last 1 turn raw (to prevent pattern-copying older dialogue)
+    # Scene continuity block — maintain location and action context
+    last_action_summary = ""
     all_turns = s.get("turns", [])
+    if all_turns:
+        last_turn = all_turns[-1]
+        last_scripts = last_turn.get("script", [])
+        for b in reversed(last_scripts):
+            if b.get("content"):
+                last_action_summary = b["content"][:80]
+                break
+
+    scene_continuity_block = (
+        f"\n=== 현재 장면 상태 ===\n"
+        f"- 장소: {location}\n"
+        f"- 진행 중인 행동: {last_action_summary if last_action_summary else '(첫 턴)'}\n"
+        f"- 장면 규칙: 유저가 장소 이동을 명시하지 않는 한 현재 장소({location})를 유지하라. "
+        f"유저의 행동에 자연스럽게 반응하되, AI가 임의로 장소를 바꾸거나 새로운 이벤트를 삽입하지 마라.\n"
+    )
     recent_turns_1 = all_turns[-1:] if all_turns else []
     raw_recent = []
     for t in recent_turns_1:
@@ -2416,6 +2496,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         )
 
     recent_conversation_log = (
+        f"{scene_continuity_block}\n"
         f"=== 흐름 요약 (최근 10턴) ===\n{digest_text}\n\n"
         f"=== 직전 대화 (최근 1턴 원문) ===\n{raw_text}"
         f"{anti_repetition_block}"
@@ -2793,11 +2874,22 @@ def _local_maestro_fallback(recent_4: list, s: Optional[dict] = None) -> dict:
         if kw_str:
             summary += f" 키워드: {kw_str}"
 
+    # Build basic relationship deltas from detected emotions
+    # so axes don't stay frozen at 0 when Maestro LLM fails
+    fallback_deltas = {}
+    positive_emotions = {"joy", "gentle_affection", "playful_tease", "wistful_nostalgia"}
+    negative_emotions = {"anger", "sadness", "nervous_tension"}
+    for char in chars:
+        if emotions & positive_emotions:
+            fallback_deltas[char] = {"axis": "agreeable", "delta": 1, "reason": "fallback: positive interaction detected"}
+        elif emotions & negative_emotions:
+            fallback_deltas[char] = {"axis": "adversarial", "delta": 1, "reason": "fallback: tension detected"}
+
     return {
         "long_term_summary": summary,
         "core_pin": None,
         "active_thought": None,
-        "relationship_deltas": {},
+        "relationship_deltas": fallback_deltas,
         "core4_adjustments": {"energy": 0, "stress": 0, "intoxication": 0, "pain": 0},
     }
 
@@ -2859,7 +2951,6 @@ Return JSON with:
 """
 
     maestro_result = None
-    cleaned = None
     config = genai_types.GenerateContentConfig(
         temperature=0.4,
         max_output_tokens=2048,
@@ -2876,11 +2967,8 @@ Return JSON with:
         if response is not None:
             text = response.text
             if text:
-                cleaned = re.sub(r'```json\s*', '', text.strip())
-                cleaned = re.sub(r'\s*```', '', cleaned)
-                if cleaned:
-                    maestro_result = json.loads(cleaned)
-    except (json.JSONDecodeError, AttributeError, NameError, TypeError) as e:
+                maestro_result = extract_first_json_block(text)
+    except (AttributeError, NameError, TypeError) as e:
         logger.warning(f"Maestro response parse failed: {e}")
 
     # If LLM failed, use local regex-based fallback
@@ -2922,11 +3010,22 @@ Return JSON with:
     for char_name, change in deltas.items():
         rel = s.get("relationships", {}).get(char_name)
         if not rel:
+            # Try matching without exact case
+            for rk in s.get("relationships", {}):
+                if rk.lower() == char_name.lower():
+                    rel = s["relationships"][rk]
+                    break
+        if not rel:
+            logger.debug(f"Maestro relationship delta for unknown character: {char_name}")
             continue
         axis = change.get("axis", "")
         delta_val = change.get("delta", 0)
-        if axis in rel.get("axes", {}):
-            rel["axes"][axis] = max(0, rel["axes"][axis] + delta_val)
+        axes_dict = rel.get("axes", {})
+        if axis in axes_dict:
+            axes_dict[axis] = max(0, axes_dict[axis] + delta_val)
+            logger.info(f"Maestro axes update: {char_name}.{axis} += {delta_val} → {axes_dict[axis]}")
+        else:
+            logger.warning(f"Maestro returned unknown axis '{axis}' for {char_name}. Valid: {list(axes_dict.keys())}")
         rel["stage"] = calculate_relationship_stage(rel)
 
     # CORE-4 adjustments
