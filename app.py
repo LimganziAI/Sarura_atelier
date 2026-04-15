@@ -1128,6 +1128,8 @@ def run_ai_analyzer(user_input: str, on_screen: list) -> Optional[dict]:
         response_schema=ANALYZER_SCHEMA,
         safety_settings=get_safety_settings(),
         temperature=0.3,
+        max_output_tokens=2048,
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=512),
     )
 
     try:
@@ -1210,6 +1212,117 @@ def build_scene_card(char_name: str, on_screen_chars: list, relationships: dict)
         mirror_text = psych_mirror.get(f"vs_{other}", "")
         if mirror_text:
             lines.append(f"  심리투영: {mirror_text}")
+
+    return "\n".join(lines)
+
+
+def build_character_block_for_prompt(
+    name: str,
+    on_screen_chars: list,
+    player_name: str,
+    session_rels: dict
+) -> str:
+    """
+    characters_db.json에서 현재 씬에 필요한 데이터만 선별 추출.
+    토큰 효율을 위해 현재 씬과 무관한 데이터는 제외.
+    """
+    cdb = CHARACTERS_DB.get(name, {})
+    if not cdb:
+        return ""
+    identity = cdb.get("identity", {})
+    bp = cdb.get("behavior_protocols", {})
+    sig = bp.get("signature_speech", {})
+    pdna = cdb.get("personality_dna", {})
+
+    lines = [f"\n=== [{name}] ==="]
+
+    # 핵심 매력 + 연기 규칙 (짧게)
+    ca = identity.get("core_appeal", "")
+    if ca:
+        lines.append(f"매력: {ca[:180]}")
+    cr = bp.get("core_acting_rule", "")
+    if cr:
+        lines.append(f"연기규칙: {cr[:180]}")
+
+    # 말투 (필수 — 캐릭터 음성 차별화의 핵심)
+    sp = []
+    if sig.get("speech_habit"):
+        sp.append(sig["speech_habit"])
+    if sig.get("honorific_style"):
+        sp.append(f"존칭:{sig['honorific_style']}")
+    if sig.get("catchphrases"):
+        sp.append(f"입버릇:{','.join(sig['catchphrases'][:3])}")
+    if sig.get("voice_contrast"):
+        sp.append(sig["voice_contrast"][:80])
+    if sig.get("forbidden_patterns"):
+        sp.append(f"금지:{','.join(sig['forbidden_patterns'][:2])}")
+    if sp:
+        lines.append(f"말투: {' | '.join(sp)}")
+    if sig.get("example_lines"):
+        lines.append(f"예시: {' / '.join(sig['example_lines'][:2])}")
+
+    # 성격 경향
+    hints = big5_to_behavior_hints(pdna)
+    if hints:
+        lines.append(f"성격: {hints}")
+
+    # ★ specific_interactions — 현재 씬 관련만 ★
+    si = bp.get("specific_interactions", {})
+    si_lines = []
+    vs_p = si.get("vs_플레이어", "")
+    if vs_p:
+        si_lines.append(f"  vs {player_name}: {vs_p[:120]}")
+    for other in on_screen_chars:
+        if other == name:
+            continue
+        key = f"vs_{other}"
+        if key in si:
+            si_lines.append(f"  vs {other}: {si[key][:120]}")
+    if si_lines:
+        lines.append("상호작용지침:\n" + "\n".join(si_lines))
+
+    # ★ acting_heuristics ★
+    ah = bp.get("acting_heuristics", {})
+    if ah:
+        h_lines = [f"  {k}: {v[:100]}" for k, v in list(ah.items())[:3]]
+        lines.append("상태별행동:\n" + "\n".join(h_lines))
+
+    # ★ 관계 매트릭스 — 현재 씬만 ★
+    rm = cdb.get("relationship_matrix", {})
+    rl = []
+    pr = rm.get("플레이어", {})
+    if pr:
+        sr = session_rels.get(name, {})
+        aff = sr.get("affection", pr.get("호감", 50))
+        tru = sr.get("trust", pr.get("신뢰", 50))
+        ten = sr.get("tension", pr.get("긴장", 50))
+        rl.append(f"  vs {player_name}: 호감{aff} 신뢰{tru} 긴장{ten} — {pr.get('comment', '')[:60]}")
+    for other in on_screen_chars:
+        if other == name:
+            continue
+        or_ = rm.get(other, {})
+        if or_:
+            rl.append(
+                f"  vs {other}: 호감{or_.get('호감', 50)} 신뢰{or_.get('신뢰', 50)} "
+                f"긴장{or_.get('긴장', 50)} — {or_.get('comment', '')[:60]}"
+            )
+    if rl:
+        lines.append("관계:\n" + "\n".join(rl))
+
+    # ★ psychological_mirror — 씬 관련만 ★
+    pm = bp.get("psychological_mirror", {})
+    pm_lines = []
+    for other in on_screen_chars:
+        key = f"vs_{other}"
+        if key in pm:
+            pm_lines.append(f"  {key}: {pm[key][:80]}")
+    if pm_lines:
+        lines.append("심리거울:\n" + "\n".join(pm_lines))
+
+    # 외모 (간결)
+    app = cdb.get("appearance", {})
+    if app.get("summary"):
+        lines.append(f"외모: {app['summary'][:80]} ({app.get('height', '')})")
 
     return "\n".join(lines)
 
@@ -1702,17 +1815,16 @@ def build_adaptive_instruction(s: dict) -> str:
         f"묘사밀도: {ui.get('description_focus', 5)}/10"
     )
 
-    # ── BLOCK 3: Character core summaries (always included, ~120 tok each) ──
+    # ── BLOCK 3: Character deep profiles (from characters_db.json) ──
+    sess_rels = s.get("relationships", {})
     for cname in on_screen:
-        cached = _CHAR_RUNTIME_CACHE.get(cname, {})
-        card = (
-            f"[{cname}] {cached.get('core_appeal', '')[:120]}\n"
-            f"  말투: {cached.get('speech_habit', '')} | 어미: {cached.get('honorific_style', '')}\n"
-            f"  입버릇: {', '.join(cached.get('catchphrases', []))}\n"
-            f"  금기: {', '.join(cached.get('forbidden_patterns', []))}\n"
-            f"  음성 대비: {cached.get('voice_contrast', '')}"
+        if cname == player:
+            continue
+        block = build_character_block_for_prompt(
+            cname, on_screen, player, sess_rels
         )
-        parts.append(card)
+        if block:
+            parts.append(block)
 
     # ── BLOCK 3.5: Age hierarchy & honorific rules ──
     AGE_HIERARCHY_RULE = """
@@ -2507,28 +2619,55 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         f"{anti_repetition_block}"
     )
 
-    # Character briefs
+    # Character briefs with scene continuity + Maestro action_context
     briefs = []
+
+    # 장면 연속성 블록
+    continuity_lines = []
+    prev_turns = s.get("turns", [])
+    if prev_turns:
+        lt = prev_turns[-1]
+        lt_user = lt.get("user_input", "")
+        lt_dlgs = []
+        for b in lt.get("script", []):
+            if isinstance(b, dict) and b.get("type") == "dialogue":
+                lt_dlgs.append(f'{b.get("character", "?")}: "{b.get("content", "")[:50]}"')
+        continuity_lines.append("## [장면 연속성 — 최우선 참조]")
+        if lt_user and lt_user not in ("[CONTINUE_SCENE]", "[PLAYER_PAUSE]"):
+            continuity_lines.append(f'직전 유저 발화: "{lt_user[:80]}"')
+        if lt_dlgs:
+            continuity_lines.append(f"직전 NPC 응답: {' | '.join(lt_dlgs[:2])}")
+        continuity_lines.append("→ 이 맥락의 '다음 순간'부터 연기. 위 내용 반복 금지.")
+
+    continuity_lines.append(f"장소: '{location}' — 유저가 이동 지시 안 하면 유지.")
+
+    # Maestro action_context 주입 + 캐릭터별 상태
+    action_context = s.get("action_context", {})
     for name in on_screen_chars:
         if name == player_name:
             continue
+        ac_text = action_context.get(name, "")
         char_data = s.get("characters", {}).get(name, {})
         ds = char_data.get("dynamic_state", {})
-        if not isinstance(ds, dict):
-            ds = {}
-        ac = s.get("action_context", {}).get(name, {})
-        char_brief = f"<character_brief name='{name}'>\n"
-        char_brief += (
-            f"  - 현재 내면 상태: 기분 '{ds.get('current_mood', 'neutral')}'"
-            f"(강도 {ds.get('mood_intensity', 5)}/10), "
-            f"사회적 에너지 {ds.get('social_energy_level', 100)}%.\n"
-        )
-        if isinstance(ac, dict):
-            summary = ac.get("my_last_action", {}).get("summary") if isinstance(ac.get("my_last_action"), dict) else None
-            if summary:
-                char_brief += f"  - 직전 행동: '{summary}'\n"
-        char_brief += f"</character_brief>"
-        briefs.append(char_brief)
+        mood = ds.get("current_mood", "neutral") if isinstance(ds, dict) else "neutral"
+        intensity = ds.get("mood_intensity", 5) if isinstance(ds, dict) else 5
+
+        brief_lines = [f"<{name}>"]
+        if ac_text:
+            if isinstance(ac_text, str):
+                brief_lines.append(f"  기억: {ac_text[:100]}")
+            elif isinstance(ac_text, dict):
+                summary = ac_text.get("my_last_action", {}).get("summary") if isinstance(ac_text.get("my_last_action"), dict) else None
+                if summary:
+                    brief_lines.append(f"  기억: {summary[:100]}")
+        brief_lines.append(f"  감정: {mood}(강도{intensity}/10)")
+        rel = s.get("relationships", {}).get(name, {})
+        if rel:
+            stage_name = {1: "경계", 2: "동료", 3: "신뢰", 4: "특별"}.get(rel.get("stage", 1), "경계")
+            brief_lines.append(f"  관계: {stage_name} (호감{rel.get('affection', 50)})")
+        continuity_lines.append("\n".join(brief_lines))
+
+    briefs.insert(0, "\n".join(continuity_lines))
     character_briefs_content = "\n".join(briefs)
 
     # Director brief — with Pulse analysis
@@ -2549,6 +2688,26 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             "(7) 유저가 명시한 장소·상황이 내 출력에 정확히 반영되었는가? 무시하고 기본 장소로 대체하지 않았는가?\n"
             "(8) 나레이션에서 유저의 내면(감정, 생각, 시선, 판단)을 대신 서술하지 않았는가? 유저의 내면은 절대 서술 금지."
         )
+
+    # 감정 반복 방지 (STEP 4-B)
+    emo_hist = {}
+    for turn in s.get("turns", [])[-3:]:
+        for b in turn.get("script", []):
+            if isinstance(b, dict) and b.get("type") == "dialogue":
+                c = b.get("character", "")
+                e = b.get("emotion", "")
+                if c and e:
+                    emo_hist.setdefault(c, []).append(e)
+
+    emo_alerts = []
+    for c, emos in emo_hist.items():
+        if len(emos) >= 2 and len(set(emos)) == 1:
+            emo_alerts.append(
+                f"⚠️ {c}: '{emos[0]}' {len(emos)}턴 연속 반복. "
+                f"이번 턴에서 반드시 다른 감정 사용. intensity도 변경."
+            )
+    if emo_alerts:
+        director_brief += "\n\n# [EMOTION DIVERSITY]\n" + "\n".join(emo_alerts)
 
     # Opening Narration: first turn directive
     if turn_count == 0:
@@ -2615,6 +2774,7 @@ def generate_llm(
         "max_output_tokens": 4096,
         "response_mime_type": "application/json",
         "safety_settings": get_safety_settings(),
+        "thinking_config": genai_types.ThinkingConfig(thinking_budget=1024),
     }
     if response_schema:
         config_kwargs["response_schema"] = response_schema
@@ -2672,6 +2832,20 @@ generate_llm.last_response = None  # V5.0: Initialize attribute for token meteri
 
 
 # ─── Script post-processing ──────────────────────────────────
+def _get_character_fallback_line(char: str) -> str:
+    """characters_db에서 캐릭터별 고유 폴백 대사를 가져옴. 하드코딩 방지."""
+    cdb = CHARACTERS_DB.get(char, {})
+    bp = cdb.get("behavior_protocols", {})
+    sig = bp.get("signature_speech", {})
+    ex = sig.get("example_lines", [])
+    if ex:
+        return random.choice(ex)
+    cp = sig.get("catchphrases", [])
+    if cp:
+        return cp[0]
+    return f"({char}이(가) 조용히 상대를 바라본다.)"
+
+
 def safe_local_script(s: dict, prelude_narration: str = "") -> list:
     """Generate a minimal fallback script when LLM fails."""
     on_screen = s.get("on_screen", [])
@@ -2685,7 +2859,7 @@ def safe_local_script(s: dict, prelude_narration: str = "") -> list:
     script.append({
         "type": "dialogue",
         "character": npc,
-        "content": "차부터 드릴게요. 방금 본 것 중에 가장 눈에 들어온 게 뭐였나요?",
+        "content": _get_character_fallback_line(npc),
         "emotion": "joy",
         "emotion_intensity": 2,
     })
@@ -2754,7 +2928,7 @@ def post_process_script(script: list, s: dict) -> list:
         processed.append({
             "type": "dialogue",
             "character": npc,
-            "content": "차부터 드릴게요. 방금 본 것 중에 가장 눈에 들어온 게 뭐였나요?",
+            "content": _get_character_fallback_line(npc),
             "emotion": "joy",
             "emotion_intensity": 2,
         })
@@ -2899,6 +3073,179 @@ def _local_maestro_fallback(recent_4: list, s: Optional[dict] = None) -> dict:
     }
 
 
+# ─── V5.0 Maestro V2: Pre-DIMA sync pipeline ────────────────
+MAESTRO_PROMPT_V2 = """[ROLE] Maestro — 서사 기억 AI.
+[GOAL] 직전 턴을 분석하여 다음 턴에 필요한 서사 기억을 JSON 생성.
+
+[ABSOLUTE RULES]
+1. JSON만 출력. 마크다운/설명/코드펜스 절대 금지.
+2. 등장하지 않은 캐릭터는 건드리지 마라.
+3. 점수 변동: 일반 ±3~5, 강한 사건만 최대 ±10.
+
+[SCHEMA — 이것만 출력하라]
+{{
+  "action_context": {{
+    "<캐릭터명>": "<1~2문장: 이 캐릭터가 이번 턴에서 한 행동과 느낀 감정>"
+  }},
+  "emotion_update": {{
+    "<캐릭터명>": {{"emotion": "<영어단어>", "intensity": <1~10>}}
+  }},
+  "rel_delta": {{
+    "<캐릭터명>_to_<대상>": {{"호감": <±정수>, "신뢰": <±정수>, "긴장": <±정수>}}
+  }},
+  "scene_note": "<1문장: 이번 턴의 핵심 사건/분위기 변화>"
+}}
+
+[THIS TURN DATA]
+- 장소: {location}
+- 등장인물: {on_screen_json}
+- 유저 입력: "{user_input}"
+- NPC 행동:
+{script_summary}
+
+[PREVIOUS CONTEXT]
+{prev_context}
+
+JSON만 출력하라."""
+
+
+def parse_maestro_response(raw_text: str) -> Optional[dict]:
+    """Maestro 응답에서 JSON을 견고하게 추출"""
+    if not raw_text:
+        return None
+    # 1차: extract_first_json_block 사용
+    result = extract_first_json_block(raw_text)
+    if result and isinstance(result, dict):
+        return result
+    # 2차: 코드펜스 제거 후 직접 파싱
+    cleaned = re.sub(r'```json\s*|\s*```', '', raw_text.strip())
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    logger.warning(f"Maestro JSON parse failed (length={len(raw_text)})")
+    return None
+
+
+def apply_maestro_to_session(s: dict, data: dict):
+    """Maestro 분석 결과를 세션 상태에 반영"""
+    if not data or not isinstance(data, dict):
+        return
+
+    # 1. action_context (각 캐릭터가 직전에 뭘 했는지)
+    ac = data.get("action_context")
+    if ac and isinstance(ac, dict):
+        s["action_context"] = ac
+
+    # 2. emotion_update (캐릭터 감정 상태)
+    eu = data.get("emotion_update")
+    if eu and isinstance(eu, dict):
+        for char_name, emo in eu.items():
+            if not isinstance(emo, dict):
+                continue
+            char_state = s.get("characters", {}).get(char_name, {})
+            ds = char_state.setdefault("dynamic_state", {})
+            if emo.get("emotion"):
+                ds["current_mood"] = emo["emotion"]
+            if emo.get("intensity"):
+                ds["mood_intensity"] = int(emo["intensity"])
+
+    # 3. rel_delta (관계 변화)
+    rd = data.get("rel_delta")
+    if rd and isinstance(rd, dict):
+        for key, delta in rd.items():
+            if not isinstance(delta, dict):
+                continue
+            # key 형태: "샐리_to_플레이어" 또는 캐릭터명
+            parts = key.split("_to_")
+            char_name = parts[0] if parts else key
+            rel = s.get("relationships", {}).get(char_name)
+            if not rel:
+                continue
+            for axis_kr, axis_en in [("호감", "affection"), ("신뢰", "trust"), ("긴장", "tension")]:
+                if axis_kr in delta:
+                    try:
+                        d = int(delta[axis_kr])
+                        old = rel.get(axis_en, 50)
+                        rel[axis_en] = max(0, min(100, old + d))
+                    except (ValueError, TypeError):
+                        pass
+            # axes 보조 업데이트
+            hg = delta.get("호감", 0)
+            if isinstance(hg, (int, float)):
+                if hg > 0:
+                    rel.setdefault("axes", {})["agreeable"] = rel.get("axes", {}).get("agreeable", 0) + 1
+                elif hg < 0:
+                    rel.setdefault("axes", {})["adversarial"] = rel.get("axes", {}).get("adversarial", 0) + 1
+
+    # 4. scene_note → 단기 메모리에 추가
+    note = data.get("scene_note", "")
+    if note and isinstance(note, str):
+        mem = s.setdefault("memory", {})
+        st = mem.setdefault("short_term", [])
+        st.append(note)
+        mem["short_term"] = st[-8:]  # 최근 8개 유지
+
+
+def _run_maestro_preturn(s: dict) -> Optional[dict]:
+    """직전 턴을 분석하여 Maestro 메모리 생성 (동기, DIMA 호출 직전 실행)"""
+    turns = s.get("turns", [])
+    if not turns:
+        return None
+    last_turn = turns[-1]
+    on_screen = s.get("on_screen", [])
+    location = (s.get("world", {}).get("main_stage", {}) or {}).get("name", "라운지")
+
+    # 스크립트 요약 (토큰 절약)
+    script_lines = []
+    for b in last_turn.get("script", []):
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "dialogue":
+            script_lines.append(
+                f"{b.get('character', '?')}({b.get('emotion', '?')}): "
+                f"{b.get('content', '')[:80]}"
+            )
+        elif b.get("type") == "narration":
+            script_lines.append(f"(narr): {b.get('content', '')[:60]}")
+
+    prev_ac = s.get("action_context", {})
+    prev_text = json.dumps(prev_ac, ensure_ascii=False)[:400] if prev_ac else "없음"
+
+    prompt = MAESTRO_PROMPT_V2.format(
+        location=location,
+        on_screen_json=json.dumps(on_screen, ensure_ascii=False),
+        user_input=(last_turn.get("user_input") or "(침묵)")[:100],
+        script_summary="\n".join(script_lines)[:600],
+        prev_context=prev_text,
+    )
+
+    config = genai_types.GenerateContentConfig(
+        response_mime_type="application/json",
+        safety_settings=get_safety_settings(),
+        max_output_tokens=2048,
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=512),
+    )
+
+    result = call_gemini_with_timeout(MODEL_MAESTRO, [prompt], config, timeout_sec=15)
+    if not result:
+        return None
+
+    raw = ""
+    try:
+        raw = result.text or ""
+    except Exception:
+        try:
+            for part in result.candidates[0].content.parts:
+                if hasattr(part, 'text') and part.text:
+                    raw = part.text
+                    break
+        except Exception:
+            return None
+
+    return parse_maestro_response(raw)
+
+
 def run_maestro_sync(s: dict):
     """Run Maestro analysis every 4 turns to update long-term memory, relationships, and CORE-4."""
     turns = s.get("turns", [])
@@ -2961,6 +3308,7 @@ Return JSON with:
         max_output_tokens=2048,
         response_mime_type="application/json",
         safety_settings=get_safety_settings(),
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=512),
         automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
     )
 
@@ -3276,6 +3624,17 @@ def execute_turn():
 
         # Part B: Apply CORE-4 natural decay
         apply_core4_decay(s)
+
+        # === Maestro V2 동기 실행 (DIMA 호출 전) ===
+        if s.get("turns"):  # 첫 턴이 아닐 때만
+            try:
+                maestro_data = _run_maestro_preturn(s)
+                if maestro_data:
+                    apply_maestro_to_session(s, maestro_data)
+                    logger.info(f"Maestro preturn OK: turn {len(s['turns'])}")
+            except Exception as e:
+                logger.warning(f"Maestro preturn failed: {e}")
+                # 실패해도 DIMA는 진행 (기존 context 사용)
 
         # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
         final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
