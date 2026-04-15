@@ -687,6 +687,19 @@ def update_character_last(s: dict, turn_number: int, script: list):
     mem["character_last"] = char_last
 
 
+def update_character_presence(s: dict, turn_id: int):
+    """각 캐릭터가 어느 턴에 on_screen이었는지 기록."""
+    mem = s.setdefault("memory", {})
+    presence = mem.setdefault("character_presence", {})
+    player_name = s.get("player_name", "사용자")
+    for name in s.get("on_screen", []):
+        if name == player_name:
+            continue
+        char_turns = presence.setdefault(name, [])
+        char_turns.append(turn_id)
+        presence[name] = char_turns[-30:]
+
+
 # ─── STEP 5-B: DIMA 프롬프트용 3-Tier 메모리 변환 ───────────
 def build_memory_context_for_dima(s: dict) -> str:
     """3-Tier 메모리를 DIMA 프롬프트용 텍스트로 변환"""
@@ -1752,6 +1765,10 @@ def build_character_block_for_prompt(
             hp_lines.append(f"  한계점: {hp['breaking_point'][:80]}")
         if hp.get("leaky_topics"):
             hp_lines.append(f"  실수로 흘리기 쉬운 것: {','.join(hp['leaky_topics'][:3])}")
+        if hp.get("memory_reliability"):
+            hp_lines.append(f"  기억신뢰도: {hp['memory_reliability']}")
+        if hp.get("memory_distortion_pattern"):
+            hp_lines.append(f"  기억왜곡: {hp['memory_distortion_pattern'][:80]}")
         if hp_lines:
             lines.append("솔직함프로필:\n" + "\n".join(hp_lines))
 
@@ -2341,6 +2358,12 @@ You have been given the full personas of the characters on scene via a system in
 # - monologue에는 캐릭터의 속마음이 대사와 다를 때 그 괴리를 반드시 드러내라.
 #   겉으로 "괜찮아"라고 하면서 속으로 '전혀 괜찮지 않은데'라고 생각하는 것.
 #   이것이 없으면 캐릭터가 얕아진다.
+# - 캐릭터별 차등 기억: [DIFFERENTIAL MEMORY] 섹션에 표시된 캐릭터는 부재 중 일어난 일을 모른다.
+#   다른 캐릭터가 '아까 그 이야기'를 하면 "뭐? 무슨 이야기?"라고 반응해야 한다.
+# - 기억 왜곡: memory_reliability가 low인 캐릭터는 과거 회상 시 사실을 과장하거나 축소할 수 있다.
+#   이것은 '거짓말'이 아니라 '진심으로 그렇게 기억하는 것'이다. monologue에서도 왜곡된 기억을 사실로 믿는다.
+# - 속삭임/귓속말: 유저가 특정 캐릭터에게 속삭이면, 그 내용은 해당 캐릭터만 들은 것이다.
+#   다른 캐릭터는 "뭐래? 나도 좀 알려줘" 식으로 반응하거나, 눈치를 채고 경계하거나, 무시할 수 있다.
 
 # [TURN STRUCTURE]
 # 1. OPENING (2-3문장): 감각 묘사 + 직전 감정 여파
@@ -2730,6 +2753,39 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             "아래 캐릭터가 현재 물리 상태(취기/피로/스트레스)로 인해 방어가 약해진 상태입니다.\n"
             "강제가 아닌 자연스러운 연출로 처리하세요. monologue에서 내면 갈등을 보여주세요.\n"
             + "\n".join(leak_hints)
+        )
+
+    # 캐릭터별 차등 기억 — 부재 중 일어난 일을 모름
+    presence = s.get("memory", {}).get("character_presence", {})
+    recent_turns = s.get("turns", [])[-5:]
+    recent_turn_ids = [t.get("turn_id") for t in recent_turns]
+    absence_alerts = []
+    for name in on_screen_chars:
+        if name == player_name:
+            continue
+        char_present_turns = set(presence.get(name, []))
+        missed = [tid for tid in recent_turn_ids if tid not in char_present_turns]
+        if missed:
+            missed_summaries = []
+            for t in recent_turns:
+                if t.get("turn_id") in missed:
+                    for b in t.get("script", [])[:2]:
+                        if b.get("type") == "dialogue":
+                            missed_summaries.append(
+                                f"T{t['turn_id']}: {b.get('character','?')}의 대사"
+                            )
+                            break
+            absence_alerts.append(
+                f"- {name}: 턴 {','.join(map(str,missed))}에 자리에 없었음. "
+                f"그동안 일어난 일({'; '.join(missed_summaries[:3]) if missed_summaries else '대화'})을 모름. "
+                f"알고 있는 것처럼 반응하면 안 됨. "
+                f"'무슨 이야기 했어?' 식으로 물어보는 것은 가능."
+            )
+    if absence_alerts:
+        director_brief += (
+            "\n\n# [DIFFERENTIAL MEMORY — 캐릭터별 차등 기억]\n"
+            "아래 캐릭터는 특정 턴에 자리에 없었으므로 그때 일어난 일을 모릅니다.\n"
+            + "\n".join(absence_alerts)
         )
 
     # Player Presence 관찰 기법
@@ -3585,6 +3641,9 @@ def bootstrap():
     # --- 캐릭터별 최근 발언 인덱스 갱신 (부트스트랩) ---
     update_character_last(s, 1, final_script)
 
+    # --- 캐릭터 참석 기록 갱신 (부트스트랩) ---
+    update_character_presence(s, 1)
+
     s["traffic_light"] = "GREEN"
     session["session_id"] = sid
     update_all_relationship_stages(s)
@@ -3752,6 +3811,9 @@ def execute_turn():
 
         # --- 캐릭터별 최근 발언 인덱스 갱신 ---
         update_character_last(s, turn_id, final_script)
+
+        # --- 캐릭터 참석 기록 갱신 ---
+        update_character_presence(s, turn_id)
 
         # Recalculate relationship stages
         update_all_relationship_stages(s)
