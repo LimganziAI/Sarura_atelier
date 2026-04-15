@@ -2446,6 +2446,21 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     pulse_result = analyze_user_pulse(s)
     director_brief = inject_director_brief(s.get("ui_settings", {}), s=s, pulse_result=pulse_result)
 
+    # Maestro next_beat 지시 주입
+    next_beat = s.get("next_beat")
+    if next_beat and isinstance(next_beat, dict):
+        lead = next_beat.get("lead_character", "")
+        tactic = next_beat.get("tactic", "")
+        tension = next_beat.get("tension_direction", "maintain")
+        if lead and tactic:
+            director_brief += (
+                f"\n\n# [Maestro 연출 지시 — next_beat]\n"
+                f"- 주도 캐릭터: {lead}\n"
+                f"- 전략: {tactic}\n"
+                f"- 긴장감 방향: {tension}\n"
+                f"→ 이번 턴에서 '{lead}'이(가) 위 전략대로 행동을 주도하라."
+            )
+
     # Self-Check Protocol: inject self-check block for turn >= 1
     turn_count = len(s.get("turns", []))
     if turn_count > 0:
@@ -2846,8 +2861,8 @@ def _local_maestro_fallback(recent_4: list, s: Optional[dict] = None) -> dict:
 
 
 # ─── V5.0 Maestro V2: Pre-DIMA sync pipeline ────────────────
-MAESTRO_PROMPT_V2 = """[ROLE] Maestro — 서사 기억 AI.
-[GOAL] 직전 턴을 분석하여 다음 턴에 필요한 서사 기억을 JSON 생성.
+MAESTRO_PROMPT_V2 = """[ROLE] Maestro — 서사 기억 + 연출 기획 AI.
+[GOAL] 직전 턴을 분석하고, 다음 턴의 서사 방향을 기획한다.
 
 [ABSOLUTE RULES]
 1. JSON만 출력. 마크다운/설명/코드펜스 절대 금지.
@@ -2865,7 +2880,12 @@ MAESTRO_PROMPT_V2 = """[ROLE] Maestro — 서사 기억 AI.
   "rel_delta": {{
     "<캐릭터명>_to_<대상>": {{"호감": <±정수>, "신뢰": <±정수>, "긴장": <±정수>}}
   }},
-  "scene_note": "<1문장: 이번 턴의 핵심 사건/분위기 변화>"
+  "scene_note": "<1문장: 이번 턴의 핵심 사건/분위기 변화>",
+  "next_beat": {{
+    "lead_character": "<다음 턴에서 행동을 주도할 캐릭터 이름>",
+    "tactic": "<그 캐릭터가 사용할 전략. 예: '서툰 칭찬으로 거리 좁히기', '짓궂은 질문으로 본심 떠보기', '갑자기 진지해지며 과거 암시'>",
+    "tension_direction": "<rise | fall | maintain — 다음 턴 긴장감 방향>"
+  }}
 }}
 
 [THIS TURN DATA]
@@ -2957,6 +2977,11 @@ def apply_maestro_to_session(s: dict, data: dict):
         st = mem.setdefault("short_term", [])
         st.append(note)
         mem["short_term"] = st[-8:]  # 최근 8개 유지
+
+    # 5. next_beat → 세션에 저장 (DIMA director brief에서 참조)
+    nb = data.get("next_beat")
+    if nb and isinstance(nb, dict):
+        s["next_beat"] = nb
 
 
 def _run_maestro_preturn(s: dict) -> Optional[dict]:
