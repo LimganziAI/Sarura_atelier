@@ -304,6 +304,9 @@ for _cname, _cdb in CHARACTERS_DB.items():
         "psychological_mirror": _bp.get("psychological_mirror", {}),
         "relationship_development": _cdb.get("relationship_development", {}),
         "heuristic_keys": list(_bp.get("acting_heuristics", {}).keys()),
+        "idle_habits": _bp.get("idle_habits", [])[:3],
+        "honesty_profile": _bp.get("honesty_profile", {}),
+        "physical_tells": _bp.get("physical_tells", {}),
     }
 
 # ─── Safety ──────────────────────────────────────────────────
@@ -576,6 +579,47 @@ def get_relationship_velocity(char_name: str) -> dict:
         "trust_mult": trust_mult,
         "tension_mult": tension_mult,
     }
+
+
+def should_leak_secret(char_name: str, s: dict) -> Optional[str]:
+    """캐릭터가 현재 상태에서 비밀을 실수로 흘릴 수 있는지 판단.
+    흘릴 수 있으면 leaky_topic 문자열 반환, 아니면 None.
+
+    판정 기준:
+    - 취기(intoxication) ≥ 50 AND deception_skill이 low/very low → 높은 확률
+    - 에너지(energy) ≤ 20 AND deception_skill이 medium 이하 → 중간 확률
+    - 스트레스(stress) ≥ 70 AND breaking_point 조건 근접 → 낮은 확률
+    """
+    cdb = CHARACTERS_DB.get(char_name, {})
+    hp = cdb.get("behavior_protocols", {}).get("honesty_profile", {})
+    if not hp:
+        return None
+
+    leaky = hp.get("leaky_topics", [])
+    if not leaky:
+        return None
+
+    skill = hp.get("deception_skill", "medium")
+    skill_score = {"very low": 1, "low": 2, "medium": 3, "medium-high": 4, "high": 5, "very high": 6}.get(skill, 3)
+
+    core4 = s.get("core4", {})
+    intox = core4.get("intoxication", {}).get("value", 0)
+    energy = core4.get("energy", {}).get("value", 70)
+    stress = core4.get("stress", {}).get("value", 30)
+
+    leak_chance = 0.0
+    if intox >= 50 and skill_score <= 3:
+        leak_chance += 0.3
+    if intox >= 70:
+        leak_chance += 0.2
+    if energy <= 20 and skill_score <= 3:
+        leak_chance += 0.15
+    if stress >= 70 and skill_score <= 2:
+        leak_chance += 0.15
+
+    if leak_chance > 0 and random.random() < min(leak_chance, 1.0):
+        return random.choice(leaky)
+    return None
 
 
 def update_all_relationship_stages(s: dict):
@@ -1694,6 +1738,45 @@ def build_character_block_for_prompt(
     if voice_rules:
         lines.append("음성규칙:\n" + "\n".join(voice_rules))
 
+    # ★ 솔직함 프로필 (honesty_profile) ★
+    hp = bp.get("honesty_profile", {})
+    if hp:
+        hp_lines = []
+        if hp.get("deception_skill"):
+            hp_lines.append(f"  거짓말 능력: {hp['deception_skill']}")
+        if hp.get("tell_when_lying"):
+            hp_lines.append(f"  거짓말 신호: {hp['tell_when_lying'][:100]}")
+        if hp.get("defense_mechanism"):
+            hp_lines.append(f"  방어기제: {hp['defense_mechanism'][:80]}")
+        if hp.get("breaking_point"):
+            hp_lines.append(f"  한계점: {hp['breaking_point'][:80]}")
+        if hp.get("leaky_topics"):
+            hp_lines.append(f"  실수로 흘리기 쉬운 것: {','.join(hp['leaky_topics'][:3])}")
+        if hp_lines:
+            lines.append("솔직함프로필:\n" + "\n".join(hp_lines))
+
+    # ★ 무의식적 습관 (idle_habits) ★
+    ih = bp.get("idle_habits", [])
+    if ih:
+        habit_str = " | ".join(
+            f"{h.get('trigger','')}: {h.get('action','')[:60]}"
+            for h in ih[:3]
+        )
+        lines.append(f"무의식습관: {habit_str}")
+
+    # ★ 물리적 상태 반응 (physical_tells) ★
+    pt = bp.get("physical_tells", {})
+    if pt:
+        pt_parts = []
+        if pt.get("fatigue_behavior"):
+            pt_parts.append(f"피로: {pt['fatigue_behavior'][:60]}")
+        if pt.get("embarrassment_trigger"):
+            pt_parts.append(f"곤란: {pt['embarrassment_trigger'][:60]}")
+        if pt.get("pain_tolerance"):
+            pt_parts.append(f"고통내성: {pt['pain_tolerance']}")
+        if pt_parts:
+            lines.append(f"신체반응: {' | '.join(pt_parts)}")
+
     return "\n".join(lines)
 
 
@@ -2112,6 +2195,33 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
         "- emotion_intensity는 1~10 범위에서 상황에 따라 변동시켜라. 항상 5는 금지."
     )
 
+    # 물리적 상태와 행동 연동
+    if s is not None:
+        core4 = s.get("core4", {})
+        energy_val = core4.get("energy", {}).get("value", 70)
+        pain_val = core4.get("pain", {}).get("value", 0)
+        intox_val = core4.get("intoxication", {}).get("value", 0)
+
+        physical_notes = []
+        if energy_val <= 30:
+            physical_notes.append(
+                "에너지 30 이하: 모든 캐릭터의 physical_tells.fatigue_behavior를 묘사에 반영하라. "
+                "대사가 짧아지고, idle_habits 중 '졸림' 트리거가 발동한다."
+            )
+        if pain_val >= 40:
+            physical_notes.append(
+                f"고통 {pain_val}: 캐릭터별 pain_tolerance에 따라 반응이 다르다. "
+                "low인 캐릭터는 행동이 느려지고 표정이 일그러진다. high인 캐릭터도 미세한 신호를 보인다."
+            )
+        if intox_val >= 30:
+            physical_notes.append(
+                f"취기 {intox_val}: 캐릭터별 honesty_profile의 deception_skill이 낮아진다. "
+                "leaky_topics에 해당하는 비밀이 실수로 새어나올 수 있다. "
+                "sacred_secrets는 만취 상태에서도 절대 말하지 않는다."
+            )
+        if physical_notes:
+            parts.append("\n[물리 상태 → 행동 연동]\n" + "\n".join(f"- {n}" for n in physical_notes))
+
     # Event hints — STEP 9: 조건부 이벤트 시드 발동
     if s is not None:
         event_hint = get_event_seed_for_scene(s)
@@ -2214,6 +2324,23 @@ You have been given the full personas of the characters on scene via a system in
 # - 존댓말/반말은 감정·상황·관계 단계에 따라 유동적으로 혼용. tone_mixing_rule 참조.
 # - 같은 인사·감탄사·비유로 턴을 시작하지 않는다.
 # - 2캐릭터 이상 씬에서 모든 캐릭터가 같은 종결어미 패턴을 쓰면 실패.
+#
+# 원칙 5: "몸은 거짓말을 못 한다" (BODY)
+# - 캐릭터의 idle_habits(무의식적 습관)를 나레이션에 자연스럽게 삽입하라.
+# - 매 턴 최소 1명의 캐릭터에게 비언어적 행동을 1회 이상 부여하라.
+# - 캐릭터가 거짓말할 때 honesty_profile의 tell_when_lying 신호를 묘사에 넣어라.
+#   (대사로 "거짓말이다"라고 알려주지 마라. 신체 신호로만 표현하라.)
+# - 물리적 상태(젖음, 추위, 부상, 피로)는 CORE-4 수치를 참조하되,
+#   구체적 묘사는 physical_tells 성향에 따라 캐릭터별로 다르게 표현하라.
+#
+# 원칙 6: "어제를 기억한다" (MEMORY)
+# - 캐릭터별 최근 상태([캐릭터별 최근 상태] 섹션)를 반드시 참조하라.
+# - 직전 턴에서 강한 감정(intensity≥7)이 있었으면, 이번 턴 시작에 여운을 남겨라.
+# - NPC가 2턴 이상 전의 대화 내용을 자연스럽게 언급하면 보너스.
+#   예: "아까 네가 그랬잖아" — 단, 없던 말을 지어내지 마라. 기억 섹션에 있는 것만.
+# - monologue에는 캐릭터의 속마음이 대사와 다를 때 그 괴리를 반드시 드러내라.
+#   겉으로 "괜찮아"라고 하면서 속으로 '전혀 괜찮지 않은데'라고 생각하는 것.
+#   이것이 없으면 캐릭터가 얕아진다.
 
 # [TURN STRUCTURE]
 # 1. OPENING (2-3문장): 감각 묘사 + 직전 감정 여파
@@ -2243,6 +2370,8 @@ You have been given the full personas of the characters on scene via a system in
 # - 특정 호칭(우리 애기, 꼬마 등) 매 턴 반복 금지.
 # - NPC가 항상 긍정적으로만 반응 금지 — 무관심·짜증·피곤도 표현할 것.
 # - 모든 NPC가 같은 문장 구조(주어+감탄+요청)로 말하는 것 금지.
+# - monologue가 대사의 단순 부연설명이면 안 됨. 반드시 대사에 없는 정보(숨긴 감정, 딴 생각, 갈등)를 담아라.
+# - "이 사람은 좋은 사람 같다" 같은 평가성 monologue 금지. 구체적 관찰과 감정으로.
 
 # ============================
 # [PLAYER INTERACTION GUARD]
@@ -2554,6 +2683,54 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             )
     if emo_alerts:
         director_brief += "\n\n# [EMOTION DIVERSITY]\n" + "\n".join(emo_alerts)
+
+    # 감정 관성 — 직전 턴 감정이 다음 턴 시작점이 됨
+    char_last = s.get("memory", {}).get("character_last", {})
+    if char_last:
+        inertia_lines = []
+        for name, info in char_last.items():
+            emo = info.get("emotion", "")
+            intensity = info.get("intensity", 5)
+            if emo and name in [n for n in s.get("on_screen", []) if n != player_name]:
+                if intensity >= 7:
+                    inertia_lines.append(
+                        f"- {name}: 직전 감정 '{emo}'(강도{intensity}) — 강한 감정이므로 "
+                        f"이번 턴 시작 시에도 여운이 남아있어야 함. 갑자기 밝아지거나 무덤덤해지면 안 됨."
+                    )
+                elif intensity >= 4:
+                    inertia_lines.append(
+                        f"- {name}: 직전 감정 '{emo}'(강도{intensity}) — 자연스러운 전환 가능하지만 "
+                        f"첫 대사에 여파가 살짝 묻어나야 함."
+                    )
+        if inertia_lines:
+            director_brief += (
+                "\n\n# [EMOTIONAL INERTIA — 감정 관성]\n"
+                "캐릭터의 감정은 갑자기 리셋되지 않는다. 직전 턴의 감정 상태가 이번 턴의 출발점이다.\n"
+                + "\n".join(inertia_lines)
+            )
+
+    # 비밀 누출 판정
+    leak_hints = []
+    for name in on_screen_chars:
+        if name == player_name:
+            continue
+        leaked = should_leak_secret(name, s)
+        if leaked:
+            cdb = CHARACTERS_DB.get(name, {})
+            hp = cdb.get("behavior_protocols", {}).get("honesty_profile", {})
+            tell = hp.get("tell_when_lying", "")
+            leak_hints.append(
+                f"- {name}: 실수로 '{leaked}'에 대한 단서를 흘릴 수 있는 상태. "
+                f"직접적으로 말하지 않지만, 말실수·행동·표정으로 암시하라. "
+                f"({tell[:60] if tell else '미세한 동요'})"
+            )
+    if leak_hints:
+        director_brief += (
+            "\n\n# [SECRET LEAK CHANCE — 비밀 누출 기회]\n"
+            "아래 캐릭터가 현재 물리 상태(취기/피로/스트레스)로 인해 방어가 약해진 상태입니다.\n"
+            "강제가 아닌 자연스러운 연출로 처리하세요. monologue에서 내면 갈등을 보여주세요.\n"
+            + "\n".join(leak_hints)
+        )
 
     # Player Presence 관찰 기법
     player_name = s.get("player_name", "사용자").replace('"', '').replace("'", "").strip()

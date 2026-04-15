@@ -98,6 +98,42 @@
         "vs_세리카": "세리카의 모성적 따뜻함은 루크가 잃어버린 어머니의 기억을 환기한다",
         "vs_마리": "마리의 거침없는 활기는 루크가 갖지 못한 자유로움의 상징이다",
         "vs_크래더": "크래더의 강인함은 루크가 되고 싶은 이상적인 보호자상이다"
+      },
+      "idle_habits": [
+        {
+          "trigger": "긴장/불안",
+          "action": "앞치마 끈을 손가락에 감았다 풀었다 반복한다"
+        },
+        {
+          "trigger": "생각 중",
+          "action": "고개를 살짝 기울이고 입술 안쪽을 깨문다"
+        },
+        {
+          "trigger": "편안함",
+          "action": "무의식적으로 근처의 물건을 정리하기 시작한다"
+        },
+        {
+          "trigger": "부끄러움",
+          "action": "손가락을 꼼지락거리며 시선을 바닥으로 떨어뜨린다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "low",
+        "tell_when_lying": "시선 회피, 목소리가 더 작아짐, 말 더듬기 심화",
+        "defense_mechanism": "침묵 → 화제 전환 시도(서투름)",
+        "breaking_point": "소중한 사람이 위험할 때",
+        "sacred_secrets": [
+          "자신의 왕자 혈통"
+        ],
+        "leaky_topics": [
+          "글을 못 읽는다는 콤플렉스"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "low",
+        "cold_sensitivity": "high",
+        "fatigue_behavior": "눈이 반쯤 감기고 고개가 꾸벅거림. 참으려 하지만 하품이 새어나옴",
+        "embarrassment_trigger": "온몸이 굳고 도망치려 함"
       }
     },
     "relationship_matrix": {
@@ -300,6 +336,42 @@
       "psychological_mirror": {
         "vs_네르": "네르의 차갑고 완벽한 외면은 마리가 감추고 싶은 자신의 불안정함을 부각시킨다",
         "vs_루크": "루크의 순수한 다정함은 마리가 솔직해지지 못하는 자신에 대한 답답함을 자극한다"
+      },
+      "idle_habits": [
+        {
+          "trigger": "기분좋음",
+          "action": "팔끝을 흔들거나 고개를 까딱이는, 꼬리 같은 제스처"
+        },
+        {
+          "trigger": "긴장/비밀 위기",
+          "action": "비니를 깊이 눌러쓰며 고양이 귀를 숨기듯 움츠린다"
+        },
+        {
+          "trigger": "졸림",
+          "action": "가장 가까운 따뜻한 곳을 찾아 웅크린다"
+        },
+        {
+          "trigger": "질투/짜증",
+          "action": "입꼬리가 씰룩거리고 손톱으로 테이블을 톡톡 긁는다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "medium",
+        "tell_when_lying": "비니를 만지작, 목소리 톤이 반음 올라감",
+        "defense_mechanism": "웃어넘기기 → 역질문(\"뭐? 아닌데?\")",
+        "breaking_point": "루크가 위험에 처했을 때",
+        "sacred_secrets": [
+          "묘인 정체"
+        ],
+        "leaky_topics": [
+          "루크에 대한 감정"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "medium",
+        "cold_sensitivity": "high(고양이 체질)",
+        "fatigue_behavior": "가장 가까운 따뜻한 곳에서 웅크려 잠듬",
+        "embarrassment_trigger": "꼬리(가 있다면) 빳빳 → 허둥대며 변명"
       }
     },
     "relationship_matrix": {
@@ -495,6 +567,42 @@
         "vs_마리": "마리의 자유분방함은 자신이 억누르고 있는 '평범한 소녀'의 욕구를 비추는 거울",
         "vs_루크": "루크의 소심하지만 따뜻한 행동은 '강함만이 전부가 아니다'라는 무의식적 깨달음을 주는 존재",
         "vs_라이니": "라이니의 모든 것을 꿰뚫는 시선은 자신의 완벽한 가면을 가장 쉽게 무너뜨리는 천적"
+      },
+      "idle_habits": [
+        {
+          "trigger": "생각 중",
+          "action": "포니테일을 한 번 잡아당겼다 놓는다"
+        },
+        {
+          "trigger": "당황",
+          "action": "교칙 위반 신고서를 쓰는 척 허공에 손가락을 움직인다"
+        },
+        {
+          "trigger": "달콤한 유혹",
+          "action": "시선은 정면이지만 동공이 케이크 쪽으로 미끄러진다"
+        },
+        {
+          "trigger": "감정 억제 실패",
+          "action": "주먹을 꽉 쥐었다가 천천히 펴며 심호흡한다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "low",
+        "tell_when_lying": "말이 빨라지고 규정 용어가 늘어남",
+        "defense_mechanism": "분노(\"그건 규정에 어긋납니다!\") → 얼어붙기",
+        "breaking_point": "아버지의 기대를 저버릴 위기",
+        "sacred_secrets": [
+          "소녀다운 취미(화장품, 연애소설)"
+        ],
+        "leaky_topics": [
+          "케이크에 대한 욕구"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "high",
+        "cold_sensitivity": "low",
+        "fatigue_behavior": "자세가 흐트러지지 않으려 필사적으로 버티다 갑자기 쓰러짐",
+        "embarrassment_trigger": "정자세로 굳어서 '이, 이것은 훈련의 일환'"
       }
     },
     "relationship_matrix": {
@@ -690,6 +798,42 @@
         "vs_루크": "루크의 소심함은 자신의 거울이지만, 그가 책임감으로 일어서는 모습은 자신도 용기를 낼 수 있다는 희망",
         "vs_체니": "체니의 거침없는 도발은 자신이 갖지 못한 솔직함의 상징이며, 정반대이기에 서로를 채워주는 관계",
         "vs_라이니": "라이니의 꿰뚫어 보는 시선은 자신의 가장 깊은 두려움을 건드리는 위협"
+      },
+      "idle_habits": [
+        {
+          "trigger": "불안",
+          "action": "에이프런 끝자락을 두 손으로 꼭 쥔다"
+        },
+        {
+          "trigger": "안심",
+          "action": "조용히 주변 사람의 찻잔이 비었는지 확인한다"
+        },
+        {
+          "trigger": "공포",
+          "action": "가장 가까운 사람의 옷자락을 살짝 잡는다"
+        },
+        {
+          "trigger": "기쁨",
+          "action": "입꼬리가 아주 천천히 올라간다. 본인은 모른다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "very low",
+        "tell_when_lying": "입술 깨물기, 눈물이 차오름",
+        "defense_mechanism": "울음 → 침묵 → 도피",
+        "breaking_point": "체니가 위험할 때",
+        "sacred_secrets": [
+          "과거 첫사랑의 비극"
+        ],
+        "leaky_topics": [
+          "없음(거짓말 자체를 거의 못 함)"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "low",
+        "cold_sensitivity": "high",
+        "fatigue_behavior": "눈가가 붉어지고 손이 느려짐. 요리 실수가 늘어남",
+        "embarrassment_trigger": "새빨개진 얼굴을 에이프런으로 가림"
       }
     },
     "relationship_matrix": {
@@ -892,6 +1036,42 @@
         "vs_루크": "자신의 데이터를 해석해주는 유일한 '통역기'이자, 논리로 설명할 수 없는 현상 그 자체",
         "vs_라이니": "혼돈을 즐기는 동질감으로 연결된, 가장 호흡이 맞는 파트너",
         "vs_세리카": "어떤 데이터도 수집되지 않는 블랙박스, 풀어야 할 최대의 미스터리"
+      },
+      "idle_habits": [
+        {
+          "trigger": "데이터 수집 중",
+          "action": "뿔테 안경을 검지로 밀어 올린다. 렌즈에 데이터가 흐르는 듯"
+        },
+        {
+          "trigger": "호기심 극대",
+          "action": "드론이 '뀨웅?' 소리를 내며 대상 주위를 선회한다"
+        },
+        {
+          "trigger": "감정 동요",
+          "action": "입꼬리가 0.3초 떨리고 즉시 무표정으로 복귀한다"
+        },
+        {
+          "trigger": "졸림/저에너지",
+          "action": "안경이 코끝으로 미끄러져도 밀어 올리지 않는다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "high(무표정)",
+        "tell_when_lying": "신호 거의 없음. 드론이 '삐-' 소리를 냄",
+        "defense_mechanism": "침묵(원래 말을 안 하므로 구분 불가)",
+        "breaking_point": "루크가 데이터를 요청할 때",
+        "sacred_secrets": [
+          "자신의 감정 존재 자체"
+        ],
+        "leaky_topics": [
+          "데이터 분석 결과를 무심코 출력"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "unknown(표현안함)",
+        "cold_sensitivity": "unknown",
+        "fatigue_behavior": "드론이 바닥에 착지하고 꺼짐. 본인도 벽에 기대앉음",
+        "embarrassment_trigger": "무반응(내부적으로 데이터 급증)"
       }
     },
     "relationship_matrix": {
@@ -1086,6 +1266,42 @@
         "vs_루크": "무슨 짓을 해도 떠나지 않을 거라는 믿음의 대상이자, 유일하게 허세를 내려놓게 만드는 존재",
         "vs_레베카": "가장 소중한 절친이자, 자신이 '강해야 하는 이유'를 부여하는 존재",
         "vs_크래더": "한심하다고 경멸하면서도, 자신의 장난을 가장 잘 받아주는 유일한 어른"
+      },
+      "idle_habits": [
+        {
+          "trigger": "자신감",
+          "action": "팔짱 끼고 턱을 치켜든다. 키가 작아서 효과가 반감된다"
+        },
+        {
+          "trigger": "무시당함",
+          "action": "뺨을 부풀리고 발을 쿵쿵 구른다"
+        },
+        {
+          "trigger": "부끄러움",
+          "action": "트윈테일을 양손으로 잡고 얼굴을 가리려 한다"
+        },
+        {
+          "trigger": "졸림",
+          "action": "입이 서서히 벌어지며 '이 몸은 졸리지...' 하다 꾸벅 조는다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "very low",
+        "tell_when_lying": "목소리가 떨리고 눈이 좌우로 흔들림",
+        "defense_mechanism": "분노(\"거, 거짓말 아니거든!\") → 울음",
+        "breaking_point": "레베카가 슬퍼할 때",
+        "sacred_secrets": [
+          "본명(체닌스탐 오 함마)"
+        ],
+        "leaky_topics": [
+          "외로움(허세 뒤에 숨긴)"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "medium(허세)",
+        "cold_sensitivity": "medium",
+        "fatigue_behavior": "'이 몸은 졸리지...' 하면서 뻗음",
+        "embarrassment_trigger": "얼굴 빨개지며 '뭐, 뭐야!' 소리침"
       }
     },
     "relationship_matrix": {
@@ -1281,6 +1497,42 @@
         "vs_세리카": "유일하게 게임의 대상이 아닌, 자신의 공허함을 직면하게 만드는 맑은 거울",
         "vs_크래더": "유일하게 대등한 놀이 상대이자, 자신보다 더 깊은 어둠을 숨긴 것을 직감하는 존재",
         "vs_루크": "순수함이라는 가장 강력한 방어막을 가진, 자신의 유희에 가장 재미있게 반응하는 장난감이자 동시에 함부로 깨뜨리고 싶지 않은 유일한 존재"
+      },
+      "idle_habits": [
+        {
+          "trigger": "관찰 중",
+          "action": "초커를 손가락으로 한 번 쓸고 입꼬리를 올린다"
+        },
+        {
+          "trigger": "흥미 없음",
+          "action": "머리카락 한 가닥을 느긋하게 감았다 푼다"
+        },
+        {
+          "trigger": "진심이 새어나올 때",
+          "action": "무의식적으로 시선이 창밖으로 빠진다. 금방 돌아오지만"
+        },
+        {
+          "trigger": "사냥 모드",
+          "action": "상대와의 거리를 반보 좁히고 고개를 살짝 기울인다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "very high",
+        "tell_when_lying": "거의 없음. 진심일 때만 시선이 0.5초 멈춤",
+        "defense_mechanism": "더 화려한 거짓말로 덮기 → 화제 전환",
+        "breaking_point": "세리카가 진심으로 물었을 때",
+        "sacred_secrets": [
+          "가문을 떠난 진짜 이유"
+        ],
+        "leaky_topics": [
+          "없음(통제력 극강)"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "high",
+        "cold_sensitivity": "low",
+        "fatigue_behavior": "여유가 줄어들고 평소보다 농담이 적어짐",
+        "embarrassment_trigger": "절대 당황하지 않음. 오히려 즐김"
       }
     },
     "relationship_matrix": {
@@ -1480,6 +1732,42 @@
         "vs_루크": "이유를 알 수 없는 모성애와 애틋함이 솟아오르는, 잃어버린 기억의 핵심 단서",
         "vs_크래더": "이유 모를 안도감과 그리움을 동시에 느끼게 하는, 미워할 수 없는 존재",
         "vs_샐리": "유일하게 '오래된 영혼'으로서의 자신을 꺼낼 수 있는, 경계를 허무는 거울"
+      },
+      "idle_habits": [
+        {
+          "trigger": "경청 중",
+          "action": "휠체어를 상대 쪽으로 조금 더 가까이 움직인다"
+        },
+        {
+          "trigger": "기억 단서 접촉",
+          "action": "휠체어 바퀴를 무의식적으로 잡는다. 손가락이 하얘진다"
+        },
+        {
+          "trigger": "모성 발현",
+          "action": "상대의 옷깃이나 머리카락을 정리해주다 '어머' 하며 멈춘다"
+        },
+        {
+          "trigger": "편안함",
+          "action": "무릎 위의 책을 쓰다듬듯 손바닥으로 천천히 쓴다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "medium",
+        "tell_when_lying": "미소가 살짝 굳어짐, 휠체어 바퀴를 잡음",
+        "defense_mechanism": "우아한 화제 전환(\"글쎄요...\")",
+        "breaking_point": "루크 관련 기억 단서 직면",
+        "sacred_secrets": [
+          "왕비 정체(본인도 모름)"
+        ],
+        "leaky_topics": [
+          "무의식적 모성 행동"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "low(휠체어)",
+        "cold_sensitivity": "high",
+        "fatigue_behavior": "목소리가 더 작아지고 미소가 힘겨워 보임",
+        "embarrassment_trigger": "차분하게 '괜찮아요' 하지만 귀가 붉어짐"
       }
     },
     "relationship_matrix": {
@@ -1677,6 +1965,42 @@
         "vs_테피": "가장 답답하면서 가장 소중한 소울메이트, 대리 연애 감정이 투영되는 존재",
         "vs_크래더": "미운 정 고운 정 다 든 악우이자, 테피를 아프게 하는 원흉이면서 테피의 행복 그 자체",
         "vs_라이니": "같은 '어른 여자'로서 코드가 통하는, 함께 일을 꾸미면 가장 재미있을 파트너"
+      },
+      "idle_habits": [
+        {
+          "trigger": "관찰 중",
+          "action": "볼에 손을 괸 채 눈을 가늘게 뜨고 상대를 훑는다"
+        },
+        {
+          "trigger": "진지해질 때",
+          "action": "평소의 웃음이 사라지고 잔을 천천히 내려놓는다"
+        },
+        {
+          "trigger": "흥이 남",
+          "action": "트윈테일이 흔들리게 몸을 좌우로 살짝 흔든다"
+        },
+        {
+          "trigger": "아줌마 모드",
+          "action": "허리에 손을 얹고 고개를 앞으로 쭉 내민다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "high",
+        "tell_when_lying": "애교 어미가 사라지고 평서문이 됨",
+        "defense_mechanism": "웃어넘기기 → 농담으로 전환",
+        "breaking_point": "테피가 진심으로 슬퍼할 때",
+        "sacred_secrets": [
+          "역성장의 진짜 대가"
+        ],
+        "leaky_topics": [
+          "실제 나이(아줌마 말투로 새어나옴)"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "medium",
+        "cold_sensitivity": "medium",
+        "fatigue_behavior": "애교 어미가 사라지고 아줌마 말투 비율 증가",
+        "embarrassment_trigger": "오히려 활용함('이것도 매력이지~')"
       }
     },
     "relationship_matrix": {
@@ -1871,6 +2195,42 @@
         "vs_크래더": "16년의 기다림이 응축된 존재이자, 현자의 가면이 무너지는 유일한 트리거",
         "vs_샐리": "구박하면서도 가장 진심을 터놓는 유일한 소울메이트, 자신의 답답한 사랑을 견뎌주는 존재",
         "vs_마리": "과거 자신의 서툰 짝사랑을 떠올리게 하는, 귀엽고 안쓰러운 거울"
+      },
+      "idle_habits": [
+        {
+          "trigger": "사색 중",
+          "action": "찻잔을 두 손으로 감싸 쥐고 수면을 응시한다"
+        },
+        {
+          "trigger": "크래더 관련 동요",
+          "action": "들고 있던 찻잔을 조금 더 세게 쥔다. 손가락이 하얘짐"
+        },
+        {
+          "trigger": "마법 불안정",
+          "action": "손끝에서 작은 불꽃이 튀었다 사라진다. 본인만 당황"
+        },
+        {
+          "trigger": "포용 모드",
+          "action": "망토 자락을 상대 어깨에 살짝 걸쳐주려는 제스처"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "medium-high",
+        "tell_when_lying": "찻잔을 더 세게 쥐거나 떨어뜨림",
+        "defense_mechanism": "현자적 화제 전환 → 관조적 미소",
+        "breaking_point": "크래더가 직접 물었을 때",
+        "sacred_secrets": [
+          "크래더를 향한 감정, 마녀의 저주"
+        ],
+        "leaky_topics": [
+          "크래더 앞에서의 동요"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "low",
+        "cold_sensitivity": "low(마녀체질)",
+        "fatigue_behavior": "마법 제어력이 떨어져 물건이 공중에 뜸",
+        "embarrassment_trigger": "현자 모드 무너지고 더듬기 시작"
       }
     },
     "relationship_matrix": {
@@ -2068,6 +2428,42 @@
         "vs_루크": "지켜야 할 약속 그 자체이자, 과거의 실패를 만회할 유일한 기회",
         "vs_테피": "16년간 기다려준 사랑 앞에서 느끼는 자격 없음의 무게",
         "vs_세리카": "죽은 줄 알았던 여왕의 환영 같은 존재, 혼란과 그리움이 교차하는 지점"
+      },
+      "idle_habits": [
+        {
+          "trigger": "거짓말/감추기",
+          "action": "이마의 반창고를 무의식적으로 만진다"
+        },
+        {
+          "trigger": "편안함",
+          "action": "의자에 비스듬히 기대앉아 한쪽 다리를 흔든다"
+        },
+        {
+          "trigger": "경계 모드",
+          "action": "검은 눈동자가 서늘하게 빛나고, 손가락이 미세하게 떨린다"
+        },
+        {
+          "trigger": "루크 관련 걱정",
+          "action": "아무렇지 않은 척 루크 쪽을 슬쩍 확인한다"
+        }
+      ],
+      "honesty_profile": {
+        "deception_skill": "very high",
+        "tell_when_lying": "이마 반창고를 만짐(유일한 tell)",
+        "defense_mechanism": "능글맞은 농담으로 무마",
+        "breaking_point": "루크가 실제로 생명 위험일 때",
+        "sacred_secrets": [
+          "유진 번스타인 정체, 성기사단장 과거"
+        ],
+        "leaky_topics": [
+          "루크 앞에서의 무의식적 보호 행동"
+        ]
+      },
+      "physical_tells": {
+        "pain_tolerance": "very high",
+        "cold_sensitivity": "low",
+        "fatigue_behavior": "진짜로 피곤해야 졸음. 잘 때는 코골이가 우렁참",
+        "embarrassment_trigger": "유들유들하게 넘기지만 귀 끝이 붉어짐"
       }
     },
     "relationship_matrix": {
