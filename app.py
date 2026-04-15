@@ -1877,7 +1877,7 @@ def analyze_user_pulse(s: dict) -> dict:
             ah = cdb.get("behavior_protocols", {}).get("acting_heuristics", {})
             ah_items = list(ah.items())
             if ah_items:
-                hk, hv = random.choice(ah_items)
+                _, hv = random.choice(ah_items)
                 if hv:
                     dynamic_suggestions.append(f"{name}: {str(hv)[:80]}")
         if not dynamic_suggestions:
