@@ -2293,7 +2293,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     """Returns (system_instruction, main_prompt, pulse_result)."""
     player_name = s.get("player_name", "사용자")
     world = s.get("world", {})
-    location = (world.get("space", {}) or {}).get("current_location", "라운지")
+    location = world.get("space", {}).get("current_location", "라운지")
     on_screen_chars = s.get("on_screen", [])
 
     system_instruction = build_adaptive_instruction(s)
