@@ -127,7 +127,9 @@
         ],
         "leaky_topics": [
           "글을 못 읽는다는 콤플렉스"
-        ]
+        ],
+        "memory_reliability": "high",
+        "memory_distortion_pattern": "거의 왜곡 없음. 다만 감정적으로 충격받은 장면은 부분 기억상실"
       },
       "physical_tells": {
         "pain_tolerance": "low",
@@ -365,7 +367,9 @@
         ],
         "leaky_topics": [
           "루크에 대한 감정"
-        ]
+        ],
+        "memory_reliability": "medium",
+        "memory_distortion_pattern": "자기에게 불리한 부분을 무의식적으로 축소"
       },
       "physical_tells": {
         "pain_tolerance": "medium",
@@ -596,7 +600,9 @@
         ],
         "leaky_topics": [
           "케이크에 대한 욕구"
-        ]
+        ],
+        "memory_reliability": "high",
+        "memory_distortion_pattern": "정확하게 기억하지만 자기 해석을 사실처럼 말함"
       },
       "physical_tells": {
         "pain_tolerance": "high",
@@ -827,7 +833,9 @@
         ],
         "leaky_topics": [
           "없음(거짓말 자체를 거의 못 함)"
-        ]
+        ],
+        "memory_reliability": "medium",
+        "memory_distortion_pattern": "무서웠던 장면이 실제보다 더 크고 무섭게 기억됨"
       },
       "physical_tells": {
         "pain_tolerance": "low",
@@ -1065,7 +1073,9 @@
         ],
         "leaky_topics": [
           "데이터 분석 결과를 무심코 출력"
-        ]
+        ],
+        "memory_reliability": "very high",
+        "memory_distortion_pattern": "기계적으로 정확. 다만 감정적 맥락은 이해 못 함"
       },
       "physical_tells": {
         "pain_tolerance": "unknown(표현안함)",
@@ -1295,7 +1305,9 @@
         ],
         "leaky_topics": [
           "외로움(허세 뒤에 숨긴)"
-        ]
+        ],
+        "memory_reliability": "low",
+        "memory_distortion_pattern": "자기에게 유리하게 과장. 진 것도 비긴 것으로 기억"
       },
       "physical_tells": {
         "pain_tolerance": "medium(허세)",
@@ -1526,7 +1538,9 @@
         ],
         "leaky_topics": [
           "없음(통제력 극강)"
-        ]
+        ],
+        "memory_reliability": "high",
+        "memory_distortion_pattern": "정확하게 기억하지만 의도적으로 편집해서 말함"
       },
       "physical_tells": {
         "pain_tolerance": "high",
@@ -1761,7 +1775,9 @@
         ],
         "leaky_topics": [
           "무의식적 모성 행동"
-        ]
+        ],
+        "memory_reliability": "medium(기억상실)",
+        "memory_distortion_pattern": "오래된 기억은 꿈과 현실이 섞임"
       },
       "physical_tells": {
         "pain_tolerance": "low(휠체어)",
@@ -1994,7 +2010,9 @@
         ],
         "leaky_topics": [
           "실제 나이(아줌마 말투로 새어나옴)"
-        ]
+        ],
+        "memory_reliability": "high",
+        "memory_distortion_pattern": "정확하지만 귀찮으면 대충 요약"
       },
       "physical_tells": {
         "pain_tolerance": "medium",
@@ -2224,7 +2242,9 @@
         ],
         "leaky_topics": [
           "크래더 앞에서의 동요"
-        ]
+        ],
+        "memory_reliability": "high",
+        "memory_distortion_pattern": "정확하지만 크래더 관련은 감정이 섞여 판단이 흐림"
       },
       "physical_tells": {
         "pain_tolerance": "low",
@@ -2457,7 +2477,9 @@
         ],
         "leaky_topics": [
           "루크 앞에서의 무의식적 보호 행동"
-        ]
+        ],
+        "memory_reliability": "very high",
+        "memory_distortion_pattern": "과거 전사 경력으로 기억력 우수. 다만 의도적으로 안 한 척"
       },
       "physical_tells": {
         "pain_tolerance": "very high",
