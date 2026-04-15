@@ -617,7 +617,7 @@ def should_leak_secret(char_name: str, s: dict) -> Optional[str]:
     if stress >= 70 and skill_score <= 2:
         leak_chance += 0.15
 
-    if leak_chance > 0 and random.random() < leak_chance:
+    if leak_chance > 0 and random.random() < min(leak_chance, 1.0):
         return random.choice(leaky)
     return None
 
