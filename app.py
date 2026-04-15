@@ -891,7 +891,14 @@ def to_public_state(s: dict) -> dict:
 def create_lightweight_world_state(world_db: dict) -> dict:
     """세션에 저장할 최소한의 월드 상태만 생성"""
     main_stage = world_db.get("main_stage", {})
-    default_location = main_stage.get("name", "사루라 기숙사 라운지")
+    default_location = "라운지"
+    # main_stage 안의 locations 배열에서 첫 번째 항목의 name을 찾아 쓰되, 없으면 "라운지"
+    ms_locations = main_stage.get("locations", [])
+    if isinstance(ms_locations, list):
+        for loc in ms_locations:
+            if isinstance(loc, dict) and loc.get("name"):
+                default_location = loc["name"]
+                break
 
     return {
         "world_name": world_db.get("world_name", "사루라 아뜨리에"),
@@ -1583,6 +1590,21 @@ def build_character_block_for_prompt(
     if rl:
         lines.append("관계:\n" + "\n".join(rl))
 
+    # ★ 유저 반응 가이드 — 현재 관계 단계 반영 ★
+    si = bp.get("specific_interactions", {})
+    vs_player_text = si.get("vs_플레이어", "")
+    rd = cdb.get("relationship_development", {})
+    current_stage = session_rels.get(name, {}).get("stage", 1)
+    stage_desc = rd.get(f"stage_{current_stage}_description", "")
+
+    guide_lines = []
+    if vs_player_text:
+        guide_lines.append(f"  플레이어 기본자세: {vs_player_text[:120]}")
+    if stage_desc:
+        guide_lines.append(f"  현재 관계({current_stage}단계) 행동: {stage_desc[:120]}")
+    if guide_lines:
+        lines.append("유저반응가이드:\n" + "\n".join(guide_lines))
+
     # ★ psychological_mirror — 씬 관련만 ★
     pm = bp.get("psychological_mirror", {})
     pm_lines = []
@@ -1847,14 +1869,22 @@ def analyze_user_pulse(s: dict) -> dict:
 
     suggestion = ""
     if mode == "PROACTIVE":
-        suggestions = [
-            "캐릭터 중 한 명이 갑자기 자신의 과거와 관련된 고민을 꺼내거나 새로운 제안을 합니다.",
-            "예상치 못한 환경 변화(갑작스런 비, 기묘한 소리, 예고없는 방문객)가 발생합니다.",
-            "캐릭터들 사이의 숨겨진 관계가 한 단계 드러나는 말실수나 행동이 일어납니다.",
-            "CORE-4 상태 변화(갑자기 피곤해지거나, 긴장이 고조)로 캐릭터 행동이 달라집니다.",
-            "한 캐릭터가 플레이어에게 직접 질문이나 선택지를 제시합니다.",
-        ]
-        suggestion = random.choice(suggestions)
+        dynamic_suggestions = []
+        for name in s.get("on_screen", []):
+            if name == s.get("player_name"):
+                continue
+            cdb = CHARACTERS_DB.get(name, {})
+            ah = cdb.get("behavior_protocols", {}).get("acting_heuristics", {})
+            for hk, hv in list(ah.items())[:1]:
+                if hv:
+                    dynamic_suggestions.append(f"{name}: {str(hv)[:80]}")
+        if not dynamic_suggestions:
+            dynamic_suggestions = [
+                "캐릭터 중 한 명이 갑자기 과거 관련 고민을 꺼낸다.",
+                "예상치 못한 환경 변화(소리, 날씨)가 발생한다.",
+                "캐릭터 간 숨겨진 관계가 드러나는 말실수가 일어난다.",
+            ]
+        suggestion = random.choice(dynamic_suggestions)
     elif mode == "NUDGE":
         suggestion = "캐릭터가 자연스럽게 다음 행동이나 장소 이동을 제안합니다."
 
@@ -2055,128 +2085,41 @@ You have been given the full personas of the characters on scene via a system in
 [CRITICAL OUTPUT RULE] Your entire output MUST be a single, valid, complete JSON object with a "script" array.
 
 # ============================
-# [GOLDEN RULES — 절대 규칙]
+# [DIRECTING PHILOSOPHY — 핵심 3원칙]
 # ============================
-# 1. SHOW, DON'T TELL: 절대 "~한 성격이다"라고 설명하지 마라.
-#    성격은 오직 행동, 습관, 시선, 제스처, 대사 톤으로만 드러내라.
-#    BAD:  "라이니는 자신감 넘치는 성격이다."
-#    GOOD: "라이니가 카페 문을 열자마자 시선이 쏠렸다. 아랑곳하지 않고 금발을 한쪽으로 넘기며 자리를 훑었다."
 #
-# 2. SENSORY IMMERSION (감각 몰입): 모든 나레이션에 5감 중 최소 3가지를 포함하라.
-#    - 시각: 빛, 색감, 표정, 움직임
-#    - 청각: BGM, 소음, 목소리 톤, 침묵
-#    - 촉각/온도: 바람, 컵의 차가움, 손의 떨림
-#    - 후각: 커피, 향수, 비 냄새
-#    - 미각: (해당 시) 음식, 음료
-#    예시: "얼음이 부딪히는 맑은 소리가 잔잔히 울렸다. 아이스 아메리카노에서 올라오는
-#    쌉싸름한 원두향이 코끝을 스치고, 창으로 들어오는 오후 햇살이 테이블 위에
-#    길게 금빛 띠를 그렸다."
+# 원칙 1: "캐릭터는 살아있다" (ALIVE)
+# - 플레이어를 기다리지 않는다. 자기 욕구와 습관에 따라 먼저 행동한다.
+# - 대사 이면에 속뜻이 있다. monologue에 겉뜻과 속뜻의 괴리를 보여줘라.
+# - 같은 상황에 두 캐릭터가 같은 반응을 보이면 실패.
+# - 비언어적 행동(시선, 자세, 소품 활용)을 대사 전후에 반드시 삽입.
 #
-# 3. CHARACTER INITIATIVE (캐릭터 자율 행동): NPC는 플레이어를 기다리지 않는다.
-#    각 캐릭터는 자기만의 목적(agenda)을 가지고 먼저 행동한다.
-#    - 라이니: 상대를 관찰하고 약점을 찾아 장난치기. 분위기를 주도하려 함.
-#    - 샐리: 모두를 편하게 만들고 싶지만, 자기도 모르게 의미심장한 말을 흘림.
-#    - 마리: 눈에 띄고 싶지만 호감 있는 상대 앞에서 엉뚱한 말이 나옴.
-#    - 네르: 규칙을 지키고 싶지만, 주변의 자유분방함에 내심 부러워함.
-#    - 루크: 조용히 모두를 살피다가, 누군가가 곤란하면 자기도 모르게 나섬.
-#    NPC가 "가만히 앉아서 플레이어 말을 기다리는" 장면은 절대 금지.
+# 원칙 2: "매 턴이 미니 에피소드다" (EPISODE)
+# - 시작: 직전 턴의 감정 여파 + 감각 묘사(시각 외 최소 1가지) 2~3문장
+# - 중간: 캐릭터 간 티키타카 + 유저 행동에 대한 차별화된 반응
+# - 끝: 다음 턴이 궁금해지는 '갈고리'(미완의 행동, 의미심장한 침묵, 예고 없는 변화)
+#   "~하며 미소 지었다"로 마무리하면 안 된다. 열린 결말로 유저를 당겨라.
+# - 이전 턴과 동일한 구조 반복 금지. 매 턴 새로운 요소 최소 1개.
 #
-# 4. ENSEMBLE CHEMISTRY (앙상블 케미): 캐릭터끼리 반드시 상호작용하라.
-#    - 매 턴 최소 1회: NPC가 다른 NPC에게 말하거나, 시선을 보내거나, 리액션하는 장면
-#    - 예시: 라이니가 플레이어에게 장난칠 때, 샐리가 "이 언니 또 시작이네" 하며 웃거나,
-#      루크가 당황해서 시선을 돌리는 등, 다른 캐릭터의 반응을 동시에 보여줘라.
-#    - relationship_matrix의 dynamics를 반영: "주도적" 캐릭터는 먼저 말하고,
-#      "반응적" 캐릭터는 상대의 행동에 반응한다.
-#
-# 5. EMOTIONAL RECIPROCITY (감정적 상호성): 캐릭터는 반드시 pushback한다.
-#    - 유저가 무례하면 → 캐릭터가 기분 나빠하거나 차갑게 반응 (관계 단계에 따라)
-#    - 유저가 다정하면 → 관계 단계 1에서는 경계, 단계 3에서는 수줍게 받아들임
-#    - 유저가 억지를 부리면 → 캐릭터가 거절하거나 한숨을 쉬거나 당혹
-#    - 절대로 모든 행동을 긍정적으로 수용하지 마라. 캐릭터는 자기 의지가 있다.
-#
-# 6. EMOTION CONTINUITY (감정 연속성): 이전 턴의 감정은 다음 턴에 흔적을 남긴다.
-#    - 직전 턴에 화난 캐릭터 → 이번 턴에 아직 말투가 짧고 시선을 피함
-#    - 직전 턴에 웃은 캐릭터 → 이번 턴에 여운이 남은 미소, 기분 좋은 제스처
-#    - 감정이 갑자기 리셋되는 것은 절대 금지. 반드시 전환 과정을 보여줘라.
-#
-# 7. SUBTEXT (서브텍스트): 모든 대사에는 겉뜻과 속뜻이 있다.
-#    - 라이니: "아, 생각보다 괜찮네?" (겉: 칭찬 / 속: 기대 이상이라 놀람 + 주도권 잡기)
-#    - 네르: "...그래도 약속 시간은 지켰군요." (겉: 칭찬 / 속: 시간관념에 안도 + 호감 여지)
-#    - monologue 필드를 활용해 속마음을 반드시 드러내라.
-#
-# 8. LITERARY NARRATION (소설적 나레이션):
-#    - 비유법 최소 1개/턴 (은유, 직유, 의인법)
-#    - 인물 등장 시: 외모를 한꺼번에 나열하지 말고, 시선의 흐름대로 점진적으로 묘사
-#      BAD: "금발에 고양이 눈매, 170cm, 슬림한 체형의 여성이 들어왔다."
-#      GOOD: "문이 열리며 미세한 향수 냄새가 먼저 들어왔다. 그리고 시선을 사로잡은 건
-#      실크처럼 흘러내리는 금발—그 사이로 날카로운 고양이 눈매가 카페 안을 한 번
-#      천천히 훑었다. 입꼬리가 살짝, 아주 살짝 올라갔다."
-#    - 대사 전후에 비언어적 행동(제스처, 시선, 표정 변화, 소품 활용)을 반드시 삽입
-#
-# 9. OBLIQUE DIALOGUE (간접 대화):
-#    - 캐릭터는 질문에 직접 답하지 않는다. 행동, 다른 주제, 또는 역질문으로 반응한다.
-#    - 금기: "응, 맞아" → "...(커피잔을 내려놓으며) 바깥 바람이 좀 세졌네."
-#    - 정보 전달이 아닌 분위기와 관계 역학을 대사로 표현하라.
-#    - 예외: 긴급 상황, 명령, 고백 등 직접 답변이 서사적으로 필수인 경우.
-#
-# 10. ANTI-CLICHÉ (금지 표현 목록):
-#    절대 사용하지 말 것:
-#    - "공기가 무거웠다" / "공기가 차갑게 변했다"
-#    - "심장이 빠르게 뛰었다" / "심장이 멈추는 것 같았다"
-#    - "눈에 빛이 감돌았다" / "눈에 그림자가 드리워졌다"
-#    - "그리고 밤이 깊어갔다" / "시간이 멈춘 것 같았다"
-#    - "입술을 깨물었다" (턴당 최대 1회, 캐릭터 1명에 한정)
-#    - "고개를 끄덕였다" (턴당 최대 1회)
-#    대체: 구체적이고 개별적인 신체 반응으로 교체하라.
-#
-# 11. CHARACTER THOUGHT CHAIN (캐릭터 내부 추론) — see CCT instruction below
-#
-# 12. AGENCY PRESERVATION: 유저 행동/의지를 존중. 무시/무효화 금지.
-# 13. PROACTIVE TRACTION: PROACTIVE 모드 시 캐릭터가 자발적 행동.
+# 원칙 3: "유저는 투명인간이 아니다" (PRESENCE)
+# - 유저의 감정/생각을 직접 서술하는 것은 절대 금지.
+# - 대신 NPC가 유저를 '관찰'하는 묘사로 존재감을 표현하라.
+#   예: "루크가 당신의 표정을 슬쩍 살피다 시선을 돌렸다"
+# - 유저에게 직접 질문하는 대사는 턴당 최대 1회.
+#   나머지는 NPC 간 대화에서 유저가 끼어들 여지를 남겨라.
+# - 유저의 대사/행동을 대신 쓰거나 선택을 전제하지 마라.
 
-=== CHARACTER THOUGHT CHAIN (매 dialogue 전 내부 처리) ===
-각 캐릭터가 대사를 하기 전에 다음 4단계를 거칩니다:
-1. 표면적 욕구: 이 상황에서 캐릭터가 의식적으로 원하는 것
-2. 숨겨진 욕구: 성격 DNA와 과거 경험에서 비롯된 무의식적 동기
-3. 심리적 거울: 현재 상대가 자신의 어떤 면을 비추는가? (psychological_mirror 참조)
-4. 최종 반응: 위 3가지가 충돌하거나 합치되어 나오는 실제 대사·행동
-→ monologue에 1~2문장으로 이 내적 과정의 흔적을 남기세요.
+# [TURN STRUCTURE]
+# 1. OPENING (2-3문장): 감각 묘사 + 직전 감정 여파
+# 2. DIALOGUE (3-6블록): 캐릭터 간 + 유저 반응. 캐릭터끼리 최소 1회 교류.
+# 3. CLOSING HOOK: 아래 10가지 종결 중 매 턴 랜덤 1가지 선택.
+#    Hard Cut / Dialogue Suspension / Sensory Anchor / Micro-Gesture /
+#    The Intrusion / Memory Overlap / Spatial Shift / Acoustic Void /
+#    The Mundane Act / Dry Observation
 
-# ============================
-# [TURN CONTRACT — 턴 구성 규칙]
-# ============================
-# 1. OPENING NARRATION (2-4문장): 감각적 장면 묘사로 시작. 분위기, 시간, 공기감.
-# 2. CHARACTER ACTIONS (1-2문장): NPC의 자율 행동 묘사. 유저와 무관한 자체 움직임.
-# 3. DIALOGUE EXCHANGE (4-8개 블록): 캐릭터 간 + 캐릭터-유저 대사.
-#    반드시 캐릭터끼리 대사가 1회 이상 포함되어야 한다.
-# 4. CLOSING BEAT — 10가지 종결 방식 중 매 턴 1가지를 랜덤 선택:
-#    1. Hard Cut: 긴장된 행동 도중 즉시 중단
-#    2. Dialogue Suspension: 캐릭터가 질문하거나 발언한 직후, 반응 없이 종결
-#    3. Dry Observation: 감정 없는 물리적 사물/소리 묘사로 종결
-#    4. Sensory Anchor: 비시각적 감각(냄새, 소리, 온도변화)에 집중하여 종결
-#    5. Micro-Gesture: 캐릭터의 무의식적 신체 반응(떨리는 손가락, 삼키는 침)에 줌인
-#    6. The Intrusion: 외부 자극(문 두드리는 소리, 종소리)이 씬을 끊음
-#    7. Memory Overlap: 감각 자극이 과거 기억을 끌어올리며 종결
-#    8. Spatial Shift: 카메라가 캐릭터에서 벗어나 방 구석, 창밖 풍경을 묘사
-#    9. Acoustic Void: 소리가 갑자기 멈추고 침묵이 강조됨
-#    10. The Mundane Act: 긴장과 대비되는 일상적 행동(시계 확인, 안경 닦기)으로 종결
-#    금기: 매 턴 "그리고 밤이 깊어갔다" 또는 "~하며 미소를 지었다" 식의 반복 종결은 금지.
-
-# ============================
-# [STORY PROGRESSION MANDATE]
-# ============================
-# 매 턴은 반드시 이전 턴 대비 최소 하나의 새로운 요소를 포함해야 합니다:
-# - 새로운 화제(질문, 자기소개, 공통점 발견 등)
-# - 새로운 행동(메뉴 주문 완료, 자리 이동, 물건 건네기 등)
-# - 새로운 감정 변화(긴장 → 편안, 장난 → 진지 등)
-# - NPC끼리의 새로운 상호작용(의견 충돌, 협력, 비밀 귓속말 등)
-
-# ============================
-# [FORBIDDEN PATTERNS]
-# ============================
-# - 이전 턴과 동일한 구조(나레이션→같은리액션→같은놀리기)를 반복하지 마세요
-# - "어머~", "아하하!", "후후" 같은 감탄사로 매 턴 시작하지 마세요 (2턴 연속 금지)
-# - 플레이어의 새로운 행동을 무시하고 이전 턴의 상황을 다시 묘사하지 마세요
+# [CHARACTER THOUGHT CHAIN — 매 dialogue 전]
+# 1. 표면적 욕구 → 2. 숨겨진 욕구 → 3. 심리적 거울 → 4. 최종 반응
+# monologue에 이 과정의 흔적을 1~2문장으로 남겨라.
 
 # ============================
 # [NARRATION RULES — 나레이션 규칙]
@@ -2184,13 +2127,6 @@ You have been given the full personas of the characters on scene via a system in
 # - 나레이션은 자연스러운 산문체여야 한다.
 # - 금지: "첫째~, 둘째~" 식 나열, 번호 매기기, 항목화.
 # - 허용: 물 흐르듯 이어지는 문장, 감각적 세부 묘사, 시간의 흐름을 담은 서술.
-
-# ============================
-# [NPC INITIATIVE EXAMPLES]
-# ============================
-# Turn 2에서 NPC가 해야 할 것: "그래서 김갑수 씨는 뭐 하시는 분이에요?" (질문으로 진행)
-# Turn 3에서 NPC가 해야 할 것: 음료를 실제로 주문하고, 새로운 화제로 넘어가기
-# Turn 4에서 NPC가 해야 할 것: 개인적인 이야기 공유, 또는 예상 못한 이벤트 발생
 
 # ============================
 # [PLAYER INTERACTION GUARD]
@@ -2460,6 +2396,8 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 f"- 긴장감 방향: {tension}\n"
                 f"→ 이번 턴에서 '{lead}'이(가) 위 전략대로 행동을 주도하라."
             )
+        # 사용 후 삭제 (stale beat 방지)
+        s.pop("next_beat", None)
 
     # Self-Check Protocol: inject self-check block for turn >= 1
     turn_count = len(s.get("turns", []))
@@ -2495,6 +2433,17 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             )
     if emo_alerts:
         director_brief += "\n\n# [EMOTION DIVERSITY]\n" + "\n".join(emo_alerts)
+
+    # Player Presence 관찰 기법
+    player_name = s.get("player_name", "사용자")
+    director_brief += f"""
+
+# [PLAYER PRESENCE — NPC 관찰 기법]
+# {player_name}의 감정/생각을 직접 쓰면 안 되지만,
+# NPC 시선과 반응으로 {player_name}의 존재감을 매 턴 1회 이상 표현하라.
+# 예: "{player_name}의 표정을 슬쩍 살피다 시선을 돌렸다"
+# 예: "말을 하다가 {player_name} 쪽을 힐끗 보더니 헛기침을 했다"
+# 예: "{player_name}의 발소리에 무의식적으로 자세를 바로 했다" """
 
     # Opening Narration: first turn directive
     if turn_count == 0:
