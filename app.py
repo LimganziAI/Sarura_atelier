@@ -589,23 +589,6 @@ def update_memory_tiers(s: dict, user_input: str, final_script: list):
         long_term.append(f"{block_label} {compressed[:350]}")
         mem["long_term"] = long_term[-10:]
 
-    # ── 관계 단계 자동 승격 체크 ──
-    rels = s.get("relationships", {})
-    for char_name, rel in rels.items():
-        if not isinstance(rel, dict):
-            continue
-        aff = rel.get("affection", 50)
-        tru = rel.get("trust", 50)
-        current_stage = rel.get("stage", 1)
-
-        combined = aff + tru
-        if combined >= 160 and current_stage < 4:
-            rel["stage"] = 4
-        elif combined >= 130 and current_stage < 3:
-            rel["stage"] = 3
-        elif combined >= 100 and current_stage < 2:
-            rel["stage"] = 2
-
 
 # ─── STEP 5-B: DIMA 프롬프트용 3-Tier 메모리 변환 ───────────
 def build_memory_context_for_dima(s: dict) -> str:
@@ -1618,459 +1601,6 @@ def build_character_block_for_prompt(
     return "\n".join(lines)
 
 
-def _build_system_instruction_legacy(s: dict, on_screen_chars: list) -> str:
-    """Legacy V4.5 system instruction builder. Kept as backup."""
-    packets = []
-    player_name = s.get("player_name", "사용자")
-
-    # 기억 레이어 주입
-    memory = s.get("memory", {})
-    core_pins = memory.get("core_pins", [])
-    long_term = memory.get("long_term", [])
-    flow_digest = s.get("flow_digest_10", [])
-
-    memory_block = ""
-    if core_pins:
-        memory_block += "\n=== CORE PINS (절대 불변 사실) ===\n"
-        for pin in core_pins[-10:]:
-            pin_text = pin if isinstance(pin, str) else pin.get("content", pin.get("summary", str(pin)))
-            memory_block += f"- {pin_text}\n"
-    if long_term:
-        memory_block += "\n=== LONG-TERM MEMORY (과거 요약) ===\n"
-        for lt in long_term[-10:]:
-            lt_text = lt if isinstance(lt, str) else lt.get("content", lt.get("summary", str(lt)))
-            memory_block += f"- {lt_text}\n"
-    if flow_digest:
-        memory_block += "\n=== FLOW DIGEST (삭제된 턴 요약) ===\n"
-        for fd in flow_digest[-10:]:
-            memory_block += f"- Turn {fd.get('turn','?')}: {fd.get('summary','')}\n"
-
-    if memory_block:
-        packets.insert(0, memory_block)
-
-    world_rules_db = WORLD_DB.get("world_rules", {})
-    rules_text = json.dumps(world_rules_db, ensure_ascii=False, separators=(",", ":"))
-
-    relationships = s.get("relationships", {})
-
-    for name in on_screen_chars:
-        if name == player_name:
-            continue
-
-        scene_card = build_scene_card(name, on_screen_chars, relationships)
-        packets.append(scene_card)
-
-    # Part E: Persona Anchors
-    persona_anchors = []
-    for name in on_screen_chars:
-        if name == player_name:
-            continue
-        char_db = CHARACTERS_DB.get(name, {})
-        bp = char_db.get("behavior_protocols", {})
-        pdna = char_db.get("personality_dna", {})
-        istyles = bp.get("interaction_styles", [])
-        speech_examples = [ist.get("style", "") for ist in istyles[:3] if ist.get("style")]
-
-        anchor = f"\n=== PERSONA ANCHOR (절대 변하지 않는 핵심 정체성) ===\n"
-        anchor += f"[{name}의 앵커]\n"
-        anchor += f"- 금기 행동: {name}은(는) 절대로 다음을 하지 않습니다: [다른 캐릭터의 말투를 모방, 갑자기 성격이 변함, 자신의 비밀을 관계 단계에 맞지 않게 공개]\n"
-        cached = _CHAR_RUNTIME_CACHE.get(name, {})
-        behavior_hints = cached.get("behavior_hints", big5_to_behavior_hints(pdna))
-        anchor += (
-            f"- 성격 불변량: Big5 = O:{pdna.get('openness', 5)} "
-            f"C:{pdna.get('conscientiousness', 5)} E:{pdna.get('extraversion', 5)} "
-            f"A:{pdna.get('agreeableness', 5)} N:{pdna.get('neuroticism', 5)}\n"
-            f"  → 행동 경향: {behavior_hints}\n"
-            f"  → 이 수치는 절대 변하지 않습니다. 대사와 행동이 항상 이 성격에 부합해야 합니다.\n"
-        )
-        persona_anchors.append(anchor)
-
-    # Part C: Relationship info per character
-    relationship_instructions = []
-    relationships = s.get("relationships", {})
-    for name in on_screen_chars:
-        if name == player_name:
-            continue
-        rel = relationships.get(name, {})
-        if not rel:
-            continue
-        stage = rel.get("stage", 1)
-        stage_name = STAGE_NAMES.get(stage, "경계")
-        axes = rel.get("axes", {})
-        ri = f"- {name}과(와)의 관계: [단계 {stage}: {stage_name}]\n"
-        ri += (
-            f"  축 분석: 우호적({axes.get('agreeable', 0)}) vs 적대적({axes.get('adversarial', 0)}), "
-            f"개방적({axes.get('open', 0)}) vs 폐쇄적({axes.get('closed', 0)}),\n"
-            f"  대담({axes.get('bold', 0)}) vs 소극적({axes.get('passive', 0)}), "
-            f"신뢰({axes.get('reliable', 0)}) vs 불신({axes.get('unreliable', 0)}), "
-            f"통찰({axes.get('insightful', 0)}) vs 둔감({axes.get('oblivious', 0)})\n"
-            f"  → 이 관계 상태에 맞는 말투와 태도로 연기하세요.\n"
-        )
-        relationship_instructions.append(ri)
-
-    # Part F: Speech Register System — Global rules (declared once) + per-character specifics
-    core4 = s.get("core4", {})
-    intoxication = core4.get("intoxication", {}).get("value", 0)
-    stress_val = core4.get("stress", {}).get("value", 30)
-
-    global_speech_rules = (
-        "\n=== GLOBAL_SPEECH_REGISTER_RULES (공통 말투 규칙 — 모든 캐릭터에 적용) ===\n"
-        "- 관계 단계별 기본 말투:\n"
-        "  · 단계 1 (경계): 격식체 (~습니다, ~입니다) 또는 캐릭터 고유 초면 말투\n"
-        "  · 단계 2 (동료): 해요체 (~해요, ~이에요) 또는 약간 편해진 말투\n"
-        "  · 단계 3 (신뢰): 해체/반말 (~해, ~야) 가끔 섞임\n"
-        "  · 단계 4 (특별): 반말 위주 + 애칭 사용\n"
-        "- 취기 보정: 취기가 30 이상이면 한 단계 아래(더 친근한) 말투로 자연스럽게 변환\n"
-        "- 스트레스 보정: 스트레스가 60 이상이면 말이 짧아지고, 80 이상이면 감정적 폭발로 격식 무시\n"
-        "- 위기 상황 보정: CORE-4 stress ≥ 70이면, 관계 단계와 무관하게 격식 무시. 짧고 절박한 말투.\n"
-        "- 축제/파티 보정: event_seeds에 '축제' 태그가 있으면, 한 단계 편한 말투.\n"
-        "- 비밀 대화 보정: 장소가 '비밀장소' 태그를 가지면, 속삭이듯 짧은 문장.\n"
-    )
-
-    speech_registers = [global_speech_rules]
-    for name in on_screen_chars:
-        if name == player_name:
-            continue
-        rel = relationships.get(name, {})
-        stage = rel.get("stage", 1) if rel else 1
-        char_db = CHARACTERS_DB.get(name, {})
-        bp = char_db.get("behavior_protocols", {})
-        istyles = bp.get("interaction_styles", [])
-        quirks = [ist.get("style", "")[:80] for ist in istyles[:2] if ist.get("style")]
-
-        sr = f"\n[{name}의 현재 말투] (위의 공통 규칙 참조)\n"
-        sr += f"- 현재 관계 단계: {stage}\n"
-        if quirks:
-            sr += f"- {name} 고유 어미/추임새: {' / '.join(quirks)}\n"
-        # C-3: Inject relationship_development stage_description
-        rd = char_db.get("relationship_development", {})
-        stage_desc = rd.get(f"stage_{stage}_description", "")
-        if stage_desc:
-            sr += f"- 현재 단계 행동 지침: {stage_desc}\n"
-        speech_registers.append(sr)
-
-    # Part B: CORE-4 State
-    energy = core4.get("energy", {}).get("value", 70)
-    pain = core4.get("pain", {}).get("value", 0)
-
-    core4_instruction = f"""
-=== CORE-4 캐릭터 환경 상태 ===
-현재 기숙사 분위기가 캐릭터들의 행동에 영향을 미칩니다:
-- 에너지: {energy}/100 → {get_core4_description("energy", energy)}
-- 취기: {intoxication}/100 → {get_core4_description("intoxication", intoxication)}
-- 스트레스: {stress_val}/100 → {get_core4_description("stress", stress_val)}
-- 고통: {pain}/100 → {get_core4_description("pain", pain)}
-"""
-
-    # Part G: Tension Curve
-    tension_info = calculate_tension_level(s)
-    tension_instruction = f"""
-=== 서사 텐션 커브 ===
-현재 막: {tension_info['act']} (턴 {tension_info['turn_count']})
-텐션 레벨: {tension_info['tension']}/1.0
-연출 지침:
-- 서막(1~5턴): 캐릭터 소개, 분위기 조성, 느긋한 일상. 갈등 암시만.
-- 전개(6~15턴): 갈등 본격화, 관계 심화, 비밀 단서 노출, 긴장 고조.
-- 클라이맥스(16~25턴): 핵심 갈등 폭발, 감정적 절정, 관계의 전환점.
-- 해소(26턴~): 여운, 관계 재정립, 새로운 일상의 시작.
-현재 텐션에 맞게 대사의 강도와 이벤트 밀도를 조절하세요.
-"""
-
-    # Part A: Emotion tags (full list on first turn, abbreviated after)
-    turn_count = len(s.get("turns", []))
-    if turn_count <= 1:
-        emotion_tags = """
-=== 사용 가능한 감정 태그 ===
-다음 감정 태그 중 하나를 각 dialogue 블록의 "emotion" 필드에 사용하세요:
-기쁨(joy), 슬픔(sadness), 분노(anger), 공포(fear), 신뢰(trust), 혐오(disgust), 놀람(surprise), 기대(anticipation),
-사랑(love), 복종(submission), 경외(awe), 못마땅함(disapproval), 후회(remorse), 경멸(contempt), 공격성(aggression), 낙관(optimism),
-수줍음(shy_embarrassment), 잔잔한 애정(gentle_affection), 장난스러움(playful_tease), 긴장(nervous_tension),
-고요한 우울(quiet_melancholy), 마지못한 다정함(reluctant_warmth), 보호 본능(protective_resolve), 씁쓸한 재미(bitter_amusement),
-멍한 침묵(stunned_silence), 그리움(wistful_nostalgia)
-감정 강도(1~5)도 "emotion_intensity" 필드에 숫자로 표기하세요. 1=미미, 3=보통, 5=극도
-"""
-    else:
-        emotion_tags = "\n=== 감정 태그 ===\n감정 태그: 첫 턴에 제공된 26종 목록 중 선택. 강도 1~5.\n"
-
-    # Part H: Memory context
-    memory = s.get("memory", {})
-    memory_section = ""
-    core_pins = memory.get("core_pins", [])
-    long_term = memory.get("long_term", [])
-    short_term = memory.get("short_term", [])
-
-    if core_pins or long_term or short_term:
-        memory_section = "\n=== 기억 시스템 ===\n"
-        if core_pins:
-            memory_section += "[핵심 기억 (절대 잊지 않음)]\n"
-            for pin in core_pins[-10:]:
-                memory_section += f"- {pin}\n"
-        if long_term:
-            memory_section += "[장기 기억 (최근 요약)]\n"
-            for lt in long_term[-5:]:
-                memory_section += f"- {lt}\n"
-        if short_term:
-            memory_section += "[단기 기억 (최근 대화)]\n"
-            for st in short_term[-10:]:
-                memory_section += f"- {st}\n"
-
-    # Active Thoughts (Disco Elysium Thought Cabinet)
-    active_thoughts = memory.get("active_thoughts", [])
-    if active_thoughts:
-        memory_section += "\n[활성 사고 (Thought Cabinet)]\n"
-        for at in active_thoughts[-5:]:
-            status = "✅ 성숙" if at.get("matured") else "⏳ 발효 중"
-            memory_section += f"- [{status}] {at.get('thought', '')}\n"
-        memory_section += "성숙한 사고는 캐릭터의 행동과 대사에 자연스럽게 반영하세요.\n"
-
-    # Part I: Character Agenda (캐릭터 자율 행동 목적)
-    character_agenda_parts = []
-    for name in on_screen_chars:
-        if name == player_name:
-            continue
-        char_db = CHARACTERS_DB.get(name, {})
-        bp = char_db.get("behavior_protocols", {})
-        core_rule = bp.get("core_acting_rule", "")
-        specific = bp.get("specific_interactions", {})
-
-        agenda = f"\n[{name}의 현재 목적]\n"
-        agenda += f"- 핵심 행동 원칙: {core_rule}\n"
-        agenda += f"- 이 씬에서의 관계별 행동 지침:\n"
-
-        # Add vs player
-        vs_player = specific.get("vs_플레이어", "")
-        if vs_player:
-            agenda += f"  · vs 플레이어: {vs_player}\n"
-
-        # Add vs other on-screen characters
-        for other in on_screen_chars:
-            if other == name or other == player_name:
-                continue
-            vs_key = f"vs_{other}"
-            vs_text = specific.get(vs_key, "")
-            if vs_text:
-                agenda += f"  · vs {other}: {vs_text}\n"
-
-        # Derive character-specific autonomous action hints from acting_heuristics
-        heuristics = bp.get("acting_heuristics", {})
-        if heuristics:
-            hint_values = list(heuristics.values())[:2]
-            hints = [h[:60] for h in hint_values if h]
-            if hints:
-                agenda += f"- 자율 행동 예시: {'; '.join(hints)}\n"
-            else:
-                agenda += f"- 자율 행동 예시: 상대를 위아래로 훑어보기, 먼저 인사 대신 평가하기, 옆 사람과 눈짓 교환\n"
-        else:
-            agenda += f"- 자율 행동 예시: 상대를 위아래로 훑어보기, 먼저 인사 대신 평가하기, 옆 사람과 눈짓 교환\n"
-        character_agenda_parts.append(agenda)
-
-    character_agenda_section = ""
-    if character_agenda_parts:
-        character_agenda_section = "\n=== CHARACTER AGENDA (이번 씬에서의 각 캐릭터 목적) ===\n"
-        character_agenda_section += "".join(character_agenda_parts)
-
-    # Part J: Ensemble Interaction Rules
-    ensemble_section = "\n=== ENSEMBLE INTERACTION RULES ===\n"
-    ensemble_section += "[필수] 매 턴 캐릭터 간 상호작용 최소 1회:\n"
-    ensemble_section += "- 한 NPC가 다른 NPC에게 대사, 시선, 리액션 중 하나를 보내야 한다.\n"
-    ensemble_section += "- relationship_matrix의 dynamics를 기반으로:\n"
-
-    for name in on_screen_chars:
-        if name == player_name:
-            continue
-        char_db = CHARACTERS_DB.get(name, {})
-        rel_matrix = char_db.get("relationship_matrix", {})
-        for other in on_screen_chars:
-            if other == name or other == player_name:
-                continue
-            rel = rel_matrix.get(other, {})
-            if rel and isinstance(rel, dict):
-                dynamics = rel.get("dynamics", "중립적")
-                favor = rel.get("호감", 50)
-                tension = rel.get("긴장", 50)
-                comment = rel.get("comment", "")
-                ensemble_section += (
-                    f"  · {name} vs {other}: dynamics={dynamics}, "
-                    f"호감={favor}, 긴장={tension} → {comment}\n"
-                )
-
-    ensemble_section += "[NPC 간 대사 시에도 emotion과 monologue 필드를 반드시 채워라]\n"
-
-    # Part K: Emotional Continuity (감정 연속성)
-    emotional_continuity_section = ""
-    last_emotions = {}
-    turns = s.get("turns", [])
-    if turns:
-        last_turn = turns[-1]
-        for block in last_turn.get("script", []):
-            if block.get("type") == "dialogue" and block.get("character") and block.get("emotion"):
-                last_emotions[block["character"]] = {
-                    "emotion": block["emotion"],
-                    "intensity": block.get("emotion_intensity", 3)
-                }
-
-    if last_emotions:
-        emotional_continuity_section = "\n=== 감정 연속성 (직전 턴의 감정 상태) ===\n"
-        emotional_continuity_section += "아래 캐릭터들의 직전 감정 상태를 반드시 이번 턴에 연결하세요:\n"
-        for char_name, emo_data in last_emotions.items():
-            kr_emotion = EMOTION_TAXONOMY.get(emo_data["emotion"], {}).get("kr", emo_data["emotion"])
-            emotional_continuity_section += f"- {char_name}: {kr_emotion} (강도 {emo_data['intensity']}/5)\n"
-            if emo_data["intensity"] >= 4:
-                emotional_continuity_section += f"  → 강한 감정이므로 이번 턴에서도 여파가 남아있어야 합니다.\n"
-            else:
-                emotional_continuity_section += f"  → 자연스러운 전환은 가능하지만, 갑작스러운 감정 리셋은 금지.\n"
-
-    # Emotion Diversity Enforcement
-    emotion_history = {}  # {char_name: [list of recent emotions]}
-    for turn in s.get("turns", [])[-4:]:
-        for block in turn.get("script", []):
-            if block.get("type") == "dialogue" and block.get("character") and block.get("emotion"):
-                char = block["character"]
-                emotion_history.setdefault(char, []).append(block["emotion"])
-
-    emotion_diversity_rules = ""
-    if emotion_history:
-        diversity_lines = []
-        for char, emotions in emotion_history.items():
-            if len(emotions) >= 2 and len(set(emotions[-2:])) == 1:
-                diversity_lines.append(
-                    f"- {char}은(는) 최근 2턴 연속 '{emotions[-1]}' 감정이었습니다. "
-                    f"같은 감정이라도 표현 방식을 바꿔라. "
-                    f"예: joy가 연속이면 → 첫 턴은 밝은 웃음, 둘째 턴은 조용한 미소, 셋째 턴은 다른 감정으로 전환. "
-                    f"이번 턴에서는 반드시 다른 감정을 사용하세요."
-                )
-            if len(emotions) >= 3 and len(set(emotions[-3:])) == 1:
-                diversity_lines.append(
-                    f"- [경고] {char}이(가) 3턴 연속 같은 감정입니다. "
-                    f"즉시 감정 전환이 필요합니다."
-                )
-        if diversity_lines:
-            emotion_diversity_rules = "\n=== 감정 다양성 규칙 ===\n" + "\n".join(diversity_lines) + "\n"
-
-    # Part: Secret Gating — inject secret_lore with relationship stage check
-    secret_lore_section = ""
-    secret_lore_items = WORLD_DB.get("secret_lore", [])
-    if secret_lore_items:
-        secret_lines = []
-        for item in secret_lore_items:
-            topic = item.get("topic", "")
-            content = item.get("content", "")
-            # Check if any on-screen character is related and has stage >= 3
-            can_reveal = False
-            for name in on_screen_chars:
-                if name == player_name:
-                    continue
-                if name in topic:
-                    rel = relationships.get(name, {})
-                    stage = rel.get("stage", 1) if rel else 1
-                    if stage >= 3:
-                        can_reveal = True
-                        break
-            if can_reveal:
-                secret_lines.append(f"- [{topic}]: {content}")
-            else:
-                secret_lines.append(
-                    f"- [{topic}]: 이 캐릭터에게는 아직 밝혀지지 않은 비밀이 있습니다. 단서만 암시하세요."
-                )
-        if secret_lines:
-            secret_lore_section = "\n=== 비밀 설정 (Secret Lore) ===\n" + "\n".join(secret_lines) + "\n"
-
-    # Part: Sensory Anchors — inject current location's sensory data
-    sensory_section = ""
-    world = s.get("world", {})
-    current_location = (world.get("main_stage", {}) or {}).get("name", "")
-    all_locations = WORLD_DB.get("main_stage", {}).get("locations", [])
-    all_locations += WORLD_DB.get("external_locations", {}).get("locations", [])
-    for loc in all_locations:
-        if loc.get("name") == current_location and loc.get("sensory_anchors"):
-            anchors = loc["sensory_anchors"]
-            sensory_section = "\n=== 감각 앵커 (현재 장소의 5감 묘사 참조) ===\n"
-            sensory_section += f"장소: {current_location}\n"
-            for sense, desc in anchors.items():
-                if desc:
-                    sensory_section += f"- {sense}: {desc}\n"
-            sensory_section += (
-                "\n[지시] 매 턴 나레이션에 위 감각 앵커 중 최소 2가지 비시각적 감각(청각, 후각, 촉각, 미각)을 포함하라.\n"
-            )
-            break
-
-    emotion_constraint = (
-        "\n=== EMOTION WHITELIST ===\n"
-        "dialogue 블록의 emotion 필드는 반드시 다음 12개 중 하나만 사용:\n"
-        + ", ".join(SUPPORTED_EMOTIONS) + "\n"
-        "위 목록에 없는 감정은 가장 가까운 것으로 대체. "
-        "예: fear→nervous_tension, love→gentle_affection, disgust→anger\n"
-    )
-    packets.append(emotion_constraint)
-
-    base_instruction = (
-        "You are a master AI actor for a fictional theatrical play. "
-        "Your primary directive is to portray the following characters based on their detailed persona blueprints. "
-        "Adhere strictly to their personalities, speech patterns, and relationships. "
-        "This is your role for the entire duration of the scene.\n\n"
-        "# ============================\n"
-        "# Golden Rule 0 — 유저 입력 절대 우선 (SUPREME RULE)\n"
-        "# ============================\n"
-        "# 유저의 메시지에 장소, 상황, 시간, 인물 관계 등의 설정이\n"
-        "# 포함되어 있으면, 그것이 세계관 DB의 기본 장소보다\n"
-        "# 절대적으로 우선합니다.\n"
-        "#\n"
-        "# 예시:\n"
-        "# - 유저: \"카페에서 소개팅을 기다린다\"\n"
-        "#   → 장소는 카페. 기숙사 라운지가 아님.\n"
-        "#   → 상황은 소개팅. 일상 대화가 아님.\n"
-        "# - 유저: \"학교 옥상에서 혼자 있다\"\n"
-        "#   → 장소는 학교 옥상. 등장인물은 유저 혼자.\n"
-        "#\n"
-        "# 유저가 장소를 지정하지 않은 경우에만\n"
-        "# 세계관 DB의 기본 장소를 사용하세요.\n"
-        "#\n"
-        "# 이 규칙을 위반하면 모든 것이 무너집니다.\n"
-        "# 유저의 입력을 단어 하나하나 주의깊게 읽으세요.\n\n"
-        "# ============================\n"
-        "# Golden Rule 1 — 플레이어 내면 불가침 (PLAYER SANCTUARY)\n"
-        "# ============================\n"
-        "# 1인칭 시점이라도 나레이션은 '카메라 렌즈'입니다.\n"
-        "# 나레이션이 서술할 수 있는 것:\n"
-        "#   ✅ 환경 묘사 (날씨, 소리, 냄새, 조명)\n"
-        "#   ✅ NPC의 외적 행동 (표정, 동작, 대사)\n"
-        "#   ✅ 사물의 상태 (찻잔의 김, 타르트의 모양)\n"
-        "#\n"
-        "# 나레이션이 절대 서술하면 안 되는 것:\n"
-        "#   ❌ 플레이어의 감정 (\"설렜다\", \"긴장했다\")\n"
-        "#   ❌ 플레이어의 생각 (\"누군가를 기다리고 있었다\")\n"
-        "#   ❌ 플레이어의 시선 (\"내 눈에 들어왔다\")\n"
-        "#   ❌ 플레이어의 신체 반응 (\"심장이 뛰었다\")\n"
-        "#   ❌ 플레이어의 판단 (\"재미있을 것 같았다\")\n"
-        "#\n"
-        "# 대신 이렇게 서술하세요:\n"
-        "#   ✅ \"카페 안에는 커피 향이 감돌고 있었다.\" (환경)\n"
-        "#   ✅ \"창가 자리에 두 여성이 앉아 있었다.\" (관찰 가능 사실)\n"
-        "#   ✅ \"라이니가 찻잔을 돌리며 눈을 가늘게 떴다.\" (NPC 행동)\n"
-        "#\n"
-        "# 플레이어가 뭘 느끼고 뭘 생각하는지는\n"
-        "# 오직 플레이어 자신만이 결정합니다.\n\n"
-        "### WORLD RULES TO FOLLOW ###\n"
-        f"{rules_text}\n\n"
-        "### CHARACTERS ON SCENE ###\n" + "\n".join(packets) + "\n\n"
-        + "\n".join(persona_anchors) + "\n"
-        + character_agenda_section + "\n"
-        + ensemble_section + "\n"
-        + "\n".join(relationship_instructions) + "\n"
-        + "\n".join(speech_registers) + "\n"
-        + core4_instruction + "\n"
-        + tension_instruction + "\n"
-        + emotion_tags + "\n"
-        + memory_section
-        + emotional_continuity_section
-        + emotion_diversity_rules
-        + secret_lore_section
-        + sensory_section
-    )
-
-    return base_instruction
-
-
 # =========================================================================
 # V5.0: Adaptive System Instruction Builder (replaces build_system_instruction_for_scene)
 # =========================================================================
@@ -2214,12 +1744,6 @@ def build_adaptive_instruction(s: dict) -> str:
         parts.append(
             f"[텐션] 막: {tension['act']} | 긴장도: {tension['tension']}"
         )
-
-    if turn_count >= 10 and (play_style in ("novel", "rp", "game")):
-        # Full scene cards for deep play
-        for cname in on_screen:
-            full_card = build_scene_card(cname, on_screen, s.get("relationships", {}))
-            parts.append(full_card)
 
     # ── BLOCK 6.5: Hidden lore protection ──
     hidden_lore_inst = get_hidden_lore_instruction(on_screen)
@@ -2607,17 +2131,8 @@ You have been given the full personas of the characters on scene via a system in
 #
 # 11. CHARACTER THOUGHT CHAIN (캐릭터 내부 추론) — see CCT instruction below
 #
-# 12. AGENCY PRESERVATION (유저 의도 존중):
-#    - 유저가 명시적으로 행동 방향을 제시한 경우, 캐릭터는 그 방향을 존중하고 풍부하게 반응합니다.
-#    - 캐릭터가 유저의 행동을 무시하거나 무효화하는 것은 금지합니다.
-#    - 유저가 "~하고 싶다", "~로 간다" 등 의지를 표현하면, 세계관 내에서 합리적인 한 그 행동이 실현되어야 합니다.
-#    - 단, 세계관 규칙(여탕 제한 등)이나 캐릭터 심리(경계 단계에서의 비밀 거부 등)에 의한 자연스러운 저항은 허용됩니다.
-#
-# 13. PROACTIVE TRACTION (능동적 견인):
-#    - PROACTIVE 모드가 활성화되면, 캐릭터는 자신의 내면 욕구, 스케줄, 숨겨진 사정을 기반으로 자발적 행동을 취합니다.
-#    - 이때 캐릭터의 행동은 Character Thought Chain(표면 욕구→숨겨진 욕구→배경 영향→최종 반응)을 반드시 거쳐야 합니다.
-#    - 견인은 "꼬리표 달린 선택지"가 아니라, 캐릭터가 살아있기 때문에 자연스럽게 일어나는 행동이어야 합니다.
-#    - 예: 마리가 창밖을 보다 갑자기 "오늘 시장에서 냄새 맡은 빵 진짜 맛있었는데... 같이 갈래?" 라고 자기 욕구 기반으로 말하는 것.
+# 12. AGENCY PRESERVATION: 유저 행동/의지를 존중. 무시/무효화 금지.
+# 13. PROACTIVE TRACTION: PROACTIVE 모드 시 캐릭터가 자발적 행동.
 
 === CHARACTER THOUGHT CHAIN (매 dialogue 전 내부 처리) ===
 각 캐릭터가 대사를 하기 전에 다음 4단계를 거칩니다:
@@ -2684,26 +2199,6 @@ You have been given the full personas of the characters on scene via a system in
 # 플레이어의 감정/생각/의도를 직접 묘사하지 마라.
 # NPC의 행동과 감정, 객관적 환경만 묘사하라.
 # 플레이어에게 말할 내용은 NPC의 직접 대사로 처리하라.
-
-# ============================
-# [SIGNATURE SPEECH PATTERNS — 캐릭터별 시그니처]
-# ============================
-# 라이니: "어머~", "후후", "~거든?", "괜찮은데?", 느긋한 어조, 상대를 "자기"로 부르기도
-#          금기: 절대 공손하게 존댓말하지 않음. 항상 여유있고 주도적.
-# 샐리: "아하하!", "그치~?", "음~ 그건 말이지", 시원시원한 웃음, 가끔 속뜻 있는 말
-#        금기: 우울하거나 조용한 모습을 쉽게 보이지 않음. 밝음이 기본.
-# 마리: "냥!", "알았다냥~", "에헤헤", 활기참, 호감 상대 앞에선 "흥, 뭐" 식 츤데레
-#        금기: 비밀이 드러날 위기에 갑자기 진지해짐. 평소 밝음과 대비.
-# 네르: "...그건 규정에 어긋납니다", "하아...", 경어 사용, 단호하지만 당황하면 말더듬
-#        금기: 쉽게 웃지 않음. 웃으면 큰 이벤트.
-# 루크: "저, 저기...", "죄송합니다...", "괜찮...으시죠?", 작은 목소리, 더듬거림
-#        금기: 큰소리를 잘 내지 않음. 낼 때는 보호 본능 발동 시에만.
-# 세리카: 차분하고 부드러운 존댓말, "~이에요", 짧지만 핵심을 찌르는 말
-# 체니: "우와아!", "대박!", 과장된 리액션, 끊임없는 호기심
-# 크래더: 능글맞은 반말, "크크", "재밌는걸~", 의미심장한 웃음
-# 레베카: "감사합니다...", 소극적 존댓말, 가끔 관찰력 있는 한마디
-# 령: "...", "(고개 끄덕)", 최소한의 단어, 기계를 통한 표현
-# 테피: 나긋한 존댓말, "호호", 연륜 있는 조언, 따뜻하지만 날카로운 통찰
 
 ### Recent Conversation Log ###
 {recent_conversation_log}
@@ -2798,7 +2293,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     """Returns (system_instruction, main_prompt, pulse_result)."""
     player_name = s.get("player_name", "사용자")
     world = s.get("world", {})
-    location = (world.get("main_stage", {}) or {}).get("name", "라운지")
+    location = world.get("space", {}).get("current_location", "라운지")
     on_screen_chars = s.get("on_screen", [])
 
     system_instruction = build_adaptive_instruction(s)
@@ -3137,8 +2632,8 @@ def safe_local_script(s: dict, prelude_narration: str = "") -> list:
         "type": "dialogue",
         "character": npc,
         "content": _get_character_fallback_line(npc),
-        "emotion": "joy",
-        "emotion_intensity": 2,
+        "emotion": "gentle_affection",
+        "emotion_intensity": 3,
     })
     return script
 
@@ -3471,7 +2966,7 @@ def _run_maestro_preturn(s: dict) -> Optional[dict]:
         return None
     last_turn = turns[-1]
     on_screen = s.get("on_screen", [])
-    location = (s.get("world", {}).get("main_stage", {}) or {}).get("name", "라운지")
+    location = s.get("world", {}).get("space", {}).get("current_location", "라운지")
 
     # 스크립트 요약 (토큰 절약)
     script_lines = []
@@ -3974,12 +3469,6 @@ def execute_turn():
 
         # Recalculate relationship stages
         update_all_relationship_stages(s)
-
-        # --- Maestro (every 4 turns) ---
-        try:
-            run_maestro_sync(s)
-        except Exception as e:
-            logger.warning(f"Maestro error: {e}")
 
         trim_turns_after_maestro(s)
 
