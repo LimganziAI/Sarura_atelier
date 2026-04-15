@@ -1875,7 +1875,9 @@ def analyze_user_pulse(s: dict) -> dict:
                 continue
             cdb = CHARACTERS_DB.get(name, {})
             ah = cdb.get("behavior_protocols", {}).get("acting_heuristics", {})
-            for hk, hv in list(ah.items())[:1]:
+            ah_items = list(ah.items())
+            if ah_items:
+                _, hv = random.choice(ah_items)
                 if hv:
                     dynamic_suggestions.append(f"{name}: {str(hv)[:80]}")
         if not dynamic_suggestions:
@@ -1886,7 +1888,12 @@ def analyze_user_pulse(s: dict) -> dict:
             ]
         suggestion = random.choice(dynamic_suggestions)
     elif mode == "NUDGE":
-        suggestion = "캐릭터가 자연스럽게 다음 행동이나 장소 이동을 제안합니다."
+        on_screen_names = [n for n in s.get("on_screen", []) if n != s.get("player_name")]
+        if on_screen_names:
+            nudge_char = random.choice(on_screen_names)
+            suggestion = f"{nudge_char}이(가) 자연스럽게 다음 행동이나 장소 이동을 제안합니다."
+        else:
+            suggestion = "캐릭터가 자연스럽게 다음 행동이나 장소 이동을 제안합니다."
 
     return {
         "triggers_active": active_count,
@@ -2093,6 +2100,8 @@ You have been given the full personas of the characters on scene via a system in
 # - 대사 이면에 속뜻이 있다. monologue에 겉뜻과 속뜻의 괴리를 보여줘라.
 # - 같은 상황에 두 캐릭터가 같은 반응을 보이면 실패.
 # - 비언어적 행동(시선, 자세, 소품 활용)을 대사 전후에 반드시 삽입.
+# - 캐릭터는 질문에 직접 답하기보다, 행동·역질문·화제 전환으로 반응한다.
+# - 유저의 태도에 따라 pushback(거절, 불쾌, 경계)도 한다. 모든 행동을 긍정 수용하지 마라.
 #
 # 원칙 2: "매 턴이 미니 에피소드다" (EPISODE)
 # - 시작: 직전 턴의 감정 여파 + 감각 묘사(시각 외 최소 1가지) 2~3문장
@@ -2127,6 +2136,11 @@ You have been given the full personas of the characters on scene via a system in
 # - 나레이션은 자연스러운 산문체여야 한다.
 # - 금지: "첫째~, 둘째~" 식 나열, 번호 매기기, 항목화.
 # - 허용: 물 흐르듯 이어지는 문장, 감각적 세부 묘사, 시간의 흐름을 담은 서술.
+
+# [ANTI-CLICHÉ — 금지 표현]
+# 사용 금지: "공기가 무거웠다", "심장이 빠르게 뛰었다", "눈에 그림자가 드리워졌다",
+# "그리고 밤이 깊어갔다", "시간이 멈춘 것 같았다", "입술을 깨물었다"(턴당 1회 한정).
+# → 구체적이고 개별적인 신체 반응·감각 묘사로 대체하라.
 
 # ============================
 # [PLAYER INTERACTION GUARD]
@@ -2435,7 +2449,9 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         director_brief += "\n\n# [EMOTION DIVERSITY]\n" + "\n".join(emo_alerts)
 
     # Player Presence 관찰 기법
-    player_name = s.get("player_name", "사용자")
+    player_name = s.get("player_name", "사용자").replace('"', '').replace("'", "").strip()
+    if not player_name:
+        player_name = "사용자"
     director_brief += f"""
 
 # [PLAYER PRESENCE — NPC 관찰 기법]
