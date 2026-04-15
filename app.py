@@ -294,6 +294,8 @@ for _cname, _cdb in CHARACTERS_DB.items():
         "honorific_style": _sig.get("honorific_style", ""),
         "catchphrases": _sig.get("catchphrases", [])[:3],
         "forbidden_patterns": _sig.get("forbidden_patterns", [])[:2],
+        "tone_mixing_rule": _sig.get("tone_mixing_rule", ""),
+        "catchphrase_budget": _sig.get("catchphrase_budget", ""),
         "voice_contrast": _sig.get("voice_contrast", ""),
         "example_lines": _sig.get("example_lines", [])[:2],
         "personality_dna": _cdb.get("personality_dna", {}),
@@ -543,6 +545,39 @@ def calculate_relationship_stage(rel: dict) -> int:
 STAGE_NAMES = {1: "경계", 2: "동료", 3: "신뢰", 4: "특별"}
 
 
+def get_relationship_velocity(char_name: str) -> dict:
+    """캐릭터 성격(Big5)에 기반한 관계 변동 가중치를 반환.
+    
+    Extraversion이 높으면 호감 변동이 빠르고,
+    Neuroticism이 높으면 긴장 변동이 크고,
+    Agreeableness가 높으면 신뢰 상승이 빠르고,
+    Openness가 낮으면 초기 경계가 강하다.
+    """
+    cached = _CHAR_RUNTIME_CACHE.get(char_name, {})
+    pdna = cached.get("personality_dna", {})
+    
+    e = pdna.get("extraversion", 5)
+    n = pdna.get("neuroticism", 5)
+    a = pdna.get("agreeableness", 5)
+    o = pdna.get("openness", 5)
+    
+    # 기본 배율 1.0, 성격에 따라 0.5~2.0 범위
+    affection_mult = 0.7 + (e / 10) * 0.6 + (a / 10) * 0.4  # 외향+우호 → 호감 빠름
+    trust_mult = 0.5 + (a / 10) * 0.8 + (o / 10) * 0.2       # 우호+개방 → 신뢰 빠름
+    tension_mult = 0.6 + (n / 10) * 0.8                        # 신경증 → 긴장 변동 큼
+    
+    # 클램프 0.5 ~ 2.0
+    affection_mult = max(0.5, min(2.0, round(affection_mult, 2)))
+    trust_mult = max(0.5, min(2.0, round(trust_mult, 2)))
+    tension_mult = max(0.5, min(2.0, round(tension_mult, 2)))
+    
+    return {
+        "affection_mult": affection_mult,
+        "trust_mult": trust_mult,
+        "tension_mult": tension_mult,
+    }
+
+
 def update_all_relationship_stages(s: dict):
     """Recalculate relationship stage for every character."""
     for name, rel in s.get("relationships", {}).items():
@@ -590,6 +625,24 @@ def update_memory_tiers(s: dict, user_input: str, final_script: list):
         mem["long_term"] = long_term[-10:]
 
 
+def update_character_last(s: dict, turn_number: int, script: list):
+    """매 턴 종료 후 각 NPC의 마지막 발언을 인덱싱."""
+    mem = s.setdefault("memory", {})
+    char_last = mem.setdefault("character_last", {})
+    for block in script:
+        if isinstance(block, dict) and block.get("type") == "dialogue":
+            name = block.get("character", "")
+            if not name:
+                continue
+            char_last[name] = {
+                "turn": turn_number,
+                "said": (block.get("content") or "")[:80],
+                "emotion": block.get("emotion", ""),
+                "intensity": block.get("emotion_intensity", 5),
+            }
+    mem["character_last"] = char_last
+
+
 # ─── STEP 5-B: DIMA 프롬프트용 3-Tier 메모리 변환 ───────────
 def build_memory_context_for_dima(s: dict) -> str:
     """3-Tier 메모리를 DIMA 프롬프트용 텍스트로 변환"""
@@ -610,6 +663,16 @@ def build_memory_context_for_dima(s: dict) -> str:
         display = short_term[:-2] if len(short_term) > 2 else short_term
         for st in display[-5:]:
             lines.append(f"  {st}")
+
+    # 캐릭터별 최근 발언 인덱스
+    char_last = mem.get("character_last", {})
+    if char_last:
+        lines.append("## [캐릭터별 최근 상태]")
+        for name, info in char_last.items():
+            lines.append(
+                f"  {name} (T{info.get('turn', '?')}): "
+                f"\"{info.get('said', '')}\" [{info.get('emotion', '')}]"
+            )
 
     if not lines:
         return "## [기억] 이번 씬의 첫 대화입니다."
@@ -1620,6 +1683,17 @@ def build_character_block_for_prompt(
     if app.get("summary"):
         lines.append(f"외모: {app['summary'][:80]} ({app.get('height', '')})")
 
+    # ★ 음성 자연화 규칙 (tone_mixing_rule + catchphrase_budget) ★
+    tm_rule = sig.get("tone_mixing_rule", "")
+    cp_budget = sig.get("catchphrase_budget", "")
+    voice_rules = []
+    if tm_rule:
+        voice_rules.append(f"  존반말혼용: {tm_rule[:150]}")
+    if cp_budget:
+        voice_rules.append(f"  말버릇제한: {cp_budget[:120]}")
+    if voice_rules:
+        lines.append("음성규칙:\n" + "\n".join(voice_rules))
+
     return "\n".join(lines)
 
 
@@ -1745,10 +1819,18 @@ def build_adaptive_instruction(s: dict) -> str:
         rels = s.get("relationships", {})
         rel_lines = []
         for cname in on_screen:
+            if cname == player:
+                continue
             rel = rels.get(cname, {})
             stage = STAGE_NAMES.get(rel.get("stage", 1), "경계")
+            vel = get_relationship_velocity(cname)
+            speed_hint = ""
+            if vel.get("affection_mult", 1.0) >= 1.5:
+                speed_hint = " [감정변동 빠름]"
+            elif vel.get("affection_mult", 1.0) <= 0.7:
+                speed_hint = " [감정변동 느림]"
             rel_lines.append(
-                f"{cname}: {stage}(호감{rel.get('affection',50)}/신뢰{rel.get('trust',50)})"
+                f"{cname}: {stage}(호감{rel.get('affection',50)}/신뢰{rel.get('trust',50)}/긴장{rel.get('tension',50)}){speed_hint}"
             )
         if rel_lines:
             parts.append(f"[관계] {' | '.join(rel_lines)}")
@@ -2015,6 +2097,14 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
         "(캐릭터 DB의 specific_interactions 참조)"
     )
 
+    parts.append(
+        "\n[존댓말/반말 혼용 원칙]\n"
+        "- 한국어 자연 대화에서 존비어는 관계·감정·상황에 따라 유동적으로 섞인다.\n"
+        "- 감정이 고조되면 반말로, 부탁이나 사과 시 존댓말로, 장난칠 때 존반말(~요 없이 ~지? ~거든?)로 자연스럽게 전환.\n"
+        "- 각 캐릭터의 tone_mixing_rule을 참조하되, 기계적으로 적용하지 말고 맥락에 맞게 판단하라.\n"
+        "- 관계 단계가 올라갈수록 격식이 자연스럽게 풀려야 한다."
+    )
+
     # FIX-7: 감정 다양성 강제
     parts.append(
         "\n[감정 다양성]\n"
@@ -2117,6 +2207,13 @@ You have been given the full personas of the characters on scene via a system in
 # - 유저에게 직접 질문하는 대사는 턴당 최대 1회.
 #   나머지는 NPC 간 대화에서 유저가 끼어들 여지를 남겨라.
 # - 유저의 대사/행동을 대신 쓰거나 선택을 전제하지 마라.
+#
+# 원칙 4: "목소리는 지문이다" (VOICE)
+# - 각 캐릭터의 음성규칙(tone_mixing_rule, catchphrase_budget)을 반드시 준수한다.
+# - 특징적 말버릇(~용, ~냥, 호호호, 저 저기 등)은 해당 캐릭터의 catchphrase_budget 한도 내에서만 사용.
+# - 존댓말/반말은 감정·상황·관계 단계에 따라 유동적으로 혼용. tone_mixing_rule 참조.
+# - 같은 인사·감탄사·비유로 턴을 시작하지 않는다.
+# - 2캐릭터 이상 씬에서 모든 캐릭터가 같은 종결어미 패턴을 쓰면 실패.
 
 # [TURN STRUCTURE]
 # 1. OPENING (2-3문장): 감각 묘사 + 직전 감정 여파
@@ -2141,6 +2238,11 @@ You have been given the full personas of the characters on scene via a system in
 # 사용 금지: "공기가 무거웠다", "심장이 빠르게 뛰었다", "눈에 그림자가 드리워졌다",
 # "그리고 밤이 깊어갔다", "시간이 멈춘 것 같았다", "입술을 깨물었다"(턴당 1회 한정).
 # → 구체적이고 개별적인 신체 반응·감각 묘사로 대체하라.
+# - 연속 턴에서 같은 종결어미 패턴(~용, ~냥, ~쪄) 반복 금지.
+# - 같은 감탄사(호호호, 아이고~, 에헤헤)로 턴 시작 2회 연속 금지.
+# - 특정 호칭(우리 애기, 꼬마 등) 매 턴 반복 금지.
+# - NPC가 항상 긍정적으로만 반응 금지 — 무관심·짜증·피곤도 표현할 것.
+# - 모든 NPC가 같은 문장 구조(주어+감탄+요청)로 말하는 것 금지.
 
 # ============================
 # [PLAYER INTERACTION GUARD]
@@ -2428,8 +2530,9 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             "(8) 나레이션에서 유저의 내면(감정, 생각, 시선, 판단)을 대신 서술하지 않았는가? 유저의 내면은 절대 서술 금지."
         )
 
-    # 감정 반복 방지 (STEP 4-B)
+    # 감정 다양성 검사 (강화판: character_last 활용)
     emo_hist = {}
+    char_last = s.get("memory", {}).get("character_last", {})
     for turn in s.get("turns", [])[-3:]:
         for b in turn.get("script", []):
             if isinstance(b, dict) and b.get("type") == "dialogue":
@@ -2437,10 +2540,14 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 e = b.get("emotion", "")
                 if c and e:
                     emo_hist.setdefault(c, []).append(e)
+    # character_last에서 추가 반영
+    for name, info in char_last.items():
+        if info.get("emotion"):
+            emo_hist.setdefault(name, []).append(info["emotion"])
 
     emo_alerts = []
     for c, emos in emo_hist.items():
-        if len(emos) >= 2 and len(set(emos)) == 1:
+        if len(emos) >= 2 and len(set(emos[-3:])) == 1:
             emo_alerts.append(
                 f"⚠️ {c}: '{emos[0]}' {len(emos)}턴 연속 반복. "
                 f"이번 턴에서 반드시 다른 감정 사용. intensity도 변경."
@@ -2907,24 +3014,30 @@ def apply_maestro_to_session(s: dict, data: dict):
             if emo.get("intensity"):
                 ds["mood_intensity"] = int(emo["intensity"])
 
-    # 3. rel_delta (관계 변화)
+    # 3. rel_delta (관계 변화) — 성격 기반 가중치 적용
     rd = data.get("rel_delta")
     if rd and isinstance(rd, dict):
         for key, delta in rd.items():
             if not isinstance(delta, dict):
                 continue
-            # key 형태: "샐리_to_플레이어" 또는 캐릭터명
             parts = key.split("_to_")
             char_name = parts[0] if parts else key
             rel = s.get("relationships", {}).get(char_name)
             if not rel:
                 continue
+            velocity = get_relationship_velocity(char_name)
+            mult_map = {
+                "호감": velocity.get("affection_mult", 1.0),
+                "신뢰": velocity.get("trust_mult", 1.0),
+                "긴장": velocity.get("tension_mult", 1.0),
+            }
             for axis_kr, axis_en in [("호감", "affection"), ("신뢰", "trust"), ("긴장", "tension")]:
                 if axis_kr in delta:
                     try:
-                        d = int(delta[axis_kr])
+                        raw_d = int(delta[axis_kr])
+                        weighted_d = int(round(raw_d * mult_map.get(axis_kr, 1.0)))
                         old = rel.get(axis_en, 50)
-                        rel[axis_en] = max(0, min(100, old + d))
+                        rel[axis_en] = max(0, min(100, old + weighted_d))
                     except (ValueError, TypeError):
                         pass
             # axes 보조 업데이트
@@ -3292,6 +3405,9 @@ def bootstrap():
     short_entry = _build_event_short_term(1, seed_text, final_script)
     s.setdefault("memory", {}).setdefault("short_term", []).append(short_entry)
 
+    # --- 캐릭터별 최근 발언 인덱스 갱신 (부트스트랩) ---
+    update_character_last(s, 1, final_script)
+
     s["traffic_light"] = "GREEN"
     session["session_id"] = sid
     update_all_relationship_stages(s)
@@ -3456,6 +3572,9 @@ def execute_turn():
 
         # --- STEP 5: 3-Tier Memory 갱신 ---
         update_memory_tiers(s, user_input, final_script)
+
+        # --- 캐릭터별 최근 발언 인덱스 갱신 ---
+        update_character_last(s, turn_id, final_script)
 
         # Recalculate relationship stages
         update_all_relationship_stages(s)
