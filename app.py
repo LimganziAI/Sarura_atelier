@@ -72,6 +72,25 @@ ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
 SHARED_NOVELS_DIR = BASE_DIR / "shared_novels"
 SHARED_NOVELS_DIR.mkdir(exist_ok=True)
 
+# ─── STEP 8: Player Agency Guard (강화판) ────────────────────
+PLAYER_AGENCY_GUARD = """### PLAYER INTERACTION GUARD — 절대 규칙 ###
+{player_name}은(는) 외부 조작자(operator)이다.
+
+[금지 사항 — 이것을 위반하면 세션이 파괴됨]
+1. {player_name}의 대사를 절대 쓰지 마라. (예: '{player_name}: "..."' 금지)
+2. {player_name}의 내면/감정을 서술하지 마라. (예: '{player_name}은 가슴이 뛰었다' 금지)
+3. {player_name}의 행동을 결정하지 마라. (예: '{player_name}은 고개를 끄덕였다' 금지)
+4. {player_name}이 아직 하지 않은 선택을 전제하지 마라.
+
+[허용되는 것]
+- NPC가 {player_name}에게 말을 거는 것 (대사)
+- NPC가 {player_name}의 반응을 기다리는 나레이션
+- {player_name}의 외적으로 관찰 가능한 상태만 묘사 (예: '상대가 조용히 서 있다')
+
+[위반 시 자기 검사]
+매 응답 생성 전, 각 문장에서 '{player_name}'이 주어인 문장이 있는지 확인하라.
+있으면 그 문장을 NPC 시점의 관찰("~하는 것 같다", "~를 기다리며")로 전환하라."""
+
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
 SECRET_KEY_FILE = BASE_DIR / ".flask_secret"
@@ -145,6 +164,58 @@ def call_gemini_with_fallback(contents, config, timeout_sec=30, max_retries=3):
         logger.warning(f"Model {model} exhausted all {max_retries} retries, trying next model...")
     logger.error("All models and retries exhausted")
     return None
+
+
+# ─── STEP 10: Safe Gemini call with None response defense ────
+def _extract_text(response) -> str:
+    """Gemini 응답에서 텍스트 추출 (thinking parts 제외)"""
+    if not response:
+        return ""
+    try:
+        if response.text:
+            return response.text
+    except Exception:
+        pass
+    try:
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, 'text') and part.text:
+                if not (hasattr(part, 'thought') and part.thought):
+                    return part.text
+    except Exception:
+        pass
+    return ""
+
+
+def safe_gemini_call(model_name: str, contents: list, config, timeout_sec: int = 30):
+    """
+    Gemini 호출 + None 응답 방어.
+    structured output에서 MAX_TOKENS로 잘리면 response.text가 None이 됨.
+    이 경우 thinking_budget를 줄이고 재시도.
+    """
+    result = call_gemini_with_timeout(model_name, contents, config, timeout_sec)
+
+    # 1차: 정상 응답
+    if result and _extract_text(result):
+        return result
+
+    # 2차: response.text가 None → MAX_TOKENS 의심
+    logger.warning("Gemini returned None text. Retrying with thinking_budget=0")
+    try:
+        retry_config = copy.deepcopy(config)
+        if hasattr(retry_config, 'thinking_config'):
+            retry_config.thinking_config = genai_types.ThinkingConfig(thinking_budget=0)
+        elif isinstance(retry_config, dict):
+            retry_config["thinkingConfig"] = {"thinkingBudget": 0}
+
+        result2 = call_gemini_with_timeout(model_name, contents, retry_config, timeout_sec)
+        if result2 and _extract_text(result2):
+            logger.info("Retry with thinking_budget=0 succeeded")
+            return result2
+    except Exception as e:
+        logger.warning(f"Retry failed: {e}")
+
+    # 3차: 그래도 실패하면 원래 결과 반환 (기존 폴백 체인이 처리)
+    return result
 
 
 # ─── Load DB files ───────────────────────────────────────────
@@ -478,6 +549,203 @@ def update_all_relationship_stages(s: dict):
         rel["stage"] = calculate_relationship_stage(rel)
 
 
+# ─── STEP 5: 3-Tier Memory Architecture ─────────────────────
+def update_memory_tiers(s: dict, user_input: str, final_script: list):
+    """3-Tier 메모리 갱신. 매 턴 호출."""
+    player_name = get_player_name(s)
+    turn_num = len(s.get("turns", []))
+    mem = s.setdefault("memory", {})
+
+    # ── Tier 2: Short-Term (최근 턴 요약, 1턴=1문장) ──
+    short_term = mem.setdefault("short_term", [])
+
+    summary_parts = [f"T{turn_num}"]
+    if user_input and user_input not in ("[CONTINUE_SCENE]", "[PLAYER_PAUSE]"):
+        summary_parts.append(f"[{player_name}]\"{user_input[:40]}\"")
+
+    for b in final_script:
+        if isinstance(b, dict) and b.get("type") == "dialogue":
+            c = b.get("character", "?")
+            e = b.get("emotion", "")
+            t = b.get("content", "")[:35]
+            summary_parts.append(f"{c}({e}):\"{t}\"")
+            if len(summary_parts) >= 4:
+                break
+        elif isinstance(b, dict) and b.get("type") == "narration":
+            n = b.get("content", "")[:30]
+            summary_parts.append(f"(나레이션:{n})")
+            break
+
+    entry = " → ".join(summary_parts)
+    short_term.append(entry[:200])
+    mem["short_term"] = short_term[-8:]
+
+    # ── Tier 3: Long-Term (10턴마다 압축) ──
+    long_term = mem.setdefault("long_term", [])
+    if turn_num > 0 and turn_num % 10 == 0 and len(short_term) >= 5:
+        block_entries = short_term[-10:] if len(short_term) >= 10 else short_term[:]
+        compressed = " | ".join([e[:50] for e in block_entries])
+        block_label = f"[T{max(1, turn_num-9)}~T{turn_num}]"
+        long_term.append(f"{block_label} {compressed[:350]}")
+        mem["long_term"] = long_term[-10:]
+
+    # ── 관계 단계 자동 승격 체크 ──
+    rels = s.get("relationships", {})
+    for char_name, rel in rels.items():
+        if not isinstance(rel, dict):
+            continue
+        aff = rel.get("affection", 50)
+        tru = rel.get("trust", 50)
+        current_stage = rel.get("stage", 1)
+
+        combined = aff + tru
+        if combined >= 160 and current_stage < 4:
+            rel["stage"] = 4
+        elif combined >= 130 and current_stage < 3:
+            rel["stage"] = 3
+        elif combined >= 100 and current_stage < 2:
+            rel["stage"] = 2
+
+
+# ─── STEP 5-B: DIMA 프롬프트용 3-Tier 메모리 변환 ───────────
+def build_memory_context_for_dima(s: dict) -> str:
+    """3-Tier 메모리를 DIMA 프롬프트용 텍스트로 변환"""
+    mem = s.get("memory", {})
+    lines = []
+
+    # Tier 3: 장기 기억
+    long_term = mem.get("long_term", [])
+    if long_term:
+        lines.append("## [장기 기억 — 과거 스토리 흐름]")
+        for lt in long_term[-3:]:
+            lines.append(f"  {lt}")
+
+    # Tier 2: 단기 기억
+    short_term = mem.get("short_term", [])
+    if short_term:
+        lines.append("## [단기 기억 — 최근 대화 요약]")
+        display = short_term[:-2] if len(short_term) > 2 else short_term
+        for st in display[-5:]:
+            lines.append(f"  {st}")
+
+    if not lines:
+        return "## [기억] 이번 씬의 첫 대화입니다."
+
+    return "\n".join(lines)
+
+
+# ─── STEP 7: flow_digest_10 구조 개선 ────────────────────────
+def format_flow_digest_for_dima(s: dict) -> str:
+    """flow_digest_10을 DIMA가 읽기 쉬운 형태로 변환.
+    유저 발화는 ★ 표시로 강조하여 DIMA가 반드시 참조하게 함."""
+    flow_digest = s.get("flow_digest_10", [])
+    if isinstance(flow_digest, deque):
+        flow_digest = list(flow_digest)
+
+    if not flow_digest:
+        return "이번 씬의 첫 대화입니다."
+
+    entries = []
+    for item in flow_digest[-8:]:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            speaker, content = item[0], str(item[1])[:100]
+            if speaker.startswith("[") and speaker.endswith("]"):
+                entries.append(f"  ★ {speaker}: \"{content}\"")
+            else:
+                entries.append(f"  {speaker}: \"{content}\"")
+        elif isinstance(item, str):
+            entries.append(f"  {item[:120]}")
+
+    return "## [Tier 1: 최근 대화 원문]\n" + "\n".join(entries)
+
+
+# ─── STEP 9: event_seeds 조건부 발동 ─────────────────────────
+def should_inject_event_seed(s: dict) -> bool:
+    """이벤트 시드를 DIMA에 주입할지 판단"""
+    turn_num = len(s.get("turns", []))
+
+    if turn_num < 15:
+        return False
+
+    if turn_num % 5 != 0:
+        return False
+
+    rels = s.get("relationships", {})
+    has_trust = any(
+        isinstance(r, dict) and r.get("stage", 1) >= 3
+        for r in rels.values()
+    )
+    if not has_trust:
+        return False
+
+    return True
+
+
+def get_event_seed_for_scene(s: dict) -> str:
+    """현재 장소와 관련된 이벤트 시드를 하나만 선택"""
+    if not should_inject_event_seed(s):
+        return ""
+
+    location = s.get("world", {}).get("space", {}).get(
+        "current_location", ""
+    )
+    seeds = WORLD_DB.get("event_seeds", [])
+    if not seeds:
+        return ""
+
+    relevant = []
+    for seed in seeds:
+        if isinstance(seed, dict):
+            trigger_loc = seed.get("location", seed.get("trigger_location", ""))
+            if not trigger_loc or trigger_loc in location or location in trigger_loc:
+                relevant.append(seed)
+
+    if not relevant:
+        relevant = [sd for sd in seeds if not sd.get("location") and not sd.get("trigger_location")]
+
+    if not relevant:
+        return ""
+
+    chosen = random.choice(relevant[:3])
+    seed_name = chosen.get("name", chosen.get("title", "이벤트"))
+    seed_beats = chosen.get("beats", chosen.get("description", ""))
+
+    return (
+        f"## [EVENT SEED — 선택적 참조]\n"
+        f"이번 턴에서 자연스럽게 녹일 수 있으면 아래 이벤트를 살짝 암시하라.\n"
+        f"강제하지 말 것. 현재 대화 흐름이 우선.\n"
+        f"  이벤트: {seed_name}\n"
+        f"  힌트: {str(seed_beats)[:150]}"
+    )
+
+
+# ─── STEP 11: Maestro 호출 빈도 최적화 ──────────────────────
+def should_call_maestro(s: dict, user_input: str) -> bool:
+    """Maestro 호출 여부를 판단하는 적응형 스케줄"""
+    turn_num = len(s.get("turns", []))
+
+    if turn_num == 0:
+        return False
+
+    if turn_num <= 10:
+        return True
+
+    if turn_num <= 30:
+        return turn_num % 2 == 0
+
+    if turn_num % 3 == 0:
+        return True
+
+    important_keywords = [
+        "고백", "좋아", "싫어", "비밀", "진심", "약속", "미안",
+        "고마워", "위험", "도망", "싸움", "울", "화나", "무서"
+    ]
+    if any(kw in (user_input or "") for kw in important_keywords):
+        return True
+
+    return False
+
+
 # ─── Director defaults ───────────────────────────────────────
 DEFAULT_DIRECTOR_SETTINGS = {
     "pov_first_person": True,
@@ -636,6 +904,29 @@ def to_public_state(s: dict) -> dict:
     return _to_jsonable(copy.deepcopy(s))
 
 
+# ─── STEP 6: Lightweight world state for sessions ────────────
+def create_lightweight_world_state(world_db: dict) -> dict:
+    """세션에 저장할 최소한의 월드 상태만 생성"""
+    main_stage = world_db.get("main_stage", {})
+    default_location = main_stage.get("name", "사루라 기숙사 라운지")
+
+    return {
+        "world_name": world_db.get("world_name", "사루라 아뜨리에"),
+        "core_concept": world_db.get("core_concept", ""),
+        "system_overrides": world_db.get("system_overrides", {}),
+        "world_rules": world_db.get("world_rules", {}),
+        "main_stage": {
+            "name": main_stage.get("name", ""),
+            "staff": main_stage.get("staff", {}),
+        },
+        "space": {
+            "current_location": default_location,
+            "previous_location": None,
+        },
+        "time": copy.deepcopy(world_db.get("time", {"display": "오후"})),
+    }
+
+
 # ─── Session init ────────────────────────────────────────────
 def init_session(session_id: Optional[str] = None) -> dict:
     sid = session_id or f"S-{uuid.uuid4().hex[:8].upper()}"
@@ -648,7 +939,7 @@ def init_session(session_id: Optional[str] = None) -> dict:
         "traffic_light": "GREEN",
         "ui_settings": copy.deepcopy(DEFAULT_DIRECTOR_SETTINGS),
         "characters": {name: {} for name in ALL_CHARACTER_NAMES},
-        "world": copy.deepcopy(WORLD_DB),
+        "world": create_lightweight_world_state(WORLD_DB),
         "scene_context": {
             "turn_count_in_scene": 0,
             "time_elapsed_minutes": 0,
@@ -1953,6 +2244,9 @@ def build_adaptive_instruction(s: dict) -> str:
     if mo.get("world_inject"):
         parts.append(f"[세계관 추가] {mo['world_inject']}")
 
+    # ── BLOCK 8.5: PLAYER AGENCY GUARD (강화판) ──
+    parts.append(PLAYER_AGENCY_GUARD.format(player_name=player))
+
     # ── BLOCK 9: Output format + Emotion whitelist (FIXED suffix) ──
     parts.append(
         f"[EMOTION WHITELIST] {', '.join(SUPPORTED_EMOTIONS)}\n"
@@ -2167,36 +2461,11 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
         "- emotion_intensity는 1~10 범위에서 상황에 따라 변동시켜라. 항상 5는 금지."
     )
 
-    # Event hints — Pulse-aware injection (guarded by location + turn count)
+    # Event hints — STEP 9: 조건부 이벤트 시드 발동
     if s is not None:
-        tc = len(s.get("turns", []))
-        pulse_mode = (pulse_result or {}).get("mode", "REACTIVE")
-        on_screen = s.get("on_screen", [])
-        current_location = (s.get("world", {}).get("main_stage", {}) or {}).get("name", "")
-
-        # Event seeds only inject when: player is at a relevant location (기숙사)
-        # AND at least 15 turns have passed. Only as hints, not forced events.
-        _event_location_eligible = EVENT_SEED_LOCATION in current_location
-        _event_turn_eligible = tc >= EVENT_SEED_MIN_TURNS
-
-        if pulse_mode == "PROACTIVE" and _event_location_eligible and _event_turn_eligible:
-            seed = select_relevant_event_seed(on_screen, WORLD_DB)
-            if seed:
-                beats = seed.get("beats", [])
-                first_beat = beats[0] if beats else ""
-                parts.append(
-                    f"- [이벤트 힌트 — PROACTIVE] '{seed.get('title', '')}' "
-                    f"소재를 힌트 수준으로 암시하세요 (강제 삽입 금지): {first_beat}"
-                )
-        elif _event_location_eligible and _event_turn_eligible:
-            event_seeds = WORLD_DB.get("event_seeds", [])
-            if tc > 0 and tc % 5 == 0 and event_seeds:
-                seed = random.choice(event_seeds)
-                beats = seed.get("beats", [])
-                first_beat = beats[0] if beats else ""
-                parts.append(
-                    f"- [이벤트 힌트] '{seed.get('title', '')}' 소재를 자연스럽게 끌어와도 좋습니다: {first_beat}"
-                )
+        event_hint = get_event_seed_for_scene(s)
+        if event_hint:
+            parts.append(event_hint)
 
     # Pulse System injection
     if pulse_result:
@@ -2667,6 +2936,14 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             brief_lines.append(f"  관계: {stage_name} (호감{rel.get('affection', 50)})")
         continuity_lines.append("\n".join(brief_lines))
 
+    # STEP 5-B: 3-Tier 메모리 컨텍스트 주입
+    memory_context = build_memory_context_for_dima(s)
+    continuity_lines.append(memory_context)
+
+    # STEP 7: flow_digest를 DIMA가 읽기 쉬운 형태로 변환
+    flow_context = format_flow_digest_for_dima(s)
+    continuity_lines.append(flow_context)
+
     briefs.insert(0, "\n".join(continuity_lines))
     character_briefs_content = "\n".join(briefs)
 
@@ -2806,7 +3083,7 @@ def generate_llm(
             logger.warning(f"Response blocked by safety filter (reason: {finish_reason})")
             return {"script": [{"type": "narration", "content": "(안전 필터에 의해 장면이 전환됩니다. 잠시 후 이야기가 계속됩니다.)"}]}
 
-    text = response.text
+    text = _extract_text(response)
     if text:
         # Part K: Strip markdown fences before parsing
         cleaned = re.sub(r'```json\s*', '', text.strip())
@@ -3227,21 +3504,13 @@ def _run_maestro_preturn(s: dict) -> Optional[dict]:
         thinking_config=genai_types.ThinkingConfig(thinking_budget=512),
     )
 
-    result = call_gemini_with_timeout(MODEL_MAESTRO, [prompt], config, timeout_sec=15)
+    result = safe_gemini_call(MODEL_MAESTRO, [prompt], config, timeout_sec=15)
     if not result:
         return None
 
-    raw = ""
-    try:
-        raw = result.text or ""
-    except Exception:
-        try:
-            for part in result.candidates[0].content.parts:
-                if hasattr(part, 'text') and part.text:
-                    raw = part.text
-                    break
-        except Exception:
-            return None
+    raw = _extract_text(result)
+    if not raw:
+        return None
 
     return parse_maestro_response(raw)
 
@@ -3318,7 +3587,7 @@ Return JSON with:
     )
     try:
         if response is not None:
-            text = response.text
+            text = _extract_text(response)
             if text:
                 maestro_result = extract_first_json_block(text)
     except (AttributeError, NameError, TypeError) as e:
@@ -3625,13 +3894,13 @@ def execute_turn():
         # Part B: Apply CORE-4 natural decay
         apply_core4_decay(s)
 
-        # === Maestro V2 동기 실행 (DIMA 호출 전) ===
-        if s.get("turns"):  # 첫 턴이 아닐 때만
+        # === Maestro V2 동기 실행 — STEP 11: 적응형 호출 빈도 ===
+        if should_call_maestro(s, user_input):
             try:
                 maestro_data = _run_maestro_preturn(s)
                 if maestro_data:
                     apply_maestro_to_session(s, maestro_data)
-                    logger.info(f"Maestro preturn OK: turn {len(s['turns'])}")
+                    logger.info(f"Maestro called at turn {len(s['turns'])}")
             except Exception as e:
                 logger.warning(f"Maestro preturn failed: {e}")
                 # 실패해도 DIMA는 진행 (기존 context 사용)
@@ -3699,6 +3968,9 @@ def execute_turn():
         s.setdefault("memory", {}).setdefault("short_term", []).append(short_entry)
         if len(s["memory"]["short_term"]) > 20:
             s["memory"]["short_term"] = s["memory"]["short_term"][-20:]
+
+        # --- STEP 5: 3-Tier Memory 갱신 ---
+        update_memory_tiers(s, user_input, final_script)
 
         # Recalculate relationship stages
         update_all_relationship_stages(s)
