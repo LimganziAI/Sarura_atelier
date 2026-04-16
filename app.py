@@ -891,7 +891,7 @@ DIMA_SCHEMA = {
                     "content": {"type": "string"},
                     "character": {"type": "string"},
                     "emotion": {"type": "string"},
-                    "emotion_intensity": {"type": "integer"},
+                    "emotion_intensity": {"type": "integer", "minimum": 1, "maximum": 10},
                     "monologue": {"type": "string"},
                 },
                 "required": ["type", "content"],
@@ -1884,7 +1884,9 @@ def build_adaptive_instruction(s: dict) -> str:
 - 세리카는 실제로는 훨씬 나이가 많지만 기억상실로 인해 학생으로 행동. 가끔 무의식적으로 나이 든 말투가 튀어나올 수 있음.
 - 샐리는 역성장으로 외모가 어리지만 실제 30대. 말투에서 '아줌마'가 튀어나옴.
 """
-    parts.append(AGE_HIERARCHY_RULE)
+    # turn 0~2에서만 전체 나이 서열 규칙 삽입 (이후 캐싱 기대)
+    if turn_count <= 2:
+        parts.append(AGE_HIERARCHY_RULE)
 
     # ── BLOCK 4: Style-specific extensions ──
     if play_style in ("chat", "counsel"):
@@ -1997,7 +1999,13 @@ def build_adaptive_instruction(s: dict) -> str:
         parts.append(f"[세계관 추가] {mo['world_inject']}")
 
     # ── BLOCK 8.5: PLAYER AGENCY GUARD (강화판) ──
-    parts.append(PLAYER_AGENCY_GUARD.format(player_name=player))
+    if turn_count <= 1:
+        parts.append(PLAYER_AGENCY_GUARD.format(player_name=player))
+    else:
+        parts.append(
+            f"[PLAYER GUARD] {player}의 대사/감정/행동을 절대 쓰지 마라. "
+            f"NPC 시점의 관찰로만 표현."
+        )
 
     # ── BLOCK 9: Output format + Emotion whitelist (FIXED suffix) ──
     parts.append(
@@ -2954,10 +2962,10 @@ def post_process_script(script: list, s: dict) -> list:
             # Part A: Normalize emotion with hybrid engine
             em = block.get("emotion", "joy")
             block["emotion"] = normalize_emotion_tag(em)
-            # Ensure emotion_intensity is integer 1-5
+            # Ensure emotion_intensity is integer 1-10
             intensity = block.get("emotion_intensity", 3)
             try:
-                intensity = max(1, min(5, int(intensity)))
+                intensity = max(1, min(10, int(intensity)))
             except (ValueError, TypeError):
                 intensity = 3
             block["emotion_intensity"] = intensity
@@ -2983,8 +2991,28 @@ def post_process_script(script: list, s: dict) -> list:
             "emotion": "joy",
             "emotion_intensity": 2,
         })
-    return processed
+    # FIX-12: 나레이션에서 플레이어 내면 서술 제거/완화
+    _INNER_PATTERNS = [
+        "나는 ", "나를 ", "내 마음", "내 심장", "내 가슴",
+        "멈칫하게 만들었다", "혼란에 빠지", "설레는 기분",
+        "가슴이 뛰", "얼굴이 붉어", "긴장되", "두근거",
+    ]
+    for block in processed:
+        if block.get("type") == "narration" and block.get("content"):
+            content = block["content"]
+            for pattern in _INNER_PATTERNS:
+                if pattern in content:
+                    # 1인칭 내면 → NPC 관찰 시점으로 변환 시도
+                    content = content.replace("나는 멈칫", "잠시 정적이 흘렀다")
+                    content = content.replace("나를 잠시 멈칫하게 만들었다", "묘한 긴장이 감돌았다")
+                    content = content.replace("혼란에 빠지는 기분이었다", "복잡한 공기가 흘렀다")
+                    content = content.replace("나는 ", "")
+                    content = content.replace("내 심장", "주위의 공기")
+                    content = content.replace("내 가슴", "분위기")
+                    break  # 한 블록당 1회 치환이면 충분
+            block["content"] = content
 
+    return processed
 
 # =========================================================================
 # PART D: EMOTIONAL CONTAGION BETWEEN CHARACTERS (PAD-based)
@@ -3252,6 +3280,26 @@ def apply_maestro_to_session(s: dict, data: dict):
     nb = data.get("next_beat")
     if nb and isinstance(nb, dict):
         s["next_beat"] = nb
+
+    # 5.5 next_beat 폴백 — Maestro가 제공하지 않으면 로컬 생성
+    if not nb or not isinstance(nb, dict) or not nb.get("lead_character"):
+        on_screen = s.get("on_screen", [])
+        player_name = s.get("player_name", "사용자")
+        npcs = [n for n in on_screen if n != player_name]
+        if npcs:
+            lead = random.choice(npcs)
+            tactics = [
+                "자연스럽게 장소 이동을 제안",
+                "자신의 개인적인 이야기를 꺼냄",
+                "유저에게 의미 있는 질문을 던짐",
+                "다른 NPC와 의견 충돌을 일으킴",
+                "씬의 분위기를 전환하는 행동",
+            ]
+            s["next_beat"] = {
+                "lead_character": lead,
+                "tactic": random.choice(tactics),
+                "tension_direction": random.choice(["rise", "maintain"]),
+            }
 
 
 def _run_maestro_preturn(s: dict) -> Optional[dict]:
