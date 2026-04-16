@@ -43,6 +43,7 @@
     .info-bar{flex-shrink:0;display:flex;justify-content:space-between;align-items:center;padding:10px 15px;background:var(--bg-medium);color:var(--text-medium);font-size:13px;border-bottom:1px solid #000}
     .participants-display{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:15px}
     .info-bar .label{font-weight:bold;color:var(--accent-gold)}
+    .location-display{margin-left:10px;font-size:12px;color:var(--accent-gold);opacity:0.9}
     .toggle-button{border:1px solid #555;border-radius:5px;padding:4px 8px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap}
     .info-bar .buttons{display:flex;gap:10px;flex-wrap:nowrap}
 
@@ -161,6 +162,7 @@
         <span class="label">내 이름:</span> <span id="current-player-name">사용자</span> |
         <span class="label">참여자:</span> <span id="participants-list-display">사용자</span>
         <span id="token-display" style="margin-left:10px;font-size:11px;color:var(--text-medium);opacity:0.7"></span>
+        <span id="location-display" class="location-display"></span>
       </div>
       <div class="buttons">
         <div id="toggle-scene-panel" class="toggle-button">씬 설정🎬</div>
@@ -249,7 +251,7 @@
 
       <!-- Part B: CORE-4 Sliders -->
       <div class="control-group core4-group">
-        <div class="control-label">CORE-4 환경 상태</div>
+        <div class="control-label">CORE-4 환경 상태 <span style="font-size:11px;color:#888;">(씬 전체에 적용 — NPC 행동·묘사에 영향)</span></div>
         <div class="core4-slider-row">
           <label for="core4-energy">에너지</label>
           <input type="range" id="core4-energy" min="0" max="100" value="70">
@@ -697,27 +699,7 @@
       };
 
       // --- Render Pulse Chips ---
-      function renderPulseChips(pulse) {
-        if (!el.pulseChipsContainer) return;
-        el.pulseChipsContainer.innerHTML = '';
-        if (!pulse || pulse.mode === 'REACTIVE' || !pulse.suggestions || !pulse.suggestions.length) {
-          el.pulseChipsContainer.style.display = 'none';
-          return;
-        }
-        el.pulseChipsContainer.style.display = 'flex';
-        pulse.suggestions.forEach(text => {
-          const chip = document.createElement('button');
-          chip.type = 'button';
-          chip.className = 'pulse-chip';
-          chip.textContent = text;
-          chip.addEventListener('click', () => {
-            el.userInput.value = text;
-            el.userInput.focus();
-            el.pulseChipsContainer.style.display = 'none';
-          });
-          el.pulseChipsContainer.appendChild(chip);
-        });
-      }
+      function renderPulseChips(pulse) { /* disabled */ }
 
       // --- Render full state ---
       const renderUIFromState = async (newState) => {
@@ -767,6 +749,13 @@
 
         // Sync CORE-4 sliders
         syncCore4Sliders(STATE?.core4);
+
+        // Sync location display
+        const locationDisplay = document.getElementById('location-display');
+        if (locationDisplay) {
+            const loc = STATE?.world?.space?.current_location;
+            locationDisplay.textContent = loc ? `📍${loc}` : '';
+        }
 
         // Render turns
         el.chatLog.innerHTML = '';
