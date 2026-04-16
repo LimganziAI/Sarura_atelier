@@ -51,6 +51,8 @@ MAESTRO_RETRY_DELAY_SECONDS = 5
 DIGEST_CONTENT_MAX_LENGTH = 30
 SLIDING_WINDOW_SIZE = 10
 MAESTRO_INTERVAL = 5
+# Tracked catchphrases for anti-repetition enforcement
+TRACKED_CATCHPHRASES = ["호호호", "아이고", "어머", "우리 김갑수", "누나"]
 
 SUPPORTED_EMOTIONS = [
     "default", "joy", "sadness", "anger", "surprise",
@@ -738,6 +740,18 @@ def build_memory_context_for_dima(s: dict) -> str:
 
 
 # ─── STEP 7: flow_digest_10 구조 개선 ────────────────────────
+def _format_digest_item(item) -> str:
+    """Convert a single flow_digest item (str, dict, list/tuple) to a display string."""
+    if isinstance(item, str):
+        return item[:120]
+    elif isinstance(item, dict):
+        return f"T{item.get('turn', '?')}: {item.get('summary', '')[:80]}"
+    elif isinstance(item, (list, tuple)) and len(item) >= 2:
+        return f"{item[0]}: {str(item[1])[:100]}"
+    else:
+        return str(item)[:80]
+
+
 def format_flow_digest_for_dima(s: dict) -> str:
     """flow_digest_10을 DIMA가 읽기 쉬운 형태로 변환.
     유저 발화는 ★ 표시로 강조하여 DIMA가 반드시 참조하게 함."""
@@ -2213,7 +2227,8 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
                 if dynamics == "주도적":
                     role_lines.append(f"- {npc}: 이번 턴에서 대화를 주도하거나 새로운 행동을 제안하라.")
                 elif dynamics == "반응적":
-                    role_lines.append(f"- {npc}: 이번 턴에서 상황을 관찰하고, {npcs[0] if npc != npcs[0] else npcs[1]}의 행동에 반응하라.")
+                    other_npc = next((n for n in npcs if n != npc), npcs[0])
+                    role_lines.append(f"- {npc}: 이번 턴에서 상황을 관찰하고, {other_npc}의 행동에 반응하라.")
                 else:
                     role_lines.append(f"- {npc}: 이번 턴에서 독자적인 행동(딴짓, 자기 이야기)을 하라.")
 
@@ -2462,17 +2477,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     # Recent conversation log for DIMA prompt
     digest = s.get("flow_digest_10", [])
     if digest:
-        safe_digest = []
-        for item in digest[-7:]:
-            if isinstance(item, str):
-                safe_digest.append(item)
-            elif isinstance(item, dict):
-                safe_digest.append(
-                    f"T{item.get('turn', '?')}: {item.get('summary', '')[:80]}"
-                )
-            else:
-                safe_digest.append(str(item)[:80])
-        digest_text = "\n".join(safe_digest)
+        digest_text = "\n".join(_format_digest_item(item) for item in digest[-7:])
     else:
         digest_text = "(첫 번째 턴)"
 
@@ -2518,7 +2523,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 # 캐릭터별 사용한 캐치프레이즈 추적
                 if char:
                     cps = forbidden_catchphrases.setdefault(char, [])
-                    for cp_word in ["호호호", "아이고", "어머", "우리 김갑수", "누나"]:
+                    for cp_word in TRACKED_CATCHPHRASES:
                         if cp_word in content[:30]:
                             cps.append(cp_word)
 
