@@ -3298,7 +3298,7 @@ def apply_maestro_to_session(s: dict, data: dict):
             s["next_beat"] = {
                 "lead_character": lead,
                 "tactic": random.choice(tactics),
-                "tension_direction": "rise" if random.random() > 0.5 else "maintain",
+                "tension_direction": random.choice(["rise", "maintain"]),
             }
 
 
