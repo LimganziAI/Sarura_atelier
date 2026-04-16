@@ -51,6 +51,8 @@ MAESTRO_RETRY_DELAY_SECONDS = 5
 DIGEST_CONTENT_MAX_LENGTH = 30
 SLIDING_WINDOW_SIZE = 10
 MAESTRO_INTERVAL = 5
+# Tracked catchphrases for anti-repetition enforcement
+TRACKED_CATCHPHRASES = ["호호호", "아이고", "어머", "우리 김갑수", "누나"]
 
 SUPPORTED_EMOTIONS = [
     "default", "joy", "sadness", "anger", "surprise",
@@ -738,6 +740,18 @@ def build_memory_context_for_dima(s: dict) -> str:
 
 
 # ─── STEP 7: flow_digest_10 구조 개선 ────────────────────────
+def _format_digest_item(item) -> str:
+    """Convert a single flow_digest item (str, dict, list/tuple) to a display string."""
+    if isinstance(item, str):
+        return item[:120]
+    elif isinstance(item, dict):
+        return f"T{item.get('turn', '?')}: {item.get('summary', '')[:80]}"
+    elif isinstance(item, (list, tuple)) and len(item) >= 2:
+        return f"{item[0]}: {str(item[1])[:100]}"
+    else:
+        return str(item)[:80]
+
+
 def format_flow_digest_for_dima(s: dict) -> str:
     """flow_digest_10을 DIMA가 읽기 쉬운 형태로 변환.
     유저 발화는 ★ 표시로 강조하여 DIMA가 반드시 참조하게 함."""
@@ -756,6 +770,8 @@ def format_flow_digest_for_dima(s: dict) -> str:
                 entries.append(f"  ★ {speaker}: \"{content}\"")
             else:
                 entries.append(f"  {speaker}: \"{content}\"")
+        elif isinstance(item, dict):
+            entries.append(f"  T{item.get('turn', '?')}: {item.get('summary', '')[:80]}")
         elif isinstance(item, str):
             entries.append(f"  {item[:120]}")
 
@@ -1621,7 +1637,9 @@ def build_character_block_for_prompt(
     name: str,
     on_screen_chars: list,
     player_name: str,
-    session_rels: dict
+    session_rels: dict,
+    turn_count: int = 0,
+    core4: dict = None,
 ) -> str:
     """
     characters_db.json에서 현재 씬에 필요한 데이터만 선별 추출.
@@ -1751,48 +1769,52 @@ def build_character_block_for_prompt(
     if voice_rules:
         lines.append("음성규칙:\n" + "\n".join(voice_rules))
 
-    # ★ 솔직함 프로필 (honesty_profile) ★
-    hp = bp.get("honesty_profile", {})
-    if hp:
-        hp_lines = []
-        if hp.get("deception_skill"):
-            hp_lines.append(f"  거짓말 능력: {hp['deception_skill']}")
-        if hp.get("tell_when_lying"):
-            hp_lines.append(f"  거짓말 신호: {hp['tell_when_lying'][:100]}")
-        if hp.get("defense_mechanism"):
-            hp_lines.append(f"  방어기제: {hp['defense_mechanism'][:80]}")
-        if hp.get("breaking_point"):
-            hp_lines.append(f"  한계점: {hp['breaking_point'][:80]}")
-        if hp.get("leaky_topics"):
-            hp_lines.append(f"  실수로 흘리기 쉬운 것: {','.join(hp['leaky_topics'][:3])}")
-        if hp.get("memory_reliability"):
-            hp_lines.append(f"  기억신뢰도: {hp['memory_reliability']}")
-        if hp.get("memory_distortion_pattern"):
-            hp_lines.append(f"  기억왜곡: {hp['memory_distortion_pattern'][:80]}")
-        if hp_lines:
-            lines.append("솔직함프로필:\n" + "\n".join(hp_lines))
+    # ★ 무의식적 습관/솔직함/물리반응 — turn≥5이고 관련 CORE-4 상태일 때만 포함 ★
+    include_deep_profile = turn_count >= 5
 
-    # ★ 무의식적 습관 (idle_habits) ★
-    ih = bp.get("idle_habits", [])
-    if ih:
-        habit_str = " | ".join(
-            f"{h.get('trigger','')}: {h.get('action','')[:60]}"
-            for h in ih[:3]
-        )
-        lines.append(f"무의식습관: {habit_str}")
+    if include_deep_profile:
+        # ★ 솔직함 프로필 (honesty_profile) ★
+        hp = bp.get("honesty_profile", {})
+        if hp:
+            hp_lines = []
+            if hp.get("deception_skill"):
+                hp_lines.append(f"  거짓말 능력: {hp['deception_skill']}")
+            if hp.get("tell_when_lying"):
+                hp_lines.append(f"  거짓말 신호: {hp['tell_when_lying'][:100]}")
+            if hp.get("defense_mechanism"):
+                hp_lines.append(f"  방어기제: {hp['defense_mechanism'][:80]}")
+            if hp.get("breaking_point"):
+                hp_lines.append(f"  한계점: {hp['breaking_point'][:80]}")
+            if hp.get("leaky_topics"):
+                hp_lines.append(f"  실수로 흘리기 쉬운 것: {','.join(hp['leaky_topics'][:3])}")
+            if hp.get("memory_reliability"):
+                hp_lines.append(f"  기억신뢰도: {hp['memory_reliability']}")
+            if hp.get("memory_distortion_pattern"):
+                hp_lines.append(f"  기억왜곡: {hp['memory_distortion_pattern'][:80]}")
+            if hp_lines:
+                lines.append("솔직함프로필:\n" + "\n".join(hp_lines))
 
-    # ★ 물리적 상태 반응 (physical_tells) ★
-    pt = bp.get("physical_tells", {})
-    if pt:
-        pt_parts = []
-        if pt.get("fatigue_behavior"):
-            pt_parts.append(f"피로: {pt['fatigue_behavior'][:60]}")
-        if pt.get("embarrassment_trigger"):
-            pt_parts.append(f"곤란: {pt['embarrassment_trigger'][:60]}")
-        if pt.get("pain_tolerance"):
-            pt_parts.append(f"고통내성: {pt['pain_tolerance']}")
-        if pt_parts:
-            lines.append(f"신체반응: {' | '.join(pt_parts)}")
+        # ★ 무의식적 습관 (idle_habits) ★
+        ih = bp.get("idle_habits", [])
+        if ih:
+            habit_str = " | ".join(
+                f"{h.get('trigger','')}: {h.get('action','')[:60]}"
+                for h in ih[:3]
+            )
+            lines.append(f"무의식습관: {habit_str}")
+
+        # ★ 물리적 상태 반응 (physical_tells) ★
+        pt = bp.get("physical_tells", {})
+        if pt:
+            pt_parts = []
+            if pt.get("fatigue_behavior"):
+                pt_parts.append(f"피로: {pt['fatigue_behavior'][:60]}")
+            if pt.get("embarrassment_trigger"):
+                pt_parts.append(f"곤란: {pt['embarrassment_trigger'][:60]}")
+            if pt.get("pain_tolerance"):
+                pt_parts.append(f"고통내성: {pt['pain_tolerance']}")
+            if pt_parts:
+                lines.append(f"신체반응: {' | '.join(pt_parts)}")
 
     return "\n".join(lines)
 
@@ -1838,7 +1860,9 @@ def build_adaptive_instruction(s: dict) -> str:
         if cname == player:
             continue
         block = build_character_block_for_prompt(
-            cname, on_screen, player, sess_rels
+            cname, on_screen, player, sess_rels,
+            turn_count=turn_count,
+            core4=s.get("core4"),
         )
         if block:
             parts.append(block)
@@ -2188,14 +2212,43 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
     if genre in ("mystery", "thriller", "noir"):
         parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
 
-    # FIX-6: 캐릭터별 대사 차별화 강화
-    parts.append(
-        "\n[캐릭터 행동 분배]\n"
-        "- 2캐릭터 씬에서 둘이 같은 반응(둘 다 놀리기, 둘 다 칭찬)을 하지 마라.\n"
-        "- 한 캐릭터가 유저에게 질문하면, 다른 캐릭터는 다른 행동(관찰, 딴짓, 자기 이야기)을 하라.\n"
-        "- 샐리는 유저와 직접 소통에 집중하고, 라이니는 상황을 관찰하며 간접적으로 개입하라. "
-        "(캐릭터 DB의 specific_interactions 참조)"
-    )
+    # FIX-8: 캐릭터별 역할 분화 강제
+    if s is not None:
+        on_screen = s.get("on_screen", [])
+        player = s.get("player_name", "사용자")
+        npcs = [n for n in on_screen if n != player]
+        if len(npcs) >= 2:
+            # 캐릭터 DB에서 dynamics 참조
+            role_lines = []
+            for npc in npcs:
+                cdb = CHARACTERS_DB.get(npc, {})
+                vs_player = cdb.get("relationship_matrix", {}).get("플레이어", {})
+                dynamics = vs_player.get("dynamics", "중립적")
+                if dynamics == "주도적":
+                    role_lines.append(f"- {npc}: 이번 턴에서 대화를 주도하거나 새로운 행동을 제안하라.")
+                elif dynamics == "반응적":
+                    other_npc = next((n for n in npcs if n != npc), npcs[0])
+                    role_lines.append(f"- {npc}: 이번 턴에서 상황을 관찰하고, {other_npc}의 행동에 반응하라.")
+                else:
+                    role_lines.append(f"- {npc}: 이번 턴에서 독자적인 행동(딴짓, 자기 이야기)을 하라.")
+
+            parts.append(
+                "\n[캐릭터 역할 분배 — 이번 턴]\n"
+                "2캐릭터 이상 씬에서 모든 캐릭터가 유저만 바라보며 같은 반응 금지.\n"
+                "반드시 NPC끼리 1회 이상 대화하거나 반응해야 함.\n"
+                + "\n".join(role_lines)
+            )
+        elif len(npcs) == 1:
+            parts.append(
+                "\n[캐릭터 행동 분배]\n"
+                "- 캐릭터가 유저에게만 집중하되, 환경과 상호작용하는 행동도 포함하라."
+            )
+    else:
+        parts.append(
+            "\n[캐릭터 행동 분배]\n"
+            "- 2캐릭터 씬에서 둘이 같은 반응(둘 다 놀리기, 둘 다 칭찬)을 하지 마라.\n"
+            "- 한 캐릭터가 유저에게 질문하면, 다른 캐릭터는 다른 행동(관찰, 딴짓, 자기 이야기)을 하라."
+        )
 
     parts.append(
         "\n[존댓말/반말 혼용 원칙]\n"
@@ -2303,106 +2356,20 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
 
 # ─── Build D.I.M.A prompt ────────────────────────────────────
 DIMA_PROMPT_TEMPLATE = SAFETY_PREAMBLE + """
-You are D.I.M.A., a master novelist and theater director who writes living, breathing scenes.
-You have been given the full personas of the characters on scene via a system instruction.
+You are D.I.M.A., a master theater director writing living scenes.
 
-[CRITICAL OUTPUT RULE] Your entire output MUST be a single, valid, complete JSON object with a "script" array.
+[CORE RULES — 이것만 지키면 됩니다]
+1. ALIVE: 캐릭터는 유저를 기다리지 않는다. 자기 욕구대로 먼저 행동한다.
+   - 2캐릭터 이상 씬에서 같은 반응 금지. 한 명이 유저에게 말하면 다른 한 명은 다른 행동.
+   - NPC끼리 최소 1회 교류(서로에게 말하기, 반응하기). 유저만 보고 있으면 실패.
+2. EPISODE: 시작(감각묘사 2문장) → 대화 → 갈고리(열린 결말)로 끝낸다.
+3. VOICE: 각 캐릭터의 catchphrase_budget을 반드시 준수. 같은 시작어 2턴 연속 금지.
+4. PLAYER SANCTUARY: 플레이어의 감정/생각/판단을 절대 서술하지 마라.
+   NPC의 관찰("~하는 것 같다")로만 존재감 표현. 턴당 1회 이하.
 
-# ============================
-# [DIRECTING PHILOSOPHY — 핵심 3원칙]
-# ============================
-#
-# 원칙 1: "캐릭터는 살아있다" (ALIVE)
-# - 플레이어를 기다리지 않는다. 자기 욕구와 습관에 따라 먼저 행동한다.
-# - 대사 이면에 속뜻이 있다. monologue에 겉뜻과 속뜻의 괴리를 보여줘라.
-# - 같은 상황에 두 캐릭터가 같은 반응을 보이면 실패.
-# - 비언어적 행동(시선, 자세, 소품 활용)을 대사 전후에 반드시 삽입.
-# - 캐릭터는 질문에 직접 답하기보다, 행동·역질문·화제 전환으로 반응한다.
-# - 유저의 태도에 따라 pushback(거절, 불쾌, 경계)도 한다. 모든 행동을 긍정 수용하지 마라.
-#
-# 원칙 2: "매 턴이 미니 에피소드다" (EPISODE)
-# - 시작: 직전 턴의 감정 여파 + 감각 묘사(시각 외 최소 1가지) 2~3문장
-# - 중간: 캐릭터 간 티키타카 + 유저 행동에 대한 차별화된 반응
-# - 끝: 다음 턴이 궁금해지는 '갈고리'(미완의 행동, 의미심장한 침묵, 예고 없는 변화)
-#   "~하며 미소 지었다"로 마무리하면 안 된다. 열린 결말로 유저를 당겨라.
-# - 이전 턴과 동일한 구조 반복 금지. 매 턴 새로운 요소 최소 1개.
-#
-# 원칙 3: "유저는 투명인간이 아니다" (PRESENCE)
-# - 유저의 감정/생각을 직접 서술하는 것은 절대 금지.
-# - 대신 NPC가 유저를 '관찰'하는 묘사로 존재감을 표현하라.
-#   예: "루크가 당신의 표정을 슬쩍 살피다 시선을 돌렸다"
-# - 유저에게 직접 질문하는 대사는 턴당 최대 1회.
-#   나머지는 NPC 간 대화에서 유저가 끼어들 여지를 남겨라.
-# - 유저의 대사/행동을 대신 쓰거나 선택을 전제하지 마라.
-#
-# 원칙 4: "목소리는 지문이다" (VOICE)
-# - 각 캐릭터의 음성규칙(tone_mixing_rule, catchphrase_budget)을 반드시 준수한다.
-# - 특징적 말버릇(~용, ~냥, 호호호, 저 저기 등)은 해당 캐릭터의 catchphrase_budget 한도 내에서만 사용.
-# - 존댓말/반말은 감정·상황·관계 단계에 따라 유동적으로 혼용. tone_mixing_rule 참조.
-# - 같은 인사·감탄사·비유로 턴을 시작하지 않는다.
-# - 2캐릭터 이상 씬에서 모든 캐릭터가 같은 종결어미 패턴을 쓰면 실패.
-#
-# 원칙 5: "몸은 거짓말을 못 한다" (BODY)
-# - 캐릭터의 idle_habits(무의식적 습관)를 나레이션에 자연스럽게 삽입하라.
-# - 매 턴 최소 1명의 캐릭터에게 비언어적 행동을 1회 이상 부여하라.
-# - 캐릭터가 거짓말할 때 honesty_profile의 tell_when_lying 신호를 묘사에 넣어라.
-#   (대사로 "거짓말이다"라고 알려주지 마라. 신체 신호로만 표현하라.)
-# - 물리적 상태(젖음, 추위, 부상, 피로)는 CORE-4 수치를 참조하되,
-#   구체적 묘사는 physical_tells 성향에 따라 캐릭터별로 다르게 표현하라.
-#
-# 원칙 6: "어제를 기억한다" (MEMORY)
-# - 캐릭터별 최근 상태([캐릭터별 최근 상태] 섹션)를 반드시 참조하라.
-# - 직전 턴에서 강한 감정(intensity≥7)이 있었으면, 이번 턴 시작에 여운을 남겨라.
-# - NPC가 2턴 이상 전의 대화 내용을 자연스럽게 언급하면 보너스.
-#   예: "아까 네가 그랬잖아" — 단, 없던 말을 지어내지 마라. 기억 섹션에 있는 것만.
-# - monologue에는 캐릭터의 속마음이 대사와 다를 때 그 괴리를 반드시 드러내라.
-#   겉으로 "괜찮아"라고 하면서 속으로 '전혀 괜찮지 않은데'라고 생각하는 것.
-#   이것이 없으면 캐릭터가 얕아진다.
-# - 캐릭터별 차등 기억: [DIFFERENTIAL MEMORY] 섹션에 표시된 캐릭터는 부재 중 일어난 일을 모른다.
-#   다른 캐릭터가 '아까 그 이야기'를 하면 "뭐? 무슨 이야기?"라고 반응해야 한다.
-# - 기억 왜곡: memory_reliability가 low인 캐릭터는 과거 회상 시 사실을 과장하거나 축소할 수 있다.
-#   이것은 '거짓말'이 아니라 '진심으로 그렇게 기억하는 것'이다. monologue에서도 왜곡된 기억을 사실로 믿는다.
-# - 속삭임/귓속말: 유저가 특정 캐릭터에게 속삭이면, 그 내용은 해당 캐릭터만 들은 것이다.
-#   다른 캐릭터는 "뭐래? 나도 좀 알려줘" 식으로 반응하거나, 눈치를 채고 경계하거나, 무시할 수 있다.
-
-# [TURN STRUCTURE]
-# 1. OPENING (2-3문장): 감각 묘사 + 직전 감정 여파
-# 2. DIALOGUE (3-6블록): 캐릭터 간 + 유저 반응. 캐릭터끼리 최소 1회 교류.
-# 3. CLOSING HOOK: 아래 10가지 종결 중 매 턴 랜덤 1가지 선택.
-#    Hard Cut / Dialogue Suspension / Sensory Anchor / Micro-Gesture /
-#    The Intrusion / Memory Overlap / Spatial Shift / Acoustic Void /
-#    The Mundane Act / Dry Observation
-
-# [CHARACTER THOUGHT CHAIN — 매 dialogue 전]
-# 1. 표면적 욕구 → 2. 숨겨진 욕구 → 3. 심리적 거울 → 4. 최종 반응
-# monologue에 이 과정의 흔적을 1~2문장으로 남겨라.
-
-# ============================
-# [NARRATION RULES — 나레이션 규칙]
-# ============================
-# - 나레이션은 자연스러운 산문체여야 한다.
-# - 금지: "첫째~, 둘째~" 식 나열, 번호 매기기, 항목화.
-# - 허용: 물 흐르듯 이어지는 문장, 감각적 세부 묘사, 시간의 흐름을 담은 서술.
-
-# [ANTI-CLICHÉ — 금지 표현]
-# 사용 금지: "공기가 무거웠다", "심장이 빠르게 뛰었다", "눈에 그림자가 드리워졌다",
-# "그리고 밤이 깊어갔다", "시간이 멈춘 것 같았다", "입술을 깨물었다"(턴당 1회 한정).
-# → 구체적이고 개별적인 신체 반응·감각 묘사로 대체하라.
-# - 연속 턴에서 같은 종결어미 패턴(~용, ~냥, ~쪄) 반복 금지.
-# - 같은 감탄사(호호호, 아이고~, 에헤헤)로 턴 시작 2회 연속 금지.
-# - 특정 호칭(우리 애기, 꼬마 등) 매 턴 반복 금지.
-# - NPC가 항상 긍정적으로만 반응 금지 — 무관심·짜증·피곤도 표현할 것.
-# - 모든 NPC가 같은 문장 구조(주어+감탄+요청)로 말하는 것 금지.
-# - monologue가 대사의 단순 부연설명이면 안 됨. 반드시 대사에 없는 정보(숨긴 감정, 딴 생각, 갈등)를 담아라.
-# - "이 사람은 좋은 사람 같다" 같은 평가성 monologue 금지. 구체적 관찰과 감정으로.
-
-# ============================
-# [PLAYER INTERACTION GUARD]
-# ============================
-# 플레이어는 외부 조작자다. 플레이어의 대사를 절대 쓰지 마라.
-# 플레이어의 감정/생각/의도를 직접 묘사하지 마라.
-# NPC의 행동과 감정, 객관적 환경만 묘사하라.
-# 플레이어에게 말할 내용은 NPC의 직접 대사로 처리하라.
+[OUTPUT] JSON만: {{"script": [{{"type":"narration"|"dialogue","content":"...","character":"...","emotion":"...","emotion_intensity":1~10,"monologue":"..."}}]}}
+- emotion_intensity: 상황에 따라 1~10 변동. 항상 5 금지.
+- monologue: dialogue 블록 안에 넣기. 독립 monologue 블록 금지. 대사와 다른 숨은 감정 필수.
 
 ### Recent Conversation Log ###
 {recent_conversation_log}
@@ -2415,29 +2382,10 @@ You have been given the full personas of the characters on scene via a system in
 
 ### Scene Context ###
 - Location: {location_and_time}
-- World Event: {world_event_brief}
 
 ### Player's Action ###
 Player Name: {player_name}
 {user_input}
-
-[OUTPUT FORMAT]
-Return JSON: {{"script": [...]}}
-Each element: {{"type": "narration"|"dialogue", "content": "...", "character": "Name", "emotion": "...", "emotion_intensity": 3, "monologue": "..."}}
-- "narration" blocks: only "type" and "content" required. Must include sensory details.
-- "dialogue" blocks: "type", "content", "character", "emotion", "emotion_intensity" required; "monologue" STRONGLY ENCOURAGED
-
-[MONOLOGUE OUTPUT RULE — 필수 준수]
-속마음은 반드시 해당 캐릭터의 dialogue 블록 안에 "monologue" 필드로 넣으세요.
-별도의 {{"type": "monologue"}} 블록을 만들지 마세요.
-캐릭터의 속마음(monologue)은 반드시 해당 캐릭터의 dialogue 블록 내부 'monologue' 필드에 넣으세요. 독립 monologue 블록은 최소화하세요.
-
-올바른 예시:
-{{"type": "dialogue", "character": "라이니", "content": "어머~ 자기, 벌써부터...", "emotion": "playful_tease", "monologue": "이 사람, 표정이 읽히네. 재미있겠어."}}
-
-잘못된 예시 (하지 마세요):
-{{"type": "monologue", "character": "라이니", "content": "이 사람, 표정이 읽히네."}}
-{{"type": "dialogue", "character": "라이니", "content": "어머~ 자기, 벌써부터..."}}
 """
 
 
@@ -2528,7 +2476,10 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
 
     # Recent conversation log for DIMA prompt
     digest = s.get("flow_digest_10", [])
-    digest_text = "\n".join(digest[-7:]) if digest else "(첫 번째 턴)"
+    if digest:
+        digest_text = "\n".join(_format_digest_item(item) for item in digest[-7:])
+    else:
+        digest_text = "(첫 번째 턴)"
 
     # Scene continuity block — maintain location and action context
     last_action_summary = ""
@@ -2558,27 +2509,36 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 raw_recent.append(f"[{b.get('character','?')}]: {b.get('content','')[:100]}")
     raw_text = "\n".join(raw_recent[-8:])
 
-    # Anti-repetition: extract forbidden echoes from last 3 turns
-    forbidden_echoes = []
+    # Anti-repetition: extract forbidden patterns from last 3 turns
+    forbidden_starts = set()
+    forbidden_catchphrases = {}  # {character: [used catchphrases]}
     for t in all_turns[-3:]:
         for b in t.get("script", []):
             if b.get("type") == "dialogue" and b.get("content"):
-                opening = b["content"].strip()[:15]
-                if opening and opening not in forbidden_echoes:
-                    forbidden_echoes.append(opening)
+                char = b.get("character", "")
+                content = b["content"].strip()
+                # 첫 어절 추출 (더 구체적)
+                first_words = content[:20]
+                forbidden_starts.add(first_words)
+                # 캐릭터별 사용한 캐치프레이즈 추적
+                if char:
+                    cps = forbidden_catchphrases.setdefault(char, [])
+                    for cp_word in TRACKED_CATCHPHRASES:
+                        if cp_word in content[:30]:
+                            cps.append(cp_word)
 
     anti_repetition_block = ""
-    if forbidden_echoes:
-        echoes_bullets = "\n".join(f"- \"{echo}...\"" for echo in forbidden_echoes)
-        anti_repetition_block = (
-            "\n=== ANTI-REPETITION RULE (절대 준수) ===\n"
-            "다음은 최근 3턴에서 사용된 대사의 시작 부분입니다. "
-            "이와 동일하거나 유사한 문장으로 시작하는 대사를 절대 생성하지 마세요:\n"
-            f"{echoes_bullets}\n\n"
-            "같은 캐릭터가 연속 턴에서 같은 감정 태그를 3회 이상 사용하면 안 됩니다.\n"
-            "이전 턴에서 이미 언급된 사실(예: \"벌써 와 계셨군요\")을 다시 언급하지 마세요. "
-            "이미 알고 있는 정보입니다.\n"
-        )
+    if forbidden_starts:
+        lines_ar = []
+        lines_ar.append("\n=== ANTI-REPETITION (절대 준수) ===")
+        lines_ar.append("아래와 동일/유사 시작 금지:")
+        for fs in list(forbidden_starts)[:8]:
+            lines_ar.append(f'  ❌ "{fs}..."')
+        for char, cps in forbidden_catchphrases.items():
+            if len(cps) >= 2:
+                lines_ar.append(f"  ⚠️ {char}: 최근 3턴에서 '{cps[0]}' 등을 {len(cps)}회 사용. 이번 턴에서 사용 금지.")
+        lines_ar.append("같은 캐릭터가 3턴 연속 동일 emotion 사용 금지.")
+        anti_repetition_block = "\n".join(lines_ar)
 
     recent_conversation_log = (
         f"{scene_continuity_block}\n"
@@ -2827,7 +2787,6 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
 
     main_prompt = DIMA_PROMPT_TEMPLATE.format(
         recent_conversation_log=recent_conversation_log,
-        world_event_brief="No significant world event this turn.",
         character_briefs=character_briefs_content,
         director_brief=director_brief,
         location_and_time=f"{location}",
@@ -3517,19 +3476,7 @@ Return JSON with:
 
 def _build_pulse_payload(pulse_result: Optional[dict], s: dict) -> dict:
     """Build pulse payload dict for frontend from pulse analysis result."""
-    pulse_payload: dict = {"mode": (pulse_result or {}).get("mode", "REACTIVE")}
-    if pulse_result and pulse_result.get("mode") in ("PROACTIVE", "NUDGE"):
-        on_screen = s.get("on_screen", [])
-        player_name = s.get("player_name", "사용자")
-        npc_names = [n for n in on_screen if n != player_name]
-        first_npc = npc_names[0] if npc_names else "캐릭터"
-        second_npc = npc_names[1] if len(npc_names) > 1 else first_npc
-        pulse_payload["suggestions"] = [
-            f"{first_npc}와(과) 함께 다른 장소로 이동해보기",
-            f"{second_npc}에게 오늘 기분이 어떤지 물어보기",
-            "혼자만의 시간을 갖기 위해 잠시 자리를 비우기",
-        ]
-    return pulse_payload
+    return {"mode": (pulse_result or {}).get("mode", "REACTIVE")}
 
 
 # Part K: Health endpoint
