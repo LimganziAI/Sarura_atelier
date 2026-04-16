@@ -1111,6 +1111,19 @@ def init_session(session_id: Optional[str] = None) -> dict:
         "maestro_override": {},
         # PATCH-23: Global turn counter (monotonically increasing)
         "_global_turn_counter": 0,
+        # PATCH-25: 유저 프로파일 (첫 1~2턴에서 분석, 이후 업데이트)
+        "player_profile": {
+            "play_style": None,       # "romantic" | "adventure" | "comedy" | "drama" | "slice_of_life"
+            "interaction_tone": None,  # "casual" | "formal" | "playful" | "serious"
+            "preferred_pace": None,    # "fast" | "moderate" | "slow"
+            "favorite_characters": [],
+            "topics_of_interest": [],
+            "avoidances": [],
+            "confidence_score": 0,
+            "last_analyzed_turn": 0,
+        },
+        # PATCH-25: 캐릭터별 개별 위치 추적
+        "character_locations": {},
     }
     return s
 
@@ -1140,6 +1153,25 @@ def _migrate_session(s: dict) -> dict:
     # PATCH-23: Global turn counter migration
     if "_global_turn_counter" not in s:
         s["_global_turn_counter"] = len(s.get("turns", [])) + len(s.get("flow_digest_10", []))
+
+    # PATCH-25: 유저 프로파일 마이그레이션
+    if "player_profile" not in s:
+        s["player_profile"] = {
+            "play_style": None, "interaction_tone": None,
+            "preferred_pace": None, "favorite_characters": [],
+            "topics_of_interest": [], "avoidances": [],
+            "confidence_score": 0, "last_analyzed_turn": 0,
+        }
+
+    # PATCH-25: 캐릭터별 위치 마이그레이션
+    if "character_locations" not in s:
+        current_loc = s.get("world", {}).get("space", {}).get("current_location", "라운지")
+        player_name = s.get("player_name", "사용자")
+        s["character_locations"] = {}
+        for name in s.get("on_screen", []):
+            if name != player_name:
+                s["character_locations"][name] = current_loc
+        s["character_locations"][player_name] = current_loc
 
     s["_schema_version"] = 5
     return s
@@ -1189,20 +1221,26 @@ def resolve_default_location(world_db: dict) -> str:
         return "라운지"
 
 
-def detect_location_change(text: str, s: dict) -> Optional[str]:
-    """텍스트(유저 입력 또는 NPC 대사)에서 장소 이동을 감지. 새 장소명 또는 None."""
+def detect_location_change(text: str, s: dict, speaker: str = None) -> Optional[str]:
+    """텍스트에서 장소 이동을 감지. speaker가 있으면 그 캐릭터만 이동 대상."""
     text_lower = text.lower()
 
-    # 모든 장소명 수집
+    # 모든 장소명 수집 (별칭 포함)
     all_locations = {}
     for loc in WORLD_DB.get("main_stage", {}).get("locations", []):
         name = loc.get("name", "")
         if name:
             all_locations[name] = name
+            for alias in loc.get("aliases", []):
+                all_locations[alias] = name
+            if len(name) >= 2:
+                all_locations[name[:2]] = name
     for loc in WORLD_DB.get("external_locations", {}).get("locations", []):
         name = loc.get("name", "")
         if name:
             all_locations[name] = name
+            for alias in loc.get("aliases", []):
+                all_locations[alias] = name
 
     # 캐릭터 개인 공간
     player_name = s.get("player_name", "사용자")
@@ -1212,14 +1250,18 @@ def detect_location_change(text: str, s: dict) -> Optional[str]:
                 all_locations[pattern] = f"{char}의 개인실"
 
     # 이동 의도 + 장소명 매칭
-    move_kw = ["가자", "갑시다", "가볼까", "이동", "가요", "가보자", "갈까", "으로 가", "에서 만나", "들어가", "나가"]
-    arrival_kw = ["들어왔", "도착", "여기가", "이곳은", "왔다"]
+    move_kw = ["가자", "갑시다", "가볼까", "이동", "가요", "가보자", "갈까",
+               "으로 가", "에서 만나", "들어가", "나가", "옮기", "가볼래",
+               "데려다", "찾으러", "가줘"]
+    arrival_kw = ["들어왔", "도착", "여기가", "이곳은", "왔다", "들어서"]
+    explicit_kw = ["에 있", "에서 ", "에 왔", "도착해"]
 
-    has_intent = any(kw in text_lower for kw in move_kw + arrival_kw)
+    has_intent = any(kw in text_lower for kw in move_kw + arrival_kw + explicit_kw)
     if has_intent:
-        for loc_key, loc_name in all_locations.items():
-            if loc_key.lower() in text_lower or loc_key in text:
-                return loc_name
+        sorted_keys = sorted(all_locations.keys(), key=len, reverse=True)
+        for loc_key in sorted_keys:
+            if loc_key.lower() in text_lower:
+                return all_locations[loc_key]
 
     return None
 
@@ -1232,6 +1274,244 @@ def apply_location_change(s: dict, new_location: str):
         s["world"]["space"]["current_location"] = new_location
         s.setdefault("scene_context", {})["turn_count_in_scene"] = 0
         logger.info(f"Location changed: {old_loc} → {new_location}")
+
+
+# ─── PATCH-25: Per-character location tracking ───────────────
+
+def get_characters_at_location(s: dict, location: str) -> list:
+    """특정 장소에 있는 캐릭터 목록 반환."""
+    locs = s.get("character_locations", {})
+    return [name for name, loc in locs.items() if loc == location]
+
+
+def get_player_location(s: dict) -> str:
+    """플레이어의 현재 위치."""
+    player_name = get_player_name(s)
+    return s.get("character_locations", {}).get(player_name, "라운지")
+
+
+def move_character(s: dict, char_name: str, new_location: str, reason: str = ""):
+    """캐릭터를 새 장소로 이동."""
+    locs = s.setdefault("character_locations", {})
+    old_loc = locs.get(char_name, "라운지")
+    if old_loc != new_location:
+        locs[char_name] = new_location
+        logger.info(f"[위치이동] {char_name}: {old_loc} → {new_location} ({reason})")
+
+        # 이동 이벤트를 DIMA 힌트로 저장
+        move_events = s.setdefault("_location_move_events", [])
+        move_events.append({
+            "character": char_name,
+            "from": old_loc,
+            "to": new_location,
+            "reason": reason,
+        })
+
+
+def check_emotional_departure(s: dict) -> list:
+    """감정 상태에 따른 자발적 퇴장 판정. 퇴장한 캐릭터명 리스트 반환."""
+    departed = []
+    player_name = get_player_name(s)
+    player_loc = get_player_location(s)
+
+    for char_name in list(s.get("on_screen", [])):
+        if char_name == player_name:
+            continue
+
+        # 플레이어와 같은 장소에 있는 캐릭터만 판정
+        char_loc = s.get("character_locations", {}).get(char_name, "라운지")
+        if char_loc != player_loc:
+            continue
+
+        # 관계 상태 확인
+        rel = s.get("relationships", {}).get(char_name, {})
+        tension = rel.get("tension", 30)
+        affection = rel.get("affection", 50)
+
+        # CORE-4 확인
+        core4 = s.get("core4", {})
+        stress = core4.get("stress", {}).get("value", 30)
+
+        # 판정 조건: 긴장 70+ AND 호감 30- → 회피 가능성
+        if tension >= 70 and affection <= 30:
+            if random.random() < 0.4:  # 40% 확률
+                move_character(s, char_name, "???", "감정적 회피")
+                departed.append(char_name)
+        # 스트레스 80+ → 혼자 있고 싶음
+        elif stress >= 80:
+            if random.random() < 0.25:  # 25% 확률
+                cdb = CHARACTERS_DB.get(char_name, {})
+                pdna = cdb.get("personality_dna", {})
+                if pdna.get("extraversion", 5) <= 3:
+                    dest = f"{char_name}의 방"
+                else:
+                    dest = "옥상" if random.random() < 0.5 else "정원"
+                move_character(s, char_name, dest, "스트레스 회피")
+                departed.append(char_name)
+
+    return departed
+
+
+# ─── PATCH-25: Spatial context for DIMA prompt ───────────────
+
+def build_spatial_context(s: dict) -> str:
+    """캐릭터별 위치 상태를 DIMA 프롬프트용 텍스트로 변환."""
+    locs = s.get("character_locations", {})
+    if not locs:
+        return ""
+
+    player_name = get_player_name(s)
+    player_loc = locs.get(player_name, "라운지")
+
+    lines = ["## [공간 상태 — 반드시 준수]"]
+    lines.append(f"현재 장소: {player_loc}")
+
+    here = []
+    elsewhere = []
+    missing = []
+
+    for name in s.get("on_screen", []):
+        if name == player_name:
+            continue
+        loc = locs.get(name, player_loc)
+        if loc == player_loc:
+            here.append(name)
+        elif loc == "???":
+            missing.append(name)
+        else:
+            elsewhere.append((name, loc))
+
+    if here:
+        lines.append(f"같은 장소에 있는 캐릭터: {', '.join(here)} → 직접 대화 가능")
+    if elsewhere:
+        for name, loc in elsewhere:
+            lines.append(f"{name}: {loc}에 있음 → 직접 대화 불가, 부재 언급만 가능")
+    if missing:
+        for name in missing:
+            lines.append(f"{name}: ??? (어딘가로 사라짐) → NPC들이 걱정하거나 찾으려는 반응 가능")
+
+    lines.append("")
+    lines.append("[규칙] 다른 장소에 있는 캐릭터의 대사를 쓰지 마라.")
+    lines.append("[규칙] ???인 캐릭터는 직접 등장 불가. 다른 캐릭터가 '어디 갔지?' 반응만 가능.")
+    lines.append("[규칙] 유저가 다른 장소로 이동하면 그 장소의 캐릭터만 대화 가능.")
+
+    return "\n".join(lines)
+
+
+# ─── PATCH-25: Player profile analysis ───────────────────────
+
+def analyze_player_profile(s: dict, user_input: str):
+    """유저 입력과 슬라이더 설정, 대화 이력에서 플레이 스타일을 추론."""
+    profile = s.get("player_profile", {})
+    turn_count = s.get("_global_turn_counter", 0)
+
+    # 최소 2턴 이상 지나야 분석 시작
+    if turn_count < 2:
+        return
+
+    # 이미 확신도 높으면 10턴마다만 재분석
+    if profile.get("confidence_score", 0) >= 70 and \
+       turn_count - profile.get("last_analyzed_turn", 0) < 10:
+        return
+
+    turns = s.get("turns", [])
+
+    # --- 1) 유저 대사 패턴 분석 ---
+    user_messages = []
+    for t in turns[-10:]:
+        ui_text = t.get("user_input", "")
+        if ui_text and ui_text not in ("[CONTINUE_SCENE]", "[PLAYER_PAUSE]"):
+            user_messages.append(ui_text)
+
+    all_text = " ".join(user_messages).lower()
+
+    # 플레이 스타일 키워드 매칭
+    style_signals = {
+        "romantic": ["좋아", "귀여", "예쁘", "두근", "사랑", "심장", "데이트", "손잡"],
+        "adventure": ["가자", "탐험", "모험", "밖에", "나가", "싸우", "도전"],
+        "comedy": ["ㅋㅋ", "ㅎㅎ", "웃겨", "장난", "놀리", "재밌"],
+        "drama": ["왜", "진짜", "심각", "비밀", "과거", "상처", "아프"],
+        "slice_of_life": ["뭐해", "밥", "오늘", "날씨", "심심", "같이"],
+    }
+
+    style_scores = {}
+    for style, keywords in style_signals.items():
+        score = sum(1 for kw in keywords if kw in all_text)
+        if score > 0:
+            style_scores[style] = score
+
+    if style_scores:
+        best_style = max(style_scores, key=style_scores.get)
+        profile["play_style"] = best_style
+
+    # 어조 분석
+    formal_signals = ["요", "습니다", "세요", "드릴"]
+    casual_signals = ["ㅋ", "ㅎ", ";;", "ㅠ", "야", "해줘", "할래"]
+    formal_count = sum(1 for kw in formal_signals if kw in all_text)
+    casual_count = sum(1 for kw in casual_signals if kw in all_text)
+
+    if casual_count > formal_count * 2:
+        profile["interaction_tone"] = "casual"
+    elif formal_count > casual_count * 2:
+        profile["interaction_tone"] = "formal"
+    else:
+        profile["interaction_tone"] = "playful"
+
+    # 자주 말을 거는 캐릭터 추적
+    char_mention_count = {}
+    for msg in user_messages:
+        for char_name in s.get("on_screen", []):
+            if char_name != s.get("player_name") and char_name in msg:
+                char_mention_count[char_name] = char_mention_count.get(char_name, 0) + 1
+
+    if char_mention_count:
+        sorted_chars = sorted(char_mention_count.items(), key=lambda x: -x[1])
+        profile["favorite_characters"] = [c[0] for c in sorted_chars[:3]]
+
+    # 확신도 업데이트
+    data_points = len(user_messages)
+    profile["confidence_score"] = min(100, data_points * 15)
+    profile["last_analyzed_turn"] = turn_count
+
+    s["player_profile"] = profile
+    logger.info(f"Player profile updated: style={profile.get('play_style')}, "
+                f"tone={profile.get('interaction_tone')}, conf={profile.get('confidence_score')}")
+
+
+def build_player_profile_context(s: dict) -> str:
+    """유저 프로파일을 DIMA가 참조할 수 있는 텍스트로 변환."""
+    profile = s.get("player_profile", {})
+    if not profile or profile.get("confidence_score", 0) < 30:
+        return ""
+
+    lines = ["## [유저 성향 분석 — 이 유저에 맞춰 연기하라]"]
+
+    style = profile.get("play_style")
+    if style:
+        style_map = {
+            "romantic": "로맨틱한 전개를 좋아함. 감정적 긴장감, 설렘, 스킨십 암시에 잘 반응.",
+            "adventure": "모험과 행동을 좋아함. 새로운 장소 이동, 도전적 상황 제시.",
+            "comedy": "유머와 장난을 좋아함. 가볍고 웃긴 상호작용, 티키타카.",
+            "drama": "깊은 이야기를 좋아함. 비밀 암시, 감정적 갈등, 캐릭터 과거.",
+            "slice_of_life": "일상적 대화를 좋아함. 편안한 분위기, 자연스러운 흐름.",
+        }
+        lines.append(f"- 선호 장르: {style} — {style_map.get(style, '')}")
+
+    tone = profile.get("interaction_tone")
+    if tone:
+        tone_map = {
+            "casual": "캐릭터도 편하게 반말/친근체를 섞어도 됨",
+            "formal": "캐릭터는 정중함을 유지하되 딱딱하지 않게",
+            "playful": "캐릭터가 먼저 장난치거나 놀려도 됨",
+            "serious": "진지하고 깊은 대화 중심",
+        }
+        lines.append(f"- 유저 어조: {tone} — {tone_map.get(tone, '')}")
+
+    favs = profile.get("favorite_characters", [])
+    if favs:
+        lines.append(f"- 관심 캐릭터: {', '.join(favs)} (이 캐릭터들이 더 적극적으로)")
+
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def merge_ui_settings(s: dict, incoming: Optional[dict]):
@@ -2872,6 +3152,57 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             "NPC들 중 한 명이 결정적 행동 또는 상황을 바꾸는 대사로 장면을 전진시켜야 한다."
         )
 
+    # PATCH-25: 공간 상태 주입
+    spatial_context = build_spatial_context(s)
+    if spatial_context:
+        director_brief += "\n\n" + spatial_context
+
+    # PATCH-25: 유저 프로파일 주입
+    profile_context = build_player_profile_context(s)
+    if profile_context:
+        director_brief += "\n\n" + profile_context
+
+    # PATCH-25: 이동 이벤트 주입
+    move_events = s.pop("_location_move_events", [])
+    if move_events:
+        mv_lines = ["# [이번 턴 위치 변경 이벤트]"]
+        for ev in move_events:
+            char = ev["character"]
+            fr = ev["from"]
+            to = ev["to"]
+            reason = ev.get("reason", "")
+            if to == "???":
+                mv_lines.append(f"- {char}가 어딘가로 사라졌다 ({reason}). "
+                                f"다른 캐릭터들이 걱정하거나 찾는 반응 가능.")
+            else:
+                mv_lines.append(f"- {char}가 {fr}에서 {to}(으)로 이동했다 ({reason}). "
+                                f"도착 장면을 자연스럽게 연출하라.")
+        director_brief += "\n\n" + "\n".join(mv_lines)
+
+    # PATCH-25: 캐릭터 마지막 발언 기억 주입 (반복 방지)
+    char_last_p25 = s.get("memory", {}).get("character_last", {})
+    on_screen_npc_names = [n for n in s.get("on_screen", []) if n != player_name]
+    if char_last_p25:
+        last_lines_p25 = ["## [직전 발언 — 같은 시작어/내용 반복 금지]"]
+        for cname in on_screen_npc_names:
+            if cname in char_last_p25:
+                info = char_last_p25[cname]
+                last_lines_p25.append(f"- {cname}: \"{info.get('said', '')}\" (T{info.get('turn', '?')})")
+        if len(last_lines_p25) > 1:
+            director_brief += "\n\n" + "\n".join(last_lines_p25)
+
+    # PATCH-25: 초반 오프닝 부스트 (턴 1~3)
+    if turn_count <= 3:
+        boost_lines = ["# [오프닝 부스트 — 첫인상 각인]"]
+        boost_lines.append("각 캐릭터는 자기 성격을 강하게 드러내는 구체적 행동을 해라.")
+        for name in on_screen_npc_names:
+            cached = _CHAR_RUNTIME_CACHE.get(name, {})
+            appeal = cached.get("core_appeal", "")[:50]
+            examples = cached.get("example_lines", [])
+            ex = f" (예: \"{examples[0]}\")" if examples else ""
+            boost_lines.append(f"- {name}: {appeal}{ex}")
+        director_brief += "\n\n" + "\n".join(boost_lines)
+
     main_prompt = DIMA_PROMPT_TEMPLATE.format(
         recent_conversation_log=recent_conversation_log,
         character_briefs=character_briefs_content,
@@ -3260,7 +3591,16 @@ MAESTRO_PROMPT_V2 = """[ROLE] Maestro — 서사 기억 + 연출 기획 AI.
   "character_actions": {{
     "<캐릭터명>": "<이번 턴에서 이 캐릭터가 반드시 수행할 구체적 행동 1가지. 예: '김갑수의 손을 잡고 카페 쪽으로 끌고 간다', '네르에게 케이크를 권하며 반응을 관찰한다'>"
   }},
-  "location_update": "<장소 변경 시 새 장소명, 아니면 null>"
+  "location_update": "<장소 변경 시 새 장소명, 아니면 null>",
+  "character_movements": {{
+    "<캐릭터명>": {{
+      "destination": "<이동할 장소 또는 null>",
+      "reason": "<이동 이유>"
+    }}
+  }},
+  "player_profile_update": {{
+    "play_style": "<romantic|adventure|comedy|drama|slice_of_life 또는 null>"
+  }}
 }}
 
 [THIS TURN DATA]
@@ -3393,6 +3733,27 @@ def apply_maestro_to_session(s: dict, data: dict):
     loc_update = data.get("location_update")
     if loc_update and isinstance(loc_update, str) and loc_update.lower() != "null":
         apply_location_change(s, loc_update)
+
+    # PATCH-25: 8. character_movements → 캐릭터별 개별 이동
+    cm = data.get("character_movements")
+    if cm and isinstance(cm, dict):
+        for char_name, move_info in cm.items():
+            if not isinstance(move_info, dict):
+                continue
+            dest = move_info.get("destination")
+            reason = move_info.get("reason", "Maestro 지시")
+            if dest and isinstance(dest, str) and dest.lower() != "null":
+                move_character(s, char_name, dest, reason)
+
+    # PATCH-25: 9. player_profile_update → Maestro의 유저 성향 분석 반영
+    ppu = data.get("player_profile_update")
+    if ppu and isinstance(ppu, dict):
+        profile = s.setdefault("player_profile", {})
+        ps = ppu.get("play_style")
+        if ps and isinstance(ps, str) and ps.lower() != "null":
+            valid_styles = {"romantic", "adventure", "comedy", "drama", "slice_of_life"}
+            if ps in valid_styles:
+                profile["play_style"] = ps
 
 
 def _run_maestro_preturn(s: dict) -> Optional[dict]:
@@ -3693,6 +4054,13 @@ def bootstrap():
     # Part C: Initialize relationships
     init_relationships(s)
 
+    # PATCH-25: Initialize character locations
+    current_loc = s.get("world", {}).get("space", {}).get("current_location", "라운지")
+    s["character_locations"][player_name] = current_loc
+    for char in final_cast:
+        if char != player_name:
+            s["character_locations"][char] = current_loc
+
     seed_text = (data.get("seed_text") or "").strip() or "[PLAYER_PAUSE]"
 
     # Generate first turn
@@ -3781,6 +4149,12 @@ def execute_turn():
             if set(new_cast) != set(s.get("on_screen", [])):
                 s["on_screen"] = new_cast
                 init_relationships(s)
+                # PATCH-25: 새 캐릭터에 위치 부여
+                current_loc = s.get("world", {}).get("space", {}).get("current_location", "라운지")
+                locs = s.setdefault("character_locations", {})
+                for char in new_cast:
+                    if char not in locs:
+                        locs[char] = current_loc
                 logger.info(f"on_screen updated: {new_cast}")
 
         if not s.get("on_screen"):
@@ -3842,20 +4216,43 @@ def execute_turn():
                 logger.warning(f"Maestro preturn failed: {e}")
                 # 실패해도 DIMA는 진행 (기존 context 사용)
 
-        # PATCH-23: 유저 입력에서 장소 변경 감지
-        new_loc = detect_location_change(user_input, s)
+        # PATCH-25: 유저 프로파일 분석 (매 턴)
+        analyze_player_profile(s, user_input)
+
+        # PATCH-25: 유저 입력에서 장소 이동 감지 (플레이어 + 동행 캐릭터)
+        new_loc = detect_location_change(user_input, s, speaker=me)
         if new_loc:
+            player_loc = get_player_location(s)
+            # 플레이어 이동
+            move_character(s, me, new_loc, "유저 이동 요청")
+            # 같은 장소에 있던 캐릭터 중 일부가 따라감 (호감도 기반)
+            for char_name in list(s.get("on_screen", [])):
+                if char_name == me:
+                    continue
+                char_loc = s.get("character_locations", {}).get(char_name)
+                if char_loc == player_loc:  # 이전에 같은 곳에 있었으면
+                    rel = s.get("relationships", {}).get(char_name, {})
+                    affection = rel.get("affection", 50)
+                    if affection >= 40 or random.random() < 0.6:
+                        move_character(s, char_name, new_loc, "플레이어 동행")
+                    # 호감 낮으면 안 따라감 → 자연스러운 분리
+            # 레거시 호환
             apply_location_change(s, new_loc)
+
+        # PATCH-25: 감정 기반 자발적 퇴장 체크
+        check_emotional_departure(s)
 
         # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
         final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
 
-        # PATCH-23: NPC 대사에서도 장소 변경 감지
-        if not new_loc:
-            npc_text = " ".join(b.get("content", "") for b in final_script if b.get("type") == "dialogue")
-            npc_loc = detect_location_change(npc_text, s)
-            if npc_loc:
-                apply_location_change(s, npc_loc)
+        # PATCH-25: NPC 대사에서 장소 이동 감지 (캐릭터별 개별 이동)
+        for block in final_script:
+            if block.get("type") == "dialogue" and block.get("character"):
+                npc_name = block["character"]
+                npc_loc = detect_location_change(block.get("content", ""), s, speaker=npc_name)
+                if npc_loc:
+                    move_character(s, npc_name, npc_loc, "NPC 자발적 이동")
+                    apply_location_change(s, npc_loc)
 
         # V5.0: Step 4 — Token metering
         turn_number = len(s.get("turns", []))
@@ -3941,6 +4338,8 @@ def execute_turn():
             "personal_colors": PERSONAL_COLORS,
             "pulse": _build_pulse_payload(pulse_result, s),
             "illustration_url": illustration_url,
+            "character_locations": s.get("character_locations", {}),
+            "current_location": get_player_location(s),
             "token_usage": {
                 "this_turn": current_turn_usage,
                 "session_total": {
