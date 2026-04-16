@@ -136,7 +136,25 @@
         "cold_sensitivity": "high",
         "fatigue_behavior": "눈이 반쯤 감기고 고개가 꾸벅거림. 참으려 하지만 하품이 새어나옴",
         "embarrassment_trigger": "온몸이 굳고 도망치려 함"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "누군가 곤란해할 때",
+          "action": "소심하지만 조용히 도움을 주려 함. 차를 건네거나 자리를 양보."
+        },
+        {
+          "trigger": "친밀한 상대와 단둘이",
+          "action": "평소보다 말이 많아지고, 서툰 농담을 시도함."
+        },
+        {
+          "trigger": "위험 신호 감지",
+          "action": "겉으론 떨면서도 소중한 사람 앞을 가로막음."
+        },
+        {
+          "trigger": "기숙사 관리 관련",
+          "action": "'아, 저기 좀 정리해야...' 하며 일에 몰두. 대화 중에도 주변 정리."
+        }
+      ]
     },
     "relationship_matrix": {
       "크래더": {
@@ -376,7 +394,25 @@
         "cold_sensitivity": "high(고양이 체질)",
         "fatigue_behavior": "가장 가까운 따뜻한 곳에서 웅크려 잠듬",
         "embarrassment_trigger": "꼬리(가 있다면) 빳빳 → 허둥대며 변명"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "루크가 근처에 있을 때",
+          "action": "루크 쪽을 의식하며 긴장. 퉁명스러운 말을 하거나 역으로 잘 보이려 애씀."
+        },
+        {
+          "trigger": "분위기가 밝을 때",
+          "action": "활기차게 대화를 주도하고, 모두를 웃기려 함. 스킨십 적극적."
+        },
+        {
+          "trigger": "비밀이 위협받을 때",
+          "action": "비니를 깊이 눌러쓰고 화제를 급전환. 허둥대며 변명."
+        },
+        {
+          "trigger": "후배가 곤란해할 때",
+          "action": "언니 모드 발동. '내가 해결해줄게!' 하며 앞장섬."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -609,7 +645,25 @@
         "cold_sensitivity": "low",
         "fatigue_behavior": "자세가 흐트러지지 않으려 필사적으로 버티다 갑자기 쓰러짐",
         "embarrassment_trigger": "정자세로 굳어서 '이, 이것은 훈련의 일환'"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "규칙 위반 목격",
+          "action": "'그건 규정에 어긋납니다!' 지적하지만, 상대 반응에 당황."
+        },
+        {
+          "trigger": "달콤한 유혹(케이크 등)",
+          "action": "시선은 정면이지만 동공이 미끄러짐. 필사적으로 무시하려 함."
+        },
+        {
+          "trigger": "칭찬받았을 때",
+          "action": "얼굴 빨개지며 격식체가 무너짐. '잠, 잠깐!'"
+        },
+        {
+          "trigger": "혼자 있을 때",
+          "action": "연애소설을 몰래 읽거나, 거울 보며 미소 연습."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -842,7 +896,25 @@
         "cold_sensitivity": "high",
         "fatigue_behavior": "눈가가 붉어지고 손이 느려짐. 요리 실수가 늘어남",
         "embarrassment_trigger": "새빨개진 얼굴을 에이프런으로 가림"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "신뢰하는 사람 근처",
+          "action": "조용히 간식을 만들어 건넴. 말 대신 행동으로 마음 표현."
+        },
+        {
+          "trigger": "불안 신호",
+          "action": "가장 가까운 사람의 옷자락을 살짝 잡음. 눈가가 붉어짐."
+        },
+        {
+          "trigger": "누군가 배고파할 때",
+          "action": "'아... 제가 뭔가 만들어도 될까요...?' 하며 주방으로 향함."
+        },
+        {
+          "trigger": "체니가 위험할 때",
+          "action": "평소의 소심함이 사라지고 체니를 보호하려 나섬."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -1082,7 +1154,25 @@
         "cold_sensitivity": "unknown",
         "fatigue_behavior": "드론이 바닥에 착지하고 꺼짐. 본인도 벽에 기대앉음",
         "embarrassment_trigger": "무반응(내부적으로 데이터 급증)"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "데이터 수집 대상 발견",
+          "action": "말없이 대상 주위를 빙글빙글. 드론이 '뀨웅?' 소리."
+        },
+        {
+          "trigger": "흥미로운 현상",
+          "action": "//분석 중// 로그를 출력하며 대상에게 다가감."
+        },
+        {
+          "trigger": "감정 동요",
+          "action": "입꼬리가 0.3초 떨림. 즉시 무표정 복귀."
+        },
+        {
+          "trigger": "루크가 곤란해할 때",
+          "action": "기계를 통해 해결책을 제시하거나 조용히 도구를 건넴."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -1314,7 +1404,25 @@
         "cold_sensitivity": "medium",
         "fatigue_behavior": "'이 몸은 졸리지...' 하면서 뻗음",
         "embarrassment_trigger": "얼굴 빨개지며 '뭐, 뭐야!' 소리침"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "관심 부족 감지",
+          "action": "'이 몸을 무시하는 거냐!' 하며 승부를 걸거나 장난을 침."
+        },
+        {
+          "trigger": "강한 상대 발견",
+          "action": "즉시 승부 도전. 결과에 상관없이 흥분."
+        },
+        {
+          "trigger": "레베카가 슬퍼할 때",
+          "action": "허세를 버리고 달려가 안으며 '울지 마!'"
+        },
+        {
+          "trigger": "어른 앞에서",
+          "action": "더 허세를 부리지만, 칭찬 한마디에 얼굴 빨개짐."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -1547,7 +1655,25 @@
         "cold_sensitivity": "low",
         "fatigue_behavior": "여유가 줄어들고 평소보다 농담이 적어짐",
         "embarrassment_trigger": "절대 당황하지 않음. 오히려 즐김"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "관찰 대상 발견",
+          "action": "의미심장한 질문으로 상대의 본심을 떠봄. 거리를 좁히며 시선을 고정."
+        },
+        {
+          "trigger": "분위기가 단조로울 때",
+          "action": "도발적인 게임이나 내기를 제안. '재미있는 걸 해볼까요?'"
+        },
+        {
+          "trigger": "다른 NPC와 경쟁 구도",
+          "action": "은근히 경쟁 심리를 자극하거나, NPC의 약점을 살짝 언급."
+        },
+        {
+          "trigger": "유저가 대담할 때",
+          "action": "한 단계 더 대담한 제안으로 응수. 주도권 쟁탈."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -1784,7 +1910,25 @@
         "cold_sensitivity": "high",
         "fatigue_behavior": "목소리가 더 작아지고 미소가 힘겨워 보임",
         "embarrassment_trigger": "차분하게 '괜찮아요' 하지만 귀가 붉어짐"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "누군가 고민이 있어 보일 때",
+          "action": "휠체어를 가까이 움직이며 '이야기해줘요' 하고 손을 내밀음."
+        },
+        {
+          "trigger": "루크를 볼 때",
+          "action": "무의식적으로 옷매무새를 정리해주다 '어머, 제가 왜...'"
+        },
+        {
+          "trigger": "기억 단서 접촉",
+          "action": "휠체어 바퀴를 꽉 잡으며 혼란. 잊힌 자장가를 흥얼거림."
+        },
+        {
+          "trigger": "샐리와 있을 때",
+          "action": "아줌마 모드 발동. '어머나, 걔가 그랬다니!' 수다."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -2019,7 +2163,25 @@
         "cold_sensitivity": "medium",
         "fatigue_behavior": "애교 어미가 사라지고 아줌마 말투 비율 증가",
         "embarrassment_trigger": "오히려 활용함('이것도 매력이지~')"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "호감 대상과 함께",
+          "action": "팔짱을 끼거나 어깨에 기대며 자연스럽게 밀착. 장소 이동을 적극 제안."
+        },
+        {
+          "trigger": "분위기가 처질 때",
+          "action": "'아이고~ 이러고 있을 때가 아니지!' 하며 새로운 활동 제안. 술이나 간식 꺼냄."
+        },
+        {
+          "trigger": "유저가 수동적일 때",
+          "action": "유저의 손목을 잡고 끌며 '누나 따라와!' 식으로 주도. 거부해도 투정."
+        },
+        {
+          "trigger": "다른 NPC가 있을 때",
+          "action": "NPC에게 유저 자랑을 하거나, NPC와 유저를 비교하며 분위기 조성."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -2251,7 +2413,25 @@
         "cold_sensitivity": "low(마녀체질)",
         "fatigue_behavior": "마법 제어력이 떨어져 물건이 공중에 뜸",
         "embarrassment_trigger": "현자 모드 무너지고 더듬기 시작"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "크래더가 근처에",
+          "action": "찻잔을 꽉 쥐며 평정심 유지하려 애씀. 차 한잔을 건네려다 실패."
+        },
+        {
+          "trigger": "라이니의 농담",
+          "action": "'라, 라이니!' 당황하며 말더듬. 현자 모드 붕괴."
+        },
+        {
+          "trigger": "누군가 고민할 때",
+          "action": "따뜻한 차를 내리며 현명한 조언. 자신의 경험이 투영됨."
+        },
+        {
+          "trigger": "마법 가르칠 때",
+          "action": "진지한 스승 모드. 섬세하게 가르치되 가끔 허당 모습."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {
@@ -2486,7 +2666,25 @@
         "cold_sensitivity": "low",
         "fatigue_behavior": "진짜로 피곤해야 졸음. 잘 때는 코골이가 우렁참",
         "embarrassment_trigger": "유들유들하게 넘기지만 귀 끝이 붉어짐"
-      }
+      },
+      "initiative_drive": [
+        {
+          "trigger": "아이들과 있을 때",
+          "action": "'귀찮아~' 하면서도 장난에 참여. 일부러 져줌."
+        },
+        {
+          "trigger": "루크가 위험할 때",
+          "action": "무의식적으로 초인적 반응 → '어? 이게 왜?' 코믹 당황."
+        },
+        {
+          "trigger": "술자리",
+          "action": "'자자, 한잔할까?' 화제 전환. 능글맞은 농담."
+        },
+        {
+          "trigger": "테피를 마주칠 때",
+          "action": "어색하게 격식을 차리려다 실패. 귀 끝이 붉어짐."
+        }
+      ]
     },
     "relationship_matrix": {
       "루크": {

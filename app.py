@@ -44,9 +44,9 @@ GEMINI_API_KEY = (
 )
 
 # ─── Constants ───────────────────────────────────────────────
-MODEL_DIMA = "gemini-2.5-flash"
+MODEL_DIMA = "gemini-3-flash-preview"
 MODEL_MAESTRO = "gemini-2.5-flash"
-MODEL_FALLBACK_CHAIN = ["gemini-2.5-flash", "gemini-2.0-flash"]
+MODEL_FALLBACK_CHAIN = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.0-flash"]
 MAESTRO_RETRY_DELAY_SECONDS = 5
 DIGEST_CONTENT_MAX_LENGTH = 30
 SLIDING_WINDOW_SIZE = 10
@@ -1109,6 +1109,8 @@ def init_session(session_id: Optional[str] = None) -> dict:
         "analyzer_cache": None,
         # V5.0: Maestro override directives
         "maestro_override": {},
+        # PATCH-23: Global turn counter (monotonically increasing)
+        "_global_turn_counter": 0,
     }
     return s
 
@@ -1135,6 +1137,9 @@ def _migrate_session(s: dict) -> dict:
         s["analyzer_cache"] = None
     if "maestro_override" not in s:
         s["maestro_override"] = {}
+    # PATCH-23: Global turn counter migration
+    if "_global_turn_counter" not in s:
+        s["_global_turn_counter"] = len(s.get("turns", [])) + len(s.get("flow_digest_10", []))
 
     s["_schema_version"] = 5
     return s
@@ -1182,6 +1187,51 @@ def resolve_default_location(world_db: dict) -> str:
         return world_db.get("main_stage", {}).get("locations", [{}])[0].get("name", "라운지")
     except (IndexError, AttributeError):
         return "라운지"
+
+
+def detect_location_change(text: str, s: dict) -> Optional[str]:
+    """텍스트(유저 입력 또는 NPC 대사)에서 장소 이동을 감지. 새 장소명 또는 None."""
+    text_lower = text.lower()
+
+    # 모든 장소명 수집
+    all_locations = {}
+    for loc in WORLD_DB.get("main_stage", {}).get("locations", []):
+        name = loc.get("name", "")
+        if name:
+            all_locations[name] = name
+    for loc in WORLD_DB.get("external_locations", {}).get("locations", []):
+        name = loc.get("name", "")
+        if name:
+            all_locations[name] = name
+
+    # 캐릭터 개인 공간
+    player_name = s.get("player_name", "사용자")
+    for char in s.get("on_screen", []):
+        if char != player_name:
+            for pattern in [f"{char} 방", f"{char}의 방", f"{char}씨 방"]:
+                all_locations[pattern] = f"{char}의 개인실"
+
+    # 이동 의도 + 장소명 매칭
+    move_kw = ["가자", "갑시다", "가볼까", "이동", "가요", "가보자", "갈까", "으로 가", "에서 만나", "들어가", "나가"]
+    arrival_kw = ["들어왔", "도착", "여기가", "이곳은", "왔다"]
+
+    has_intent = any(kw in text_lower for kw in move_kw + arrival_kw)
+    if has_intent:
+        for loc_key, loc_name in all_locations.items():
+            if loc_key.lower() in text_lower or loc_key in text:
+                return loc_name
+
+    return None
+
+
+def apply_location_change(s: dict, new_location: str):
+    """세션의 현재 장소를 변경."""
+    old_loc = s.get("world", {}).get("space", {}).get("current_location", "라운지")
+    if new_location != old_loc:
+        s.setdefault("world", {}).setdefault("space", {})["previous_location"] = old_loc
+        s["world"]["space"]["current_location"] = new_location
+        s.setdefault("scene_context", {})["turn_count_in_scene"] = 0
+        logger.info(f"Location changed: {old_loc} → {new_location}")
 
 
 def merge_ui_settings(s: dict, incoming: Optional[dict]):
@@ -2366,18 +2416,21 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
 DIMA_PROMPT_TEMPLATE = SAFETY_PREAMBLE + """
 You are D.I.M.A., a master theater director writing living scenes.
 
-[CORE RULES — 이것만 지키면 됩니다]
-1. ALIVE: 캐릭터는 유저를 기다리지 않는다. 자기 욕구대로 먼저 행동한다.
-   - 2캐릭터 이상 씬에서 같은 반응 금지. 한 명이 유저에게 말하면 다른 한 명은 다른 행동.
-   - NPC끼리 최소 1회 교류(서로에게 말하기, 반응하기). 유저만 보고 있으면 실패.
-2. EPISODE: 시작(감각묘사 2문장) → 대화 → 갈고리(열린 결말)로 끝낸다.
-3. VOICE: 각 캐릭터의 catchphrase_budget을 반드시 준수. 같은 시작어 2턴 연속 금지.
-4. PLAYER SANCTUARY: 플레이어의 감정/생각/판단을 절대 서술하지 마라.
-   NPC의 관찰("~하는 것 같다")로만 존재감 표현. 턴당 1회 이하.
+[CORE RULES]
+1. ALIVE: 캐릭터는 자기 욕구대로 먼저 행동한다. 유저를 기다리지 않는다.
+   - 2캐릭터 이상: 같은 반응 금지. NPC끼리 최소 1회 교류.
+   - 한 캐릭터가 연달아 2~3번 말해도 된다. A→B→A 자연스러운 대화 흐름 허용.
+   - NPC끼리 먼저 대화하다가 유저에게 말 거는 구조도 허용.
+2. EPISODE: 감각묘사(2문장) → 대화(자유롭게) → 열린 결말로 끝.
+   - script 블록 수 제한 없음. 필요하면 6~10개도 가능.
+3. VOICE: catchphrase_budget 준수. 같은 시작어 2턴 연속 금지.
+   - monologue는 캐릭터 고유 어투로. 모든 캐릭터가 같은 톤이면 실패.
+4. PLAYER SANCTUARY: 플레이어 감정/생각 절대 서술 금지.
+5. DRIVE: [캐릭터별 행동 지시]가 있으면 반드시 수행. 이것이 장면의 원동력이다.
 
-[OUTPUT] JSON만: {{"script": [{{"type":"narration"|"dialogue","content":"...","character":"...","emotion":"...","emotion_intensity":1~10,"monologue":"..."}}]}}
-- emotion_intensity: 상황에 따라 1~10 변동. 항상 5 금지.
-- monologue: dialogue 블록 안에 넣기. 독립 monologue 블록 금지. 대사와 다른 숨은 감정 필수.
+[OUTPUT] JSON: {{"script": [{{"type":"narration"|"dialogue","content":"...","character":"...","emotion":"...","emotion_intensity":1~10,"monologue":"..."}}]}}
+- emotion_intensity: 1~10 변동. 항상 5 금지.
+- monologue: dialogue 안에 넣기. 대사와 다른 숨은 감정 필수.
 
 ### Recent Conversation Log ###
 {recent_conversation_log}
@@ -2634,6 +2687,32 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             )
         # 사용 후 삭제 (stale beat 방지)
         s.pop("next_beat", None)
+
+    # PATCH-23 Part F: 캐릭터별 이번 턴 행동 지시 (Maestro 또는 initiative_drive에서)
+    char_actions = s.get("_character_actions_this_turn", {})
+    if not char_actions:
+        # Maestro가 제공하지 않았으면 initiative_drive에서 랜덤 선택
+        for name in on_screen_chars:
+            if name == player_name:
+                continue
+            cdb = CHARACTERS_DB.get(name, {})
+            drives = cdb.get("behavior_protocols", {}).get("initiative_drive", [])
+            if drives:
+                chosen = random.choice(drives)
+                char_actions[name] = chosen.get("action", "자유롭게 행동")
+
+    if char_actions:
+        action_lines = []
+        for name, action in char_actions.items():
+            action_lines.append(f"- {name}: {action}")
+        director_brief += (
+            "\n\n# [캐릭터별 이번 턴 행동 지시 — 반드시 수행]\n"
+            "아래는 각 캐릭터가 이번 턴에서 반드시 포함해야 할 구체적 행동입니다.\n"
+            "이 행동을 대사와 나레이션에 자연스럽게 녹여 넣으세요.\n"
+            + "\n".join(action_lines)
+        )
+    # 사용 후 삭제
+    s.pop("_character_actions_this_turn", None)
 
     # Self-Check Protocol: inject self-check block for turn >= 1
     turn_count = len(s.get("turns", []))
@@ -3177,7 +3256,11 @@ MAESTRO_PROMPT_V2 = """[ROLE] Maestro — 서사 기억 + 연출 기획 AI.
     "lead_character": "<다음 턴에서 행동을 주도할 캐릭터 이름>",
     "tactic": "<그 캐릭터가 사용할 전략. 예: '서툰 칭찬으로 거리 좁히기', '짓궂은 질문으로 본심 떠보기', '갑자기 진지해지며 과거 암시'>",
     "tension_direction": "<rise | fall | maintain — 다음 턴 긴장감 방향>"
-  }}
+  }},
+  "character_actions": {{
+    "<캐릭터명>": "<이번 턴에서 이 캐릭터가 반드시 수행할 구체적 행동 1가지. 예: '김갑수의 손을 잡고 카페 쪽으로 끌고 간다', '네르에게 케이크를 권하며 반응을 관찰한다'>"
+  }},
+  "location_update": "<장소 변경 시 새 장소명, 아니면 null>"
 }}
 
 [THIS TURN DATA]
@@ -3300,6 +3383,16 @@ def apply_maestro_to_session(s: dict, data: dict):
                 "tactic": random.choice(tactics),
                 "tension_direction": random.choice(["rise", "maintain"]),
             }
+
+    # 6. character_actions → DIMA에 전달할 캐릭터별 행동 지시 (PATCH-23)
+    ca = data.get("character_actions")
+    if ca and isinstance(ca, dict):
+        s["_character_actions_this_turn"] = ca
+
+    # 7. location_update → 장소 변경 (PATCH-23)
+    loc_update = data.get("location_update")
+    if loc_update and isinstance(loc_update, str) and loc_update.lower() != "null":
+        apply_location_change(s, loc_update)
 
 
 def _run_maestro_preturn(s: dict) -> Optional[dict]:
@@ -3623,6 +3716,8 @@ def bootstrap():
         "ui_settings_snapshot": copy.deepcopy(s.get("ui_settings", {})),
     }
     s["turns"].append(first_turn)
+    # PATCH-23: Set global turn counter after bootstrap
+    s["_global_turn_counter"] = 1
 
     # --- Flow Digest Update for bootstrap ---
     seed_text = data.get("seed_text", "")
@@ -3678,6 +3773,16 @@ def execute_turn():
         merge_ui_settings(s, data.get("ui_settings") or {})
 
         me = get_player_name(s)
+
+        # PATCH-23 Part H: on_screen 동적 업데이트
+        incoming_on_screen = data.get("on_screen_names")
+        if incoming_on_screen is not None and isinstance(incoming_on_screen, list):
+            new_cast = normalize_cast(incoming_on_screen, me)
+            if set(new_cast) != set(s.get("on_screen", [])):
+                s["on_screen"] = new_cast
+                init_relationships(s)
+                logger.info(f"on_screen updated: {new_cast}")
+
         if not s.get("on_screen"):
             pool = [n for n in CHARACTERS_DB.keys() if n != me]
             if not pool:
@@ -3737,8 +3842,20 @@ def execute_turn():
                 logger.warning(f"Maestro preturn failed: {e}")
                 # 실패해도 DIMA는 진행 (기존 context 사용)
 
+        # PATCH-23: 유저 입력에서 장소 변경 감지
+        new_loc = detect_location_change(user_input, s)
+        if new_loc:
+            apply_location_change(s, new_loc)
+
         # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
         final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
+
+        # PATCH-23: NPC 대사에서도 장소 변경 감지
+        if not new_loc:
+            npc_text = " ".join(b.get("content", "") for b in final_script if b.get("type") == "dialogue")
+            npc_loc = detect_location_change(npc_text, s)
+            if npc_loc:
+                apply_location_change(s, npc_loc)
 
         # V5.0: Step 4 — Token metering
         turn_number = len(s.get("turns", []))
@@ -3748,7 +3865,8 @@ def execute_turn():
         sc = s.setdefault("scene_context", {})
         sc["turn_count_in_scene"] = sc.get("turn_count_in_scene", 0) + 1
 
-        turn_id = (len(s.get("turns", [])) + 1)
+        turn_id = s.get("_global_turn_counter", len(s.get("turns", []))) + 1
+        s["_global_turn_counter"] = turn_id
         turn_payload = {
             "turn_id": turn_id,
             "ts": now_ts(),

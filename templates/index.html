@@ -916,6 +916,7 @@
             const turnResponse = await POST('/execute-turn', {
               user_input: text,
               ui_settings: getCurrentDirectorSettings(),
+              on_screen_names: Array.from(STAGED_ON_SCREEN),
             });
             hideTypingIndicator();
             if (turnResponse.status === 'ok' && turnResponse.state) {
