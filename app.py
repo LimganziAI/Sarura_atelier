@@ -49,10 +49,44 @@ MODEL_MAESTRO = "gemini-2.5-flash"
 MODEL_FALLBACK_CHAIN = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.0-flash"]
 MAESTRO_RETRY_DELAY_SECONDS = 5
 DIGEST_CONTENT_MAX_LENGTH = 30
-SLIDING_WINDOW_SIZE = 10
+SLIDING_WINDOW_SIZE = 7
+SUMMARY_WINDOW_SIZE = 3
 MAESTRO_INTERVAL = 5
 # Tracked catchphrases for anti-repetition enforcement
 TRACKED_CATCHPHRASES = ["호호호", "아이고", "어머", "우리 김갑수", "누나"]
+
+# ─── PATCH-28: 앙상블 캐스트 역할 매핑 ─────────────────────
+# 각 캐릭터가 그룹 씬에서 수행하는 "드라마적 기능"을 정의.
+# 이것은 발화량이 아니라 "어떻게 존재하는가"를 결정한다.
+ENSEMBLE_ROLES = {
+    "루크":   {"function": "heart",       "group_style": "조용히 돌보며 분위기를 부드럽게. 말보다 행동(차 건네기, 정리)으로 존재감.",
+               "voice_budget": "short",    "initiative": "reactive"},
+    "마리":   {"function": "catalyst",    "group_style": "분위기를 띄우고 화제를 던지는 역할. 하지만 호감 상대 앞에서는 갑자기 조용해지는 반전.",
+               "voice_budget": "medium",   "initiative": "proactive"},
+    "크래더": {"function": "wildcard",    "group_style": "예측불가 행동으로 상황을 뒤집는 트러블메이커. 장난을 걸되, 핵심 순간에는 의외로 진지.",
+               "voice_budget": "medium",   "initiative": "proactive"},
+    "세리카": {"function": "anchor",      "group_style": "정서적 닻. 혼란스러운 상황에서 한마디로 분위기를 정리. 말수는 적지만 무게감 있음.",
+               "voice_budget": "short",    "initiative": "reactive"},
+    "네르":   {"function": "straightman", "group_style": "진지한 리액션으로 코미디를 완성하는 츳코미 역할. 한숨, 날카로운 한마디, 냉정한 관찰.",
+               "voice_budget": "short",    "initiative": "reactive"},
+    "레베카": {"function": "warmth",      "group_style": "따뜻한 배려와 음식으로 소통. 대화보다 행동(간식 건네기, 걱정하는 표정)이 중심.",
+               "voice_budget": "short",    "initiative": "reactive"},
+    "체니":   {"function": "spark",       "group_style": "에너지 폭탄. 돌발 행동, 갑작스러운 질문, 예상 못한 폭로로 정체된 분위기를 깨뜨림.",
+               "voice_budget": "medium",   "initiative": "proactive"},
+    "령":     {"function": "enigma",      "group_style": "말 대신 행동이나 기계로 소통. 한마디가 나오면 그것이 핵심. 침묵 자체가 존재감.",
+               "voice_budget": "minimal",  "initiative": "reactive"},
+    "라이니": {"function": "observer",    "group_style": "관찰하고, 꿰뚫어보고, 결정적 순간에만 개입. 평소에는 미소 지으며 지켜보다가 한마디로 판을 뒤집음. 질문이나 게임 진행은 가끔만. 대부분은 다른 캐릭터의 행동을 즐기며 관찰하는 모습.",
+               "voice_budget": "short",    "initiative": "selective"},
+    "테피":   {"function": "sage",        "group_style": "너그러운 어른. 젊은 캐릭터들의 소동을 즐기며 지켜보다가, 필요할 때 조언이나 마법으로 도움.",
+               "voice_budget": "short",    "initiative": "reactive"},
+    "샐리":   {"function": "provocateur", "group_style": "시원시원한 언니. 직설적이고 대담한 발언으로 분위기를 자극. 술게임에서는 과감한 폭로나 도발로 웃음과 긴장을 동시에 유발. 남들이 못하는 말을 거침없이 하는 역할. 테피와 크래더와의 깊은 유대가 있어서 그들에 관한 이야기에서 특히 활기를 띔.",
+               "voice_budget": "medium",   "initiative": "proactive"},
+}
+
+# voice_budget 가이드: 
+# "minimal" = 턴당 0~1문장, "short" = 1~2문장, "medium" = 2~3문장, "long" = 자유
+# initiative: "proactive" = 스스로 화제를 던짐, "reactive" = 남의 말에 반응, 
+#             "selective" = 대부분 관찰하다 결정적 순간에만 개입
 
 SUPPORTED_EMOTIONS = [
     "default", "joy", "sadness", "anger", "surprise",
@@ -99,6 +133,29 @@ ILLUSTRATIONS_DIR = BASE_DIR / "static" / "illustrations"
 ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
 SHARED_NOVELS_DIR = BASE_DIR / "shared_novels"
 SHARED_NOVELS_DIR.mkdir(exist_ok=True)
+
+# ─── PATCH-28: 씬 내 즉흥 창작 허용 규칙 ─────────────────
+IMPROVISATION_RULE = """### 즉흥 창작 허용 (Improvisation License) ###
+캐릭터들은 characters_db에 정의된 성격과 관계를 기반으로, 
+이 대화 안에서 새로운 비밀, 에피소드, 추억, 고백을 즉흥으로 만들어낼 수 있다.
+
+[허용되는 즉흥]
+- 캐릭터의 과거 에피소드 창작 (예: "사실 나 옛날에 ~한 적 있어")
+- 다른 캐릭터와의 숨겨진 관계나 추억 (DB의 관계 설정과 모순되지 않는 범위)
+- 현재 상황에서 자연스럽게 나오는 감정 고백, 비밀 폭로
+- 술게임, 진실게임 등 상황에서의 과감한 발언
+- 캐릭터 성격에 맞는 돌발 행동이나 예상 못한 반응
+
+[금지되는 즉흥]
+- characters_db의 핵심 설정과 직접 모순되는 내용
+- HIDDEN_LORE_RULES의 sacred_secrets를 reveal_condition 없이 직접 공개
+- 다른 캐릭터의 core identity를 변경하는 내용
+- 플레이어의 행동/감정/대사를 대신 결정하는 것
+
+[즉흥의 원칙]
+"yes, and..." — 다른 캐릭터가 만든 즉흥을 받아서 확장하라.
+예상 밖의 진실이 나올수록, 그리고 그것이 캐릭터 성격과 맞을수록 재미있다.
+"""
 
 # ─── STEP 8: Player Agency Guard (강화판) ────────────────────
 PLAYER_AGENCY_GUARD = """### PLAYER INTERACTION GUARD — 절대 규칙 ###
@@ -953,28 +1010,18 @@ def get_event_seed_for_scene(s: dict) -> str:
 
 
 # ─── STEP 11: Maestro 호출 빈도 최적화 ──────────────────────
-def should_call_maestro(s: dict, user_input: str) -> bool:
-    """Maestro 호출 여부를 판단하는 적응형 스케줄 (PATCH-27 조정)"""
-    turn_num = len(s.get("turns", []))
-
-    if turn_num <= 1:
-        return False  # 첫 2턴은 데이터 부족
-
-    if turn_num <= 10:
-        return turn_num % 2 == 0  # 짝수 턴만
-
-    if turn_num <= 30:
-        return turn_num % 3 == 0
-
-    # 중요 키워드가 있으면 항상 호출
-    important_keywords = [
-        "고백", "좋아", "싫어", "비밀", "진심", "약속", "미안",
-        "고마워", "위험", "도망", "싸움", "울", "화나", "무서"
-    ]
-    if any(kw in (user_input or "") for kw in important_keywords):
+def should_call_maestro(turn_number: int, user_input: str = "") -> bool:
+    """Maestro 호출 여부. 초반 스킵, 키워드 트리거, 이후 빈도 제한."""
+    if turn_number < 3:
+        return False
+    triggers = ["비밀", "과거", "고백", "진심", "싸움", "이별", "울", "사랑", "배신", "기억", "진실"]
+    if any(t in user_input for t in triggers):
         return True
-
-    return turn_num % 4 == 0
+    if turn_number <= 15:
+        return turn_number % 5 == 0
+    if turn_number <= 30:
+        return turn_number % 7 == 0
+    return turn_number % 10 == 0
 
 
 # ─── Director defaults ───────────────────────────────────────
@@ -1247,6 +1294,8 @@ def init_session(session_id: Optional[str] = None) -> dict:
         "_suggestion_last_turn": {},  # {char_name: last_turn_suggested}
         "_suggestion_global_last": 0,
         "_recent_narration_openings": [],  # 최근 나레이션 시작 문구
+        # ── PATCH-28: Turns at current location ──
+        "turns_at_current_location": 0,
     }
     # ── PATCH-26: Player profile (extended) ──
     s["player_profile"]["estimated_preferences"] = []
@@ -1318,6 +1367,7 @@ def _migrate_session(s: dict) -> dict:
     s.setdefault("_suggestion_last_turn", {})
     s.setdefault("_suggestion_global_last", 0)
     s.setdefault("_recent_narration_openings", [])
+    s.setdefault("turns_at_current_location", 0)
 
     s["_schema_version"] = 5
     return s
@@ -1435,6 +1485,7 @@ def apply_location_change(s: dict, destination: str, mover: str = None,
         s["current_location"] = destination
         s.setdefault("_scene_turn_count", 0)
         s["_scene_turn_count"] = 0
+        s["turns_at_current_location"] = 0
 
         s.setdefault("move_events", []).append({
             "turn": turn_num,
@@ -3263,6 +3314,220 @@ def _build_event_short_term(turn_id: int, user_input: str, script: list) -> str:
     return f"Turn {turn_id} | {' | '.join(events[:4])}"
 
 
+def build_compressed_history(history: list) -> list:
+    """최근 SLIDING_WINDOW_SIZE턴은 원문, 직전 SUMMARY_WINDOW_SIZE턴은 1줄 요약."""
+    if len(history) <= SLIDING_WINDOW_SIZE:
+        return history
+    
+    recent = history[-SLIDING_WINDOW_SIZE:]
+    
+    summary_start = max(0, len(history) - SLIDING_WINDOW_SIZE - SUMMARY_WINDOW_SIZE)
+    summary_end = len(history) - SLIDING_WINDOW_SIZE
+    to_summarize = history[summary_start:summary_end]
+    
+    summaries = []
+    for turn in to_summarize:
+        chars = set()
+        key_event = ""
+        user_said = turn.get("user", "")[:40]
+        for block in turn.get("script", []):
+            if block.get("type") == "dialogue":
+                chars.add(block.get("character", "?"))
+            elif block.get("type") == "narration" and not key_event:
+                key_event = block.get("content", "")[:50]
+        summary_line = f"[요약] 유저:\"{user_said}\" → {','.join(chars) or '나레이션'}: {key_event}"
+        summaries.append({"_summary": True, "content": summary_line})
+    
+    return summaries + recent
+
+
+def build_adaptive_char_brief(char_name: str, rel_data: dict, turn: int, 
+                               recent_speakers: set, on_screen: list) -> str:
+    """턴 번호와 상황에 맞게 캐릭터 정보량을 적응적으로 조절."""
+    c = _CHAR_RUNTIME_CACHE.get(char_name, {})
+    role = ENSEMBLE_ROLES.get(char_name, {})
+    stage = calculate_relationship_stage(rel_data) if rel_data else 1
+    
+    # 항상 포함: 핵심 1줄 (~50토큰)
+    lines = [
+        f"[{char_name}] 역할:{role.get('function','?')} / "
+        f"매력:{c.get('core_appeal','')[:50]} / "
+        f"말투:{c.get('speech_habit','')} / "
+        f"관계:{STAGE_NAMES.get(stage,'경계')}({stage})"
+    ]
+    
+    # 앙상블 역할 지시 (항상)
+    if role.get('group_style'):
+        lines.append(f"그룹행동: {role['group_style']}")
+    lines.append(f"발화량: {role.get('voice_budget','medium')} / 주도성: {role.get('initiative','reactive')}")
+    
+    # 금지 패턴 (항상)
+    if c.get('forbidden_patterns'):
+        lines.append(f"금지: {', '.join(c['forbidden_patterns'][:2])}")
+    
+    # 캐치프레이즈 예산 (항상)
+    if c.get('catchphrase_budget'):
+        lines.append(f"캐치프레이즈: {c['catchphrase_budget']}")
+    
+    # 최근 발화자: 목소리 대비 정보
+    if char_name in recent_speakers:
+        if c.get('voice_contrast'):
+            lines.append(f"목소리대비: {c['voice_contrast'][:80]}")
+    
+    # 5턴마다: 예시 대사 리마인드
+    if turn % 5 == 0 and c.get('example_lines'):
+        lines.append(f"예시: \"{c['example_lines'][0]}\"")
+    
+    # 첫 3턴 또는 10턴마다: 성격+외모
+    if turn <= 3 or turn % 10 == 0:
+        lines.append(f"성격: {c.get('behavior_hints', '')[:80]}")
+        if c.get('appearance_summary'):
+            lines.append(f"외모: {c['appearance_summary'][:60]}")
+    
+    # 톤 규칙 (3턴마다)
+    if turn % 3 == 0 and c.get('tone_mixing_rule'):
+        lines.append(f"톤규칙: {c['tone_mixing_rule'][:80]}")
+    
+    return "\n".join(lines)
+
+
+def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
+    """감독의 본능 — 규칙이 아니라 감각으로 안내하는 통합 연출 블록."""
+    turn = s.get("turn_number", 0)
+    loc = s.get("current_location", DEFAULT_LOCATION)
+    turns_here = s.get("turns_at_current_location", 0)
+    player_name = s.get("player_name", "사용자")
+    
+    # ── 장소 분위기 ──
+    if turns_here <= 2:
+        location_feel = (
+            "방금 이 장소에 도착했거나 아직 분위기가 자리잡는 중이다. "
+            "이 공간을 느끼고 탐색하는 시간을 줘라. 장소 이동은 금지."
+        )
+    elif turns_here <= 5:
+        location_feel = "이 장소에서 이야기가 흐르고 있다. 공간의 디테일을 활용해 장면을 풍부하게."
+    else:
+        location_feel = "충분히 머물렀다. 서사적 전환점이 자연스럽게 올 수 있다."
+    
+    # ── 발화 균형 ──
+    history = s.get("history", [])
+    speaker_counts = {}
+    for h in history[-3:]:
+        for block in h.get("script", []):
+            if block.get("type") == "dialogue":
+                ch = block.get("character", "")
+                speaker_counts[ch] = speaker_counts.get(ch, 0) + 1
+    total_lines = sum(speaker_counts.values()) or 1
+    
+    balance_parts = []
+    for ch in on_screen:
+        count = speaker_counts.get(ch, 0)
+        role = ENSEMBLE_ROLES.get(ch, {})
+        budget = role.get("voice_budget", "medium")
+        ratio_pct = int(count * 100 / total_lines) if total_lines else 0
+        balance_parts.append(f"  {ch}({role.get('function','?')}): {count}회({ratio_pct}%) [예산:{budget}]")
+    
+    # 독점 경고
+    balance_warning = ""
+    if speaker_counts:
+        dominant = max(speaker_counts, key=speaker_counts.get)
+        if speaker_counts[dominant] / total_lines > 0.45:
+            quiet = [c for c in on_screen if speaker_counts.get(c, 0) <= 1]
+            balance_warning = (
+                f"\n⚠️ {dominant}가 최근 대화를 지배하고 있다. "
+                f"{', '.join(quiet) if quiet else '다른 캐릭터들'}의 반응을 우선 보여줘라. "
+                f"{dominant}는 이번 턴에서 관찰/리액션 위주로."
+            )
+    
+    # ── 리듬 ──
+    if turn <= 3:
+        rhythm = "초반이다. 서로를 알아가는 여유. 급할 필요 없다."
+    elif turn <= 10:
+        rhythm = "자리 잡는 단계. 유저와 캐릭터 사이에 작은 감정적 순간을 만들어라."
+    elif turn <= 20:
+        rhythm = "중반. 캐릭터의 다른 면모, 관계 변화, 의외의 반응이 나올 시기."
+    else:
+        rhythm = "장기 세션. 유저가 몰입했다. 더 깊은 감정, 더 진한 비밀 조각을 선물하라."
+    
+    # ── 비밀 게이트 ──
+    secret_notes = []
+    rels = s.get("relationships", {})
+    for ch in on_screen:
+        if ch not in HIDDEN_LORE_RULES:
+            continue
+        rule = HIDDEN_LORE_RULES[ch]
+        rel = rels.get(ch, {})
+        stage = calculate_relationship_stage(rel) if rel else 1
+        if stage >= 4:
+            secret_notes.append(
+                f"{ch}: 관계{stage}(특별). 감정적 계기가 오면 숨겨온 과거를 고백할 수 있다."
+            )
+        elif stage >= 3:
+            secret_notes.append(
+                f"{ch}: 관계{stage}(신뢰). 과거의 조각을 은연중에 흘려도 좋다."
+            )
+        elif stage >= 2 and turn >= 15:
+            secret_notes.append(
+                f"{ch}: 관계{stage}, {turn}턴경과. 미세한 단서를 가끔 끼워넣어라."
+            )
+    secret_gate = "\n".join(secret_notes) if secret_notes else "캐릭터의 일상적 매력에 집중."
+    
+    # ── 유저 입력 분석 ──
+    input_len = len(user_input.strip())
+    has_q = any(q in user_input for q in ["?", "？", "뭐", "왜", "어디", "누구", "어떻게", "언제", "진짜"])
+    has_action = "*" in user_input or any(a in user_input for a in ["한다", "했다", "간다", "본다", "잡다", "열다", "마신다", "먹는다"])
+    has_emotion = any(e in user_input for e in ["웃", "울", "화", "슬", "기쁘", "무서", "부끄", "짜증", "ㅋㅋ", "ㅎㅎ", "ㅠ"])
+    
+    user_guide = []
+    if has_q:
+        user_guide.append("질문 포함 → NPC 중 누군가가 반드시 대답")
+    if has_action:
+        user_guide.append("행동 포함 → 결과/반응을 나레이션에 포함")
+    if has_emotion:
+        user_guide.append("감정 표현 → NPC들이 그 감정에 반응")
+    if input_len < 15 and not has_q:
+        user_guide.append("짧은 입력 → NPC 반응도 가볍고 간결하게. 과도한 전개 금지")
+    if not user_guide:
+        user_guide.append("자연스럽게 반응하라")
+    
+    user_mirror = f"유저({player_name})의 입력: \"{user_input[:200]}\"\n"
+    user_mirror += "필수반응: " + " / ".join(user_guide)
+    
+    # ── 조합 ──
+    return f"""### 감독의 본능 (DIRECTOR'S INSTINCT) ###
+
+[유저의 말이 이 씬의 중심이다]
+{user_mirror}
+유저의 입력을 무시하고 NPC끼리만 대화하는 것은 금지.
+
+[장소는 무대다 — 무대는 쉽게 바꾸지 않는다]
+현재: {loc} ({turns_here}턴째)
+{location_feel}
+장소 이동은 유저가 명시적으로 원하거나, 서사적으로 반드시 필요할 때만.
+
+[앙상블 캐스트 — 각자의 "존재 방식"이 다르다]
+최근 3턴 발화 분포:
+{chr(10).join(balance_parts)}
+{balance_warning}
+
+각 캐릭터는 자신의 역할(function)과 발화 예산(voice_budget)에 맞게 존재한다.
+"관찰자(observer)"는 주로 지켜보며 결정적 순간에만 개입한다 — 매턴 질문하거나 게임을 주도하지 않는다.
+"도발자(provocateur)"는 대담한 발언과 직설적 언행으로 분위기를 자극한다.
+"수수께끼(enigma)"는 침묵이 존재감이다. 한마디가 나오면 그것이 핵심이다.
+내향적 캐릭터도 표정, 시선, 작은 동작으로 살아 있음을 보여준다.
+
+[리듬을 느껴라]
+{rhythm}
+매 턴이 "사건"일 필요 없다. 조용한 순간, 눈 마주침, 침묵이 더 강렬할 때가 있다.
+
+[비밀은 냄새처럼 — 서서히, 자연스럽게]
+{secret_gate}
+
+[즉흥 창작]
+{IMPROVISATION_RULE}
+"""
+
+
 def build_dima_prompt(s: dict, user_input: str) -> tuple:
     """Returns (system_instruction, main_prompt, pulse_result)."""
     player_name = s.get("player_name", "사용자")
@@ -3323,7 +3588,14 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         f"새로운 이벤트를 삽입하지 마라.\n"
     )
     recent_turns_1 = all_turns[-1:] if all_turns else []
+    # PATCH-28: build_compressed_history 적용
+    compressed_history = build_compressed_history(all_turns)
     raw_recent = []
+    # Include compressed summary entries
+    for entry in compressed_history:
+        if isinstance(entry, dict) and entry.get("_summary"):
+            raw_recent.append(entry["content"])
+    # Include last turn raw details
     for t in recent_turns_1:
         if t.get("user_input"):
             raw_recent.append(f"[Player]: {t['user_input'][:120]}")
@@ -3364,33 +3636,45 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             continuity_lines.append(f"직전 NPC 응답: {' | '.join(lt_dlgs[:2])}")
         continuity_lines.append("→ 이 맥락의 '다음 순간'부터 연기. 위 내용 반복 금지.")
 
-    continuity_lines.append(f"장소: '{location}' — 유저가 이동 지시 안 하면 유지.")
-
-    # Maestro action_context 주입 + 캐릭터별 상태
+    # Maestro action_context 주입 + 캐릭터별 상태 (PATCH-28: adaptive brief)
     action_context = s.get("action_context", {})
+    turn_number = len(s.get("turns", []))
+
+    # 최근 3턴 발화자 집합
+    _recent_speakers = set()
+    for _h in s.get("history", [])[-3:]:
+        for _b in _h.get("script", []):
+            if _b.get("type") == "dialogue":
+                _recent_speakers.add(_b.get("character", ""))
+    # Also check turns fallback
+    for _h in s.get("turns", [])[-3:]:
+        for _b in _h.get("script", []):
+            if _b.get("type") == "dialogue":
+                _recent_speakers.add(_b.get("character", ""))
+
     for name in on_screen_chars:
         if name == player_name:
             continue
+        _rel = s.get("relationships", {}).get(name, {})
+        char_brief = build_adaptive_char_brief(
+            name, _rel, turn_number, _recent_speakers, on_screen_chars
+        )
+        # Also include action_context if available
         ac_text = action_context.get(name, "")
+        if ac_text:
+            if isinstance(ac_text, str):
+                char_brief += f"\n  기억: {ac_text[:100]}"
+            elif isinstance(ac_text, dict):
+                summary = ac_text.get("my_last_action", {}).get("summary") if isinstance(ac_text.get("my_last_action"), dict) else None
+                if summary:
+                    char_brief += f"\n  기억: {summary[:100]}"
+        # Include dynamic mood
         char_data = s.get("characters", {}).get(name, {})
         ds = char_data.get("dynamic_state", {})
         mood = ds.get("current_mood", "neutral") if isinstance(ds, dict) else "neutral"
         intensity = ds.get("mood_intensity", 5) if isinstance(ds, dict) else 5
-
-        brief_lines = [f"<{name}>"]
-        if ac_text:
-            if isinstance(ac_text, str):
-                brief_lines.append(f"  기억: {ac_text[:100]}")
-            elif isinstance(ac_text, dict):
-                summary = ac_text.get("my_last_action", {}).get("summary") if isinstance(ac_text.get("my_last_action"), dict) else None
-                if summary:
-                    brief_lines.append(f"  기억: {summary[:100]}")
-        brief_lines.append(f"  감정: {mood}(강도{intensity}/10)")
-        rel = s.get("relationships", {}).get(name, {})
-        if rel:
-            stage_name = {1: "경계", 2: "동료", 3: "신뢰", 4: "특별"}.get(rel.get("stage", 1), "경계")
-            brief_lines.append(f"  관계: {stage_name} (호감{rel.get('affection', 50)})")
-        continuity_lines.append("\n".join(brief_lines))
+        char_brief += f"\n  감정: {mood}(강도{intensity}/10)"
+        continuity_lines.append(char_brief)
 
     # STEP 5-B: 3-Tier 메모리 컨텍스트 주입
     memory_context = build_memory_context_for_dima(s)
@@ -3748,6 +4032,10 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             boost_lines.append(f"- {name}: {appeal}{ex}")
         director_brief += "\n\n" + "\n".join(boost_lines)
 
+    # PATCH-28: 감독의 본능 블록 추가
+    directors_block = build_directors_instinct(s, user_input, on_screen_chars)
+    director_brief += "\n\n" + directors_block
+
     main_prompt = DIMA_PROMPT_TEMPLATE.format(
         recent_conversation_log=recent_conversation_log,
         character_briefs=character_briefs_content,
@@ -3880,6 +4168,21 @@ def safe_local_script(s: dict, prelude_narration: str = "") -> list:
     return script
 
 
+def _fix_player_name_usage(text: str, player_name: str) -> str:
+    """NPC 대사에서 플레이어를 3인칭 주어로 묘사하는 패턴을 교정."""
+    if not player_name or len(player_name) < 2:
+        return text
+    replacements = [
+        (f"{player_name}은 ", f"{player_name} 씨는 "),
+        (f"{player_name}이 ", f"{player_name} 씨가 "),
+        (f"{player_name}는 ", f"{player_name} 씨는 "),
+        (f"{player_name}가 ", f"{player_name} 씨가 "),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
 def post_process_script(script: list, s: dict) -> list:
     """Validate and clean up script blocks."""
     if not isinstance(script, list):
@@ -3993,6 +4296,31 @@ def post_process_script(script: list, s: dict) -> list:
                     content = content.replace("내 가슴", "분위기")
                     break  # 한 블록당 1회 치환이면 충분
             block["content"] = content
+
+    # PATCH-28: 감정 태그 정규화, 강도 클램핑, 플레이어 이름 3인칭 교정
+    _p28_player_name = s.get("player_name", "") if isinstance(s, dict) else ""
+    for block in processed:
+        # 감정 태그 정규화
+        if block.get("emotion"):
+            block["emotion"] = normalize_emotion_tag(block["emotion"])
+        
+        # 감정 강도 클램핑
+        if "intensity" in block:
+            try:
+                block["intensity"] = max(1, min(10, int(block["intensity"])))
+            except (ValueError, TypeError):
+                block["intensity"] = 5
+        
+        # 플레이어 이름 3인칭 교정
+        if _p28_player_name:
+            if block.get("type") == "dialogue":
+                block["content"] = _fix_player_name_usage(
+                    block.get("content", ""), _p28_player_name
+                )
+            elif block.get("type") == "narration":
+                block["content"] = _fix_player_name_usage(
+                    block.get("content", ""), _p28_player_name
+                )
 
     # PATCH-27: NPC 대사에서 플레이어 이름이 주어로 사용되는 패턴 교정
     player_name = get_player_name(s)
@@ -4754,6 +5082,9 @@ def execute_turn():
         # V5.0: Session migration (ensure new fields exist)
         s = _migrate_session(s)
 
+        # PATCH-28: 현재 장소 체류 턴 카운터 증가
+        s["turns_at_current_location"] = s.get("turns_at_current_location", 0) + 1
+
         merge_ui_settings(s, data.get("ui_settings") or {})
 
         me = get_player_name(s)
@@ -4822,7 +5153,7 @@ def execute_turn():
         apply_core4_decay(s)
 
         # === Maestro V2 동기 실행 — STEP 11: 적응형 호출 빈도 ===
-        if should_call_maestro(s, user_input):
+        if should_call_maestro(len(s.get("turns", [])), user_input):
             try:
                 maestro_data = _run_maestro_preturn(s)
                 if maestro_data:
