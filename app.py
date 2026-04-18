@@ -97,6 +97,15 @@ SUPPORTED_EMOTIONS = [
 
 ANALYZER_RETRY_INTERVAL = 5  # 분석 실패 후 재시도까지 대기할 턴 수
 
+# PATCH-31: Movement-related constants
+MOVEMENT_PROPOSAL_KEYWORDS = ["가자", "갈래", "이동", "가볼까", "출발", "따라와"]
+COMPLETED_MOVE_PATTERNS = [
+    re.compile(r'(?:으?로)\s*(?:향했다|옮겼다|이동했다|걸어갔다)'),
+    re.compile(r'(?:에)\s*(?:도착했다|도착하자|다다르자)'),
+    re.compile(r'(?:에서)\s*(?:나왔다|빠져나왔다)'),
+    re.compile(r'발걸음을\s*옮긴다'),
+]
+
 # Event seed injection guards
 EVENT_SEED_MIN_TURNS = 15        # 이벤트 시드 주입에 필요한 최소 턴 수
 EVENT_SEED_LOCATION = "기숙사"   # 이벤트 시드가 발동 가능한 장소 키워드
@@ -2095,7 +2104,7 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
         for block in turn.get("script", []):
             if block.get("type") == "dialogue":
                 content = block.get("content", "")[:80]
-                if any(kw in content for kw in ["가자", "갈래", "이동", "가볼까", "출발", "따라와"]):
+                if any(kw in content for kw in MOVEMENT_PROPOSAL_KEYWORDS):
                     move_proposal_count += 1
 
     if move_proposal_count >= 2:
@@ -5306,14 +5315,8 @@ def execute_turn():
             if block.get("type") != "narration":
                 continue
             content = block.get("content", "")
-            # Only detect completed movement verbs
-            completed_patterns = [
-                r'(?:으?로)\s*(?:향했다|옮겼다|이동했다|걸어갔다)',
-                r'(?:에)\s*(?:도착했다|도착하자|다다르자)',
-                r'(?:에서)\s*(?:나왔다|빠져나왔다)',
-                r'발걸음을\s*옮긴다',
-            ]
-            if not any(re.search(p, content) for p in completed_patterns):
+            # Only detect completed movement verbs (using pre-compiled patterns)
+            if not any(p.search(content) for p in COMPLETED_MOVE_PATTERNS):
                 continue
             for cn in on_screen_chars:
                 if cn in content:
