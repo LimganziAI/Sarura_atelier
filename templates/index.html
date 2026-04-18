@@ -47,6 +47,56 @@
     .toggle-button{border:1px solid #555;border-radius:5px;padding:4px 8px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap}
     .info-bar .buttons{display:flex;gap:10px;flex-wrap:nowrap}
 
+    /* PATCH-26: Location badge */
+    .location-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 10px;
+      border-radius: 12px;
+      background: rgba(255,221,87,0.15);
+      border: 1px solid rgba(255,221,87,0.3);
+      font-size: 12px;
+      color: var(--accent-gold);
+      font-weight: bold;
+      transition: all 0.4s ease;
+      margin-left: 10px;
+    }
+    .location-badge::before {
+      content: '📍';
+      font-size: 11px;
+    }
+    .location-badge.transitioning {
+      animation: locPulse 0.6s ease-in-out;
+    }
+    @keyframes locPulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); background: rgba(255,221,87,0.3); }
+      100% { transform: scale(1); }
+    }
+
+    /* PATCH-26: Character location tags */
+    .char-location-tag {
+      font-size: 10px;
+      color: var(--text-medium);
+      opacity: 0.7;
+      margin-left: 4px;
+    }
+    .char-location-tag.same-location { color: var(--status-green); }
+    .char-location-tag.diff-location { color: var(--status-yellow); }
+
+    /* PATCH-26: Location transition banner */
+    .location-transition {
+      text-align: center;
+      padding: 8px 16px;
+      margin: 10px 0;
+      background: linear-gradient(90deg, transparent, rgba(255,221,87,0.1), transparent);
+      color: var(--accent-gold);
+      font-size: 13px;
+      font-style: italic;
+      border-left: 3px solid var(--accent-gold);
+    }
+
     /* Panels */
     .control-panel{display:none;flex-shrink:0;padding:15px;background:var(--bg-dark);border-bottom:1px solid #000;max-height:50%;overflow-y:auto}
     .control-group{margin-bottom:15px}
@@ -162,7 +212,7 @@
         <span class="label">내 이름:</span> <span id="current-player-name">사용자</span> |
         <span class="label">참여자:</span> <span id="participants-list-display">사용자</span>
         <span id="token-display" style="margin-left:10px;font-size:11px;color:var(--text-medium);opacity:0.7"></span>
-        <span id="location-display" class="location-display"></span>
+        <span id="location-display" class="location-badge"></span>
       </div>
       <div class="buttons">
         <div id="toggle-scene-panel" class="toggle-button">씬 설정🎬</div>
@@ -750,11 +800,18 @@
         // Sync CORE-4 sliders
         syncCore4Sliders(STATE?.core4);
 
-        // Sync location display
+        // Sync location display (PATCH-26: location badge)
+        // Note: Location may be in STATE.world.space.current_location (from to_public_state)
+        // or STATE.current_location (from direct API response). Check both paths.
         const locationDisplay = document.getElementById('location-display');
         if (locationDisplay) {
-            const loc = STATE?.world?.space?.current_location;
-            locationDisplay.textContent = loc ? `📍${loc}` : '';
+            const loc = STATE?.world?.space?.current_location || STATE?.current_location;
+            locationDisplay.textContent = loc || '';
+            if (loc) {
+                locationDisplay.style.display = '';
+            } else {
+                locationDisplay.style.display = 'none';
+            }
         }
 
         // Render turns
@@ -931,6 +988,37 @@
                 const tokenDisplay = document.getElementById('token-display');
                 if (tokenDisplay) {
                   tokenDisplay.textContent = `토큰: ${(tu.session_total.input + tu.session_total.output).toLocaleString()}`;
+                }
+              }
+              // PATCH-26: Location transition handling
+              if (turnResponse.current_location) {
+                const locBadge = document.getElementById('location-display');
+                if (locBadge) {
+                  const prevLoc = locBadge.textContent;
+                  const newLoc = turnResponse.current_location;
+                  locBadge.textContent = newLoc;
+                  locBadge.style.display = '';
+                  if (prevLoc && prevLoc !== newLoc) {
+                    locBadge.classList.add('transitioning');
+                    // Show location transition banner
+                    const banner = document.createElement('div');
+                    banner.className = 'location-transition';
+                    banner.textContent = `📍 ${prevLoc} → ${newLoc}`;
+                    banner.setAttribute('aria-label', `장소 이동: ${prevLoc}에서 ${newLoc}(으)로`);
+                    el.chatLog.appendChild(banner);
+                    setTimeout(() => locBadge.classList.remove('transitioning'), 600);
+                  }
+                }
+              }
+              // PATCH-26: Log departure/return events
+              if (turnResponse.departure_returns && turnResponse.departure_returns.length > 0) {
+                for (const ret of turnResponse.departure_returns) {
+                  console.log(`[Spatial] ${ret.character} returned to ${ret.to}`);
+                }
+              }
+              if (turnResponse.departures && turnResponse.departures.length > 0) {
+                for (const dep of turnResponse.departures) {
+                  console.log(`[Spatial] ${dep.character} departed to ${dep.destination}`);
                 }
               }
             } else {

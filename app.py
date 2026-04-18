@@ -91,6 +91,9 @@ SUGGESTION_GLOBAL_COOLDOWN = 3     # 전체 제안 쿨다운 (턴)
 MAX_RECENT_NARRATION_OPENINGS = 5  # 최근 나레이션 시작 패턴 추적 수
 OPENING_BOOST_TURNS = 3            # 첫 N턴은 오프닝 부스트 활성화
 
+# PATCH-26: Pattern to detect "캐릭터: 「대사」" in narration blocks
+NARRATION_DIALOGUE_PATTERN = re.compile(r'^([가-힣]+)\s*[：:]\s*[「"\'](.*)[」"\']\s*$')
+
 MODEL_ILLUSTRATION = "gemini-2.5-flash-preview-image"
 ILLUSTRATIONS_DIR = BASE_DIR / "static" / "illustrations"
 ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
@@ -3411,6 +3414,40 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     if anti_rep_context:
         director_brief += "\n\n" + anti_rep_context
 
+    # ── PATCH-26: Suggestion control ──
+    director_brief += "\n\n" + """### 제안/방향 질문 규칙 ###
+- 캐릭터가 "어디 가고 싶어?", "뭐 할까?", "어떻게 할래?" 같은 방향 제안은 꼭 필요한 순간에만 한다.
+- 플레이어가 3턴 이상 소극적이거나 장면이 정체될 때만 허용.
+- 같은 캐릭터가 연속 2턴 이내에 제안하는 것은 절대 금지.
+- 제안 대신 캐릭터 자신의 행동/반응/독백으로 장면을 진행할 것."""
+
+    # ── PATCH-26: Movement rule for DIMA ──
+    director_brief += "\n\n" + """### 이동 묘사 규칙 ###
+- 캐릭터가 자리를 뜨는 장면을 쓸 때, 반드시 구체적 목적지를 명시하라.
+  (❌ "밖에 나갈게" → ⭕ "주방에 가서 물 좀 마시고 올게")
+- NPC가 혼자 이동할 때는 나레이션으로 "[캐릭터]이(가) [장소]으로 향했다" 형태로 명시.
+- 플레이어에게 동행을 권유할 때는 목적지를 반드시 말한다."""
+
+    # ── PATCH-26: Opening narration variety ──
+    turn_num_p26 = len(s.get("turns", []))
+    if turn_num_p26 <= OPENING_BOOST_TURNS:
+        director_brief += "\n\n" + """### 오프닝 부스트 ###
+- 세션 초반이므로 장면 묘사를 풍부하게 하고, 캐릭터 등장을 자연스럽게 연출하라.
+- 배경 분위기(시간, 날씨, 소리)를 상세히 묘사하여 몰입감을 높일 것."""
+
+    # ── PATCH-26: On-screen cast spatial hints ──
+    char_locs_p26 = s.get("character_locations", {})
+    current_loc_p26 = s.get("current_location", DEFAULT_LOCATION)
+    cast_hints = []
+    for cn in on_screen:
+        loc = char_locs_p26.get(cn, current_loc_p26)
+        status = "같은 장소" if loc == current_loc_p26 else f"다른 장소({loc})"
+        sb = CHARACTERS_DB.get(cn, {}).get("spatial_behavior", {})
+        wander = sb.get("wandering_tendency", 0.2)
+        cast_hints.append(f"  {cn}: {status}, 배회성향={wander:.1f}")
+    if cast_hints:
+        director_brief += "\n\n### 캐릭터 위치 현황 ###\n" + "\n".join(cast_hints)
+
     # PATCH-26: 이동 이벤트 주입 (move_events from session)
     move_events = s.get("move_events", [])[-5:]  # 최근 5건
     # Also consume legacy _location_move_events if any
@@ -3621,6 +3658,14 @@ def post_process_script(script: list, s: dict) -> list:
             continue
 
         if btype == "dialogue":
+            # ── PATCH-26: dialogue 타입 교정 ──
+            if not char:
+                btype = "narration"
+                block["type"] = "narration"
+            elif not block.get("content"):
+                continue  # 빈 대사는 제거
+
+        if btype == "dialogue":
             # Part A: Normalize emotion with hybrid engine
             em = block.get("emotion", "joy")
             block["emotion"] = normalize_emotion_tag(em)
@@ -3639,7 +3684,26 @@ def post_process_script(script: list, s: dict) -> list:
             if mono_txt:
                 processed.append({"type": "monologue", "character": who, "content": mono_txt})
         elif btype == "narration":
-            processed.append({"type": "narration", "content": block.get("content", "")})
+            content = block.get("content", "")
+            # ── PATCH-26: narration 내 대사 형식 감지 교정 ──
+            narr_dialogue_match = NARRATION_DIALOGUE_PATTERN.match(content)
+            if narr_dialogue_match:
+                char_name = narr_dialogue_match.group(1)
+                if char_name in ALL_CHARACTER_NAMES:
+                    block["type"] = "dialogue"
+                    block["character"] = char_name
+                    block["content"] = narr_dialogue_match.group(2)
+                    block["emotion"] = normalize_emotion_tag(block.get("emotion", "default"))
+                    intensity = block.get("emotion_intensity", 3)
+                    try:
+                        intensity = max(1, min(10, int(intensity)))
+                    except (ValueError, TypeError):
+                        intensity = 3
+                    block["emotion_intensity"] = intensity
+                    processed.append(block)
+                    has_valid_dialogue = True
+                    continue
+            processed.append({"type": "narration", "content": content})
         else:
             processed.append({"type": "narration", "content": str(block)})
 
@@ -3811,6 +3875,8 @@ def _local_maestro_fallback(recent_4: list, s: Optional[dict] = None) -> dict:
         "active_thought": None,
         "relationship_deltas": fallback_deltas,
         "core4_adjustments": {"energy": 0, "stress": 0, "intoxication": 0, "pain": 0},
+        "character_movements": [],
+        "player_profile_update": {},
     }
 
 
@@ -3851,7 +3917,9 @@ MAESTRO_PROMPT_V2 = """[ROLE] Maestro — 서사 기억 + 연출 기획 AI.
     }}
   }},
   "player_profile_update": {{
-    "play_style": "<romantic|adventure|comedy|drama|slice_of_life 또는 null>"
+    "play_style": "<romantic|adventure|comedy|drama|slice_of_life 또는 null>",
+    "interaction_style": "<플레이어의 상호작용 스타일 또는 null>",
+    "new_preferences": ["<새로 발견한 플레이어 취향 키워드>"]
   }}
 }}
 
@@ -3996,6 +4064,16 @@ def apply_maestro_to_session(s: dict, data: dict):
             reason = move_info.get("reason", "Maestro 지시")
             if dest and isinstance(dest, str) and dest.lower() != "null":
                 move_character(s, char_name, dest, reason)
+    elif cm and isinstance(cm, list):
+        # ── PATCH-26: Apply Maestro character movements (list format) ──
+        for mv in cm:
+            if not isinstance(mv, dict):
+                continue
+            char_name = mv.get("character", "")
+            dest = mv.get("to", "") or mv.get("destination", "")
+            if char_name and dest and char_name in ALL_CHARACTER_NAMES:
+                canonical = LOCATION_ALIASES.get(dest, dest)
+                move_character(s, char_name, canonical, reason="maestro_directive")
 
     # PATCH-25: 9. player_profile_update → Maestro의 유저 성향 분석 반영
     ppu = data.get("player_profile_update")
@@ -4006,6 +4084,18 @@ def apply_maestro_to_session(s: dict, data: dict):
             valid_styles = {"romantic", "adventure", "comedy", "drama", "slice_of_life"}
             if ps in valid_styles:
                 profile["play_style"] = ps
+
+        # ── PATCH-26: Apply Maestro player profile update (interaction_style, new_preferences) ──
+        if ppu.get("interaction_style"):
+            profile["interaction_style"] = ppu["interaction_style"]
+        new_prefs = ppu.get("new_preferences", [])
+        if new_prefs and isinstance(new_prefs, list):
+            existing = profile.get("estimated_preferences", [])
+            for p in new_prefs:
+                if isinstance(p, str) and p not in existing:
+                    existing.append(p)
+            profile["estimated_preferences"] = existing[-8:]
+        s["player_profile"] = profile
 
 
 def _run_maestro_preturn(s: dict) -> Optional[dict]:
@@ -4361,7 +4451,9 @@ def bootstrap():
 
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
-            "pulse": _build_pulse_payload(_pulse, s)}
+            "pulse": _build_pulse_payload(_pulse, s),
+            "current_location": s.get("current_location", DEFAULT_LOCATION),
+            "character_locations": s.get("character_locations", {})}
     return jsonify(resp)
 
 
@@ -4468,40 +4560,116 @@ def execute_turn():
                 logger.warning(f"Maestro preturn failed: {e}")
                 # 실패해도 DIMA는 진행 (기존 context 사용)
 
-        # PATCH-25: 유저 프로파일 분석 (매 턴)
+        # ── PATCH-26: Player profile analysis ──
         analyze_player_profile(s, user_input)
 
-        # PATCH-26: 유저 입력에서 장소 이동 감지
-        current_loc = s.get("current_location", DEFAULT_LOCATION)
-        loc_result = detect_location_change(user_input, current_loc, speaker=None)
-        if loc_result:
-            destination = loc_result["destination"]
-            on_screen_chars = [c for c in s.get("on_screen", []) if c != me]
-            # 플레이어 이동
-            apply_location_change(s, destination, mover=None, reason="유저 이동 요청")
-            # 같은 장소에 있던 캐릭터 중 일부가 따라감 (호감도 기반)
-            followers = check_companion_follows(s, me, destination, on_screen_chars)
-            for follower in followers:
-                move_character(s, follower, destination, "플레이어 동행")
-
-        # PATCH-26: 감정 기반 자발적 퇴장 체크
+        # ── PATCH-26: Departure returns (복귀 판정, 감정 퇴장보다 먼저) ──
         on_screen_chars = [c for c in s.get("on_screen", []) if c != me]
-        check_emotional_departures(s, on_screen_chars)
+        departure_returns = check_departure_returns(s, on_screen_chars, user_input)
+        for ret in departure_returns:
+            char_name = ret["character"]
+            move_character(s, char_name, ret["to"], reason="auto_return")
+            logger.info(f"[Spatial] {char_name} auto-returned to {ret['to']}")
+            # 복귀 캐릭터를 온스크린에 복원
+            if char_name not in on_screen_chars:
+                on_screen_chars.append(char_name)
 
-        # PATCH-26: 퇴장 캐릭터 복귀 체크
-        check_departure_returns(s, on_screen_chars, user_input)
+        # ── PATCH-26: Detect location change from user input ──
+        current_loc = s.get("current_location", DEFAULT_LOCATION)
+        loc_change = detect_location_change(user_input, current_loc, speaker=None)
+        if loc_change:
+            destination = loc_change["destination"]
+            apply_location_change(s, destination, mover=None, reason="user_move")
+
+            # 동행 판정
+            followers = check_companion_follows(s, me, destination, on_screen_chars)
+            for fname in followers:
+                move_character(s, fname, destination, reason="companion_follow")
+
+            # 나머지 온스크린 캐릭터는 이전 장소에 유지
+            char_locs = s.get("character_locations", {})
+            for cn in on_screen_chars:
+                if cn not in followers and char_locs.get(cn) != destination:
+                    # 이전 장소에 그대로 (자동 이동하지 않음)
+                    pass
+
+            logger.info(f"[Spatial] Player→{destination}, followers={followers}")
+
+        # ── PATCH-26: Emotional departures ──
+        departures = check_emotional_departures(s, on_screen_chars)
+        for dep in departures:
+            char_name = dep["character"]
+            move_character(s, char_name, dep["destination"], reason=dep["reason"])
+            # 퇴장 캐릭터를 온스크린에서 제거하지는 않음 (원격 참여 가능)
+            logger.info(f"[Spatial] {char_name} departed to {dep['destination']} ({dep['reason']})")
 
         # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
         final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
 
-        # PATCH-26: NPC 대사에서 장소 이동 감지 (캐릭터별 개별 이동)
+        # ── PATCH-26: Detect NPC location changes from generated script ──
         current_loc = s.get("current_location", DEFAULT_LOCATION)
         for block in final_script:
-            if block.get("type") == "dialogue" and block.get("character"):
-                npc_name = block["character"]
-                npc_result = detect_location_change(block.get("content", ""), current_loc, speaker=npc_name)
-                if npc_result:
-                    move_character(s, npc_name, npc_result["destination"], "NPC 자발적 이동")
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "dialogue":
+                speaker = block.get("character", "")
+                content = block.get("content", "")
+                if speaker and content:
+                    npc_move = detect_location_change(
+                        content,
+                        s.get("current_location", DEFAULT_LOCATION),
+                        speaker=speaker
+                    )
+                    if npc_move and npc_move.get("mover"):
+                        move_character(s, npc_move["mover"],
+                                      npc_move["destination"],
+                                      reason="npc_dialogue")
+
+            elif block.get("type") == "narration":
+                content = block.get("content", "")
+                # 나레이션에서 캐릭터 이동 감지
+                for cn in on_screen_chars:
+                    if cn in content:
+                        npc_move = detect_location_change(
+                            content,
+                            s.get("current_location", DEFAULT_LOCATION),
+                            speaker=cn
+                        )
+                        if npc_move and npc_move.get("mover"):
+                            move_character(s, npc_move["mover"],
+                                          npc_move["destination"],
+                                          reason="narration_move")
+
+        # ── PATCH-26: Track suggestion usage ──
+        for block in final_script:
+            if not isinstance(block, dict) or block.get("type") != "dialogue":
+                continue
+            speaker = block.get("character", "")
+            content = block.get("content", "")
+            if not speaker or not content:
+                continue
+            # 제안 패턴 감지
+            suggestion_patterns = [
+                r'어디.*(?:갈래|가고\s*싶|할래)',
+                r'뭐.*(?:할래|하고\s*싶|할까)',
+                r'어떻게.*(?:할래|할까|하겠)',
+                r'같이.*(?:갈래|할래|해볼래)',
+            ]
+            for sp in suggestion_patterns:
+                if re.search(sp, content):
+                    record_suggestion(s, speaker)
+                    break
+
+        # ── PATCH-26: Track narration openings ──
+        for block in final_script:
+            if isinstance(block, dict) and block.get("type") == "narration":
+                content = block.get("content", "")
+                if content:
+                    opening = content[:20].strip()
+                    recent = s.setdefault("_recent_narration_openings", [])
+                    recent.append(opening)
+                    s["_recent_narration_openings"] = recent[-MAX_RECENT_NARRATION_OPENINGS:]
+                break  # 첫 나레이션만 추적
 
         # V5.0: Step 4 — Token metering
         turn_number = len(s.get("turns", []))
@@ -4589,6 +4757,14 @@ def execute_turn():
             "illustration_url": illustration_url,
             "character_locations": s.get("character_locations", {}),
             "current_location": s.get("current_location", DEFAULT_LOCATION),
+            "previous_location": s.get("previous_location"),
+            "departure_returns": [
+                {"character": r["character"], "to": r["to"]} for r in departure_returns
+            ],
+            "departures": [
+                {"character": d["character"], "destination": d["destination"]}
+                for d in departures
+            ],
             "token_usage": {
                 "this_turn": current_turn_usage,
                 "session_total": {
