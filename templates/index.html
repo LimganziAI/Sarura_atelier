@@ -808,8 +808,12 @@
             const loc = STATE?.current_location
                      || STATE?.world?.space?.current_location
                      || '라운지';
-            locationDisplay.textContent = loc || '';
-            if (loc) {
+            const sceneNote = STATE?._scene_note || '';
+            // PATCH-31: If scene_note exists, show its first sentence instead of raw location name
+            const displayText = sceneNote ? sceneNote.split('.')[0].trim() : loc;
+            locationDisplay.textContent = displayText || loc;
+            locationDisplay.title = loc;  // Full location name as tooltip
+            if (displayText) {
                 locationDisplay.style.display = '';
             } else {
                 locationDisplay.style.display = 'none';
@@ -818,6 +822,22 @@
 
         // Render turns
         el.chatLog.innerHTML = '';
+
+        // PATCH-31: Render archived turns first (older turns preserved for scrollback)
+        const archivedTurns = STATE.archived_turns || [];
+        for (let i = 0; i < archivedTurns.length; i++) {
+          const turn = archivedTurns[i];
+          const wrap = document.createElement('div'); wrap.className = 'turn-wrapper';
+          wrap.style.opacity = '0.7';  // Visually distinguish archived turns
+          el.chatLog.appendChild(wrap);
+          TYPEWRITER.enabled = false;  // No typewriter for archived turns
+          if (turn.user_input) await addMessageToLog(wrap, 'user', { content: turn.user_input });
+          const scriptBlocks = Array.isArray(turn?.script) ? turn.script : [];
+          for (const b of scriptBlocks) {
+            if (b && b.type) await addMessageToLog(wrap, b.type, b);
+          }
+        }
+
         const turns = STATE.turns || [];
         for (let i = 0; i < turns.length; i++) {
           const turn = turns[i];
@@ -996,9 +1016,13 @@
               if (turnResponse.current_location) {
                 const locBadge = document.getElementById('location-display');
                 if (locBadge) {
-                  const prevLoc = locBadge.textContent;
+                  const prevLoc = locBadge.title || locBadge.textContent;
                   const newLoc = turnResponse.current_location;
-                  locBadge.textContent = newLoc;
+                  // PATCH-31: Use scene_note for display if available
+                  const sNote = turnResponse.scene_note || '';
+                  const displayLoc = sNote ? sNote.split('.')[0].trim() : newLoc;
+                  locBadge.textContent = displayLoc;
+                  locBadge.title = newLoc;
                   locBadge.style.display = '';
                   if (prevLoc && prevLoc !== newLoc) {
                     locBadge.classList.add('transitioning');
