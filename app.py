@@ -3232,11 +3232,12 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
     """PATCH-34: Trimmed from ~2000 tokens to ~800 tokens.
     
     Removed: full POV explanation, genre writing rules, physical state notes,
-    Pulse mode injection, Player Presence, EMOTION DIVERSITY, opening boost,
-    emotional inertia, absence alerts, secret leak, self-check protocol.
+    verbose Pulse mode text, Player Presence, EMOTION DIVERSITY, opening boost,
+    emotional inertia, absence alerts, secret leak, self-check protocol,
+    narration ratio, description focus tiers, honorific mixing rules.
     
-    Remaining: 1-line POV, 1-line genre, 1-line tempo, Scene Zero (turn 0),
-    spatial context, next_beat from Maestro, character actions.
+    Remaining: 1-line POV, 1-line genre, 1-line tempo, monologue toggle,
+    NPC interaction rule, honorific reminder, event hints, abbreviated Pulse.
     """
     parts = []
 
@@ -3711,7 +3712,7 @@ def _build_conversation_routing(on_screen: list, player_name: str, recent_turns:
 
 
 def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
-    """PATCH-34: Collapsed to 3 rules max (~200 tokens).
+    """PATCH-34: Collapsed to 3 rules + player protection (~200 tokens).
     
     Gemini Flash follows at most 3 rules in a 7k-token prompt.
     Everything else is enforced in post_process_script().
