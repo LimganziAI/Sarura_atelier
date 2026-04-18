@@ -394,6 +394,9 @@ LOCATION_SEMANTIC_OVERRIDES: Dict[str, Dict[str, str]] = {
     },
 }
 
+# ─── PATCH-30: Trackable scene objects for prop continuity ────
+TRACKABLE_SCENE_OBJECTS = ["가방", "컵", "잔", "우산", "명함", "핸드폰", "책"]
+
 # ─── PATCH-27: Scene Zero (첫 턴 장면 설정 추출) ────────────
 SCENE_ZERO_SCHEMA = {
     "type": "object",
@@ -1835,16 +1838,17 @@ def run_scene_zero(seed_text: str, s: dict, on_screen: list):
         canonical = LOCATION_ALIASES.get(location)
 
         # PATCH-30: Semantic override — e.g. "카페" → canonical "카페 거리" + scene_note for indoor
+        # The override applies when: the keyword is in user text AND
+        # either no canonical alias exists, or the canonical alias matches the override's target.
         for keyword, override in LOCATION_SEMANTIC_OVERRIDES.items():
-            if keyword in seed_text and (not canonical or canonical == override["canonical"]):
-                location = override["canonical"]
-                scene_zero["_scene_note"] = override["scene_note"]
-                break
+            if keyword in seed_text:
+                if canonical is None or canonical == override["canonical"]:
+                    location = override["canonical"]
+                    scene_zero["_scene_note"] = override["scene_note"]
+                    break
 
         if canonical and "_scene_note" not in scene_zero:
             location = canonical
-        elif canonical and "_scene_note" in scene_zero:
-            pass  # already set by semantic override above
         scene_zero["is_custom_location"] = not bool(LOCATION_ALIASES.get(location))
 
         s["current_location"] = location
@@ -3488,7 +3492,7 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
             "이 공간을 느끼고 탐색하는 시간을 줘라."
         )
         loc_block += (
-            "\n⛔ [절대 금지] 이 장소에 머문 지 아직 " + str(turns_here) + "턴이다. "
+            f"\n⛔ [절대 금지] 이 장소에 머문 지 아직 {turns_here}턴이다. "
             "캐릭터가 장소 이동을 제안하거나, 다른 곳으로 가자고 말하거나, "
             "떠날 준비를 하는 묘사를 하면 이 세션은 실패한다. "
             "이동 관련 대사/나레이션 일체 금지. "
@@ -3590,7 +3594,7 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
         for block in h.get("script", []):
             content = block.get("content", "")
             if block.get("type") == "narration":
-                for obj in ["가방", "컵", "잔", "우산", "명함", "핸드폰", "책"]:
+                for obj in TRACKABLE_SCENE_OBJECTS:
                     if obj in content:
                         scene_objects.add(obj)
 
