@@ -3633,16 +3633,28 @@ def _check_secret_gates(session_state: dict) -> str:
         rel = rels.get(ch, {})
         stage = calculate_relationship_stage(rel) if rel else 1
 
-        # Parse reveal_condition
+        # Parse reveal_condition — evaluate OR conditions together
         condition = rule.get("reveal_condition", "")
         can_hint = False
         can_reveal = False
 
-        if "relationship_stage >= 4" in condition and stage >= 4:
+        # Check stage-based conditions
+        stage_allows_reveal = (
+            ("relationship_stage >= 4" in condition and stage >= 4) or
+            ("specific_story_trigger" in condition and stage >= 4)
+        )
+        stage_allows_hint = (
+            "relationship_stage >= 3" in condition and stage >= 3
+        )
+        # Check intoxication condition
+        intox_allows = (
+            "intoxication >= 40" in condition and intox_val >= 40
+        )
+
+        # OR logic: any satisfied condition grants the appropriate level
+        if stage_allows_reveal:
             can_reveal = True
-        elif "relationship_stage >= 3" in condition and stage >= 3:
-            can_hint = True
-        if "intoxication >= 40" in condition and intox_val >= 40:
+        if stage_allows_hint or intox_allows:
             can_hint = True
 
         if can_reveal:
