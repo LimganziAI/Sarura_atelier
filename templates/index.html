@@ -981,6 +981,11 @@
             const bootResponse = await POST('/bootstrap', bootPayload);
             hideTypingIndicator();
             if (bootResponse && bootResponse.state) {
+              // PATCH-34 FIX-F: Sync scene_note from API response into state
+              if (bootResponse.scene_note) {
+                bootResponse.state._scene_note = bootResponse.scene_note;
+                bootResponse.state.scene_note = bootResponse.scene_note;
+              }
               applyPersonalColors(bootResponse.personal_colors);
               await renderUIFromState(bootResponse.state);
               renderPulseChips(bootResponse.pulse || null);
@@ -999,6 +1004,11 @@
             });
             hideTypingIndicator();
             if (turnResponse.status === 'ok' && turnResponse.state) {
+              // PATCH-34 FIX-F: Sync scene_note from API response into state
+              if (turnResponse.scene_note) {
+                turnResponse.state._scene_note = turnResponse.scene_note;
+                turnResponse.state.scene_note = turnResponse.scene_note;
+              }
               applyPersonalColors(turnResponse.personal_colors);
               await renderUIFromState(turnResponse.state);
               renderPulseChips(turnResponse.pulse || null);
