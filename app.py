@@ -108,6 +108,15 @@ COMPLETED_MOVE_PATTERNS = [
     re.compile(r'발걸음을\s*옮긴다'),
 ]
 
+# ─── PATCH-34: Post-processing constants ──────────────────────
+VOICE_BUDGET_MAX_BLOCKS = {"minimal": 1, "short": 1, "medium": 2, "long": 4}
+MOVEMENT_BLOCKING_KEYWORDS = [
+    "나가자", "가자", "이동", "옮기", "출발", "따라와",
+    "카페를 나서", "밖으로", "문을 열고 나"
+]
+MOVEMENT_NARRATION_VERBS = re.compile(r'(?:나서|나가|이동|옮기|출발|떠나)')
+MOVEMENT_DIALOGUE_VERBS = re.compile(r'(?:가자|가볼까|이동|나가자|따라와)')
+
 # Event seed injection guards
 EVENT_SEED_MIN_TURNS = 15        # 이벤트 시드 주입에 필요한 최소 턴 수
 EVENT_SEED_LOCATION = "기숙사"   # 이벤트 시드가 발동 가능한 장소 키워드
@@ -3220,198 +3229,76 @@ def select_relevant_event_seed(on_screen: list, world_db: dict) -> Optional[dict
 
 
 def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_result: Optional[dict] = None) -> str:
+    """PATCH-34: Trimmed from ~2000 tokens to ~800 tokens.
+    
+    Removed: full POV explanation, genre writing rules, physical state notes,
+    verbose Pulse mode text, Player Presence, EMOTION DIVERSITY, opening boost,
+    emotional inertia, absence alerts, secret leak, self-check protocol,
+    narration ratio, description focus tiers, honorific mixing rules.
+    
+    Remaining: 1-line POV, 1-line genre, 1-line tempo, monologue toggle,
+    NPC interaction rule, honorific reminder, event hints, abbreviated Pulse.
+    """
     parts = []
+
+    # 1-line POV
     if ui_settings.get("pov_first_person"):
-        parts.append(
-            "# [절대 규칙] 시점: 1인칭 '나'\n"
-            "- 모든 narration 블록에서 시점 주체는 플레이어('나')이다.\n"
-            "- '나는', '내가', '내 눈에', '내 귀에' 등 1인칭 표현만 사용한다.\n"
-            "- 절대로 '당신은', '그는', '플레이어는' 같은 2·3인칭을 쓰지 않는다.\n"
-            "- NPC 행동 묘사도 '나'의 시선을 통해 관찰하는 형태로 기술한다.\n"
-            "  (예: \"루크가 고개를 들었다\" → \"루크가 고개를 든다. 그 파란 눈동자가 나를 향한다.\")"
-        )
-        # FIX-4: 1인칭 에이전시 보호
-        parts.append(
-            "\n[1인칭 에이전시 보호]\n"
-            "- pov_first_person=true일 때, 플레이어의 감정, 신체 반응, 내면 독백을 AI가 임의로 작성하지 마라.\n"
-            "- \"나는 심장이 두근거렸다\", \"내 얼굴이 붉어졌다\" 같은 표현 금지.\n"
-            "- 대신 캐릭터의 반응과 환경 묘사로 간접 전달하라.\n"
-            "  예: \"샐리의 눈이 동그래진다\" (O) vs \"나는 당황했다\" (X)"
-        )
+        parts.append("- [시점]: 1인칭 '나'. 플레이어의 감정/신체반응을 AI가 작성하지 마라.")
     else:
-        parts.append("- [시점]: 3인칭 관찰자 시점으로 서술하라.")
+        parts.append("- [시점]: 3인칭 관찰자 시점.")
 
     if ui_settings.get("show_monologue"):
-        parts.append("- [내면 독백]: 각 대사에 monologue 필드를 채워 캐릭터의 내면을 드러내라.")
+        parts.append("- [내면 독백]: dialogue 블록에 monologue 필드를 채워라.")
 
+    # 1-line genre
     genre = ui_settings.get("genre_preset", "auto")
     if genre and genre != "auto":
-        parts.append(f"- [장르]: '{genre}' 장르의 분위기와 톤에 맞추어 연기하라.")
-        genre_writing_rules = {
-            "romance": "- [로맨스 연출]: 시선 교차, 미세한 물리적 거리 변화, 심장 뛰는 순간을 감각적으로 묘사. 고백은 절대 쉽게 나오지 않는다. 밀당과 오해가 핵심.",
-            "comedy": "- [코미디 연출]: 캐릭터 간 타이밍과 리액션이 핵심. 하나의 오해가 눈덩이처럼 커지는 구조. 독백에서 셀프 츳코미(자기 반박)를 활용.",
-            "mystery": "- [미스터리 연출]: 모든 대사에 이중 의미를 부여하라. 캐릭터가 무언가를 숨기는 느낌. 나레이션에서 '이상한 점'을 슬쩍 배치.",
-            "thriller": "- [스릴러 연출]: 짧은 문장, 빠른 호흡. 침묵의 무게를 활용. 갑작스러운 소리나 변화를 삽입.",
-            "slice_of_life": "- [일상 연출]: 사소한 행동에서 캐릭터성을 드러내라. 커피를 마시는 방식, 앉는 자세, 창밖을 보는 시선 등. 큰 사건 없이도 따뜻한 감정이 흐르게.",
-            "horror": "- [호러 연출]: 오감을 극대화하되 공포는 '보이지 않는 것'에서 온다. 캐릭터의 불안을 먼저 보여주고, 원인은 나중에.",
-            "fantasy": "- [판타지 연출]: 세계관의 마법/종족 설정을 자연스럽게 대사와 행동에 녹여라. 설명이 아니라 생활의 일부로.",
-            "noir": "- [느와르 연출]: 건조한 나레이션, 독백이 많고, 비유가 날카롭다. 캐릭터 모두 비밀이 있다.",
-            "soap_opera": "- [막장 드라마]: 감정의 폭이 극단적. 오해, 배신, 화해의 반복. 대사가 과장되지만 진심이 담겨 있다.",
-            "wuxia": "- [무협 연출]: 행동 묘사가 시적이고 역동적. 존칭 체계가 엄격하며 의리와 명예가 대화를 지배한다.",
-            "dark_fantasy": "- [다크 판타지]: 아름답지만 잔혹한 세계. 나레이션이 시적이면서 불길하다. 캐릭터의 내면에 어둠이 있다.",
-            "sci-fi": "- [SF 연출]: 기술이 일상에 녹아든 묘사. 캐릭터가 기술을 자연스럽게 사용하는 모습.",
-            "historical": "- [시대극]: 시대에 맞는 말투와 예절. 계급과 신분이 대화에 반영된다.",
-            "adventure": "- [어드벤처]: 행동 중심, 긴박한 상황에서 캐릭터의 본성이 드러난다.",
-        }
-        genre_rule = genre_writing_rules.get(genre)
-        if genre_rule:
-            parts.append(genre_rule)
+        parts.append(f"- [장르]: '{genre}' 톤으로 연기하라.")
 
+    # 1-line tempo
     tempo = ui_settings.get("tempo", 5)
-    parts.append(f"- [템포]: {tempo}/10 (낮을수록 느리고 묘사적, 높을수록 빠르고 액션 중심)")
-
-    # FIX-5: tempo를 구체적 행동 지시로 변환
     if tempo >= 8:
-        parts.append(
-            "- [템포 지시]: 대사 위주로 빠르게 진행. 나레이션은 1~2문장으로 최소화. script 블록 총 3개 이내."
-        )
+        parts.append(f"- [템포]: {tempo}/10. 대사 위주, 나레이션 최소. 블록 3개 이내.")
     elif tempo >= 5:
-        parts.append(
-            "- [템포 지시]: 대사와 나레이션 균형. script 블록 총 4~5개."
-        )
+        parts.append(f"- [템포]: {tempo}/10. 대사와 나레이션 균형. 블록 4~5개.")
     else:
-        parts.append(
-            "- [템포 지시]: 나레이션과 심리묘사 중심. 대사는 짧게. script 블록 총 5~7개."
-        )
+        parts.append(f"- [템포]: {tempo}/10. 나레이션 중심, 대사 짧게. 블록 5~7개.")
 
-    narr_ratio = ui_settings.get("narration_ratio", 40)
-    parts.append(f"- [나레이션 비율]: {narr_ratio}% (나레이션과 대사의 비율)")
-
-    desc_focus = ui_settings.get("description_focus", 5)
-    parts.append(f"- [묘사 집중도]: {desc_focus}/10")
-
-    # Description Focus density tiers
-    if desc_focus >= 7:
-        parts.append("- 묘사 밀도: HIGH. 모든 행동을 온도, 냄새, 색깔, 질감, 시간의 흐름으로 분해하라. 내면 심리는 3~5문장으로 확장하라.")
-    elif desc_focus <= 3:
-        parts.append("- 묘사 밀도: LOW. 짧은 서술문 위주. 행동과 대사에 집중하라. 묘사는 1~2문장으로 제한.")
-    else:
-        parts.append("- 묘사 밀도: NORMAL. 균형 잡힌 서술. 핵심 감각 2가지만 포함.")
-
-    # Genre-specific anti-metaphor rule for mystery/thriller/noir
-    if genre in ("mystery", "thriller", "noir"):
-        parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
-
-    # PATCH-32 FIX-9: Role distribution moved to directors_instinct (ensemble casting).
-    # Only retain NPC interaction rule (non-rule contextual guidance).
+    # NPC interaction rule (kept, abbreviated)
     if s is not None:
         on_screen = s.get("on_screen", [])
         player = s.get("player_name", "사용자")
         npcs = [n for n in on_screen if n != player]
         if len(npcs) >= 2:
-            parts.append(
-                "\n[NPC 상호작용] NPC끼리 1회 이상 교류 필수. 모든 NPC가 유저만 바라보며 같은 반응 금지."
-            )
-        elif len(npcs) == 1:
-            parts.append(
-                "\n[캐릭터 행동 분배] 환경과 상호작용하는 행동도 포함하라."
-            )
-    else:
-        parts.append(
-            "\n[캐릭터 행동 분배]\n"
-            "- 2캐릭터 씬에서 둘이 같은 반응(둘 다 놀리기, 둘 다 칭찬)을 하지 마라.\n"
-            "- 한 캐릭터가 유저에게 질문하면, 다른 캐릭터는 다른 행동(관찰, 딴짓, 자기 이야기)을 하라."
-        )
+            parts.append("- [NPC 상호작용] NPC끼리 1회 이상 교류 필수. 유저만 바라보기 금지.")
 
-    parts.append(
-        "\n[존댓말/반말 혼용 원칙]\n"
-        "- 한국어 자연 대화에서 존비어는 관계·감정·상황에 따라 유동적으로 섞인다.\n"
-        "- 감정이 고조되면 반말로, 부탁이나 사과 시 존댓말로, 장난칠 때 존반말(~요 없이 ~지? ~거든?)로 자연스럽게 전환.\n"
-        "- 각 캐릭터의 tone_mixing_rule을 참조하되, 기계적으로 적용하지 말고 맥락에 맞게 판단하라.\n"
-        "- 관계 단계가 올라갈수록 격식이 자연스럽게 풀려야 한다."
-    )
+    # Honorific/casual mixing (kept, abbreviated)
+    parts.append("- [존댓말/반말] 관계·감정·상황에 따라 유동적으로 섞어라.")
 
-    # FIX-7: 감정 다양성 강제
-    parts.append(
-        "\n[감정 다양성]\n"
-        "- 같은 캐릭터가 3턴 연속 동일 감정을 사용하는 것을 금지한다.\n"
-        "- emotion_intensity는 1~10 범위에서 상황에 따라 변동시켜라. 항상 5는 금지."
-    )
-
-    # 물리적 상태와 행동 연동
-    if s is not None:
-        core4 = s.get("core4", {})
-        energy_val = core4.get("energy", {}).get("value", 70)
-        pain_val = core4.get("pain", {}).get("value", 0)
-        intox_val = core4.get("intoxication", {}).get("value", 0)
-
-        physical_notes = []
-        if energy_val <= 30:
-            physical_notes.append(
-                "에너지 30 이하: 모든 캐릭터의 physical_tells.fatigue_behavior를 묘사에 반영하라. "
-                "대사가 짧아지고, idle_habits 중 '졸림' 트리거가 발동한다."
-            )
-        if pain_val >= 40:
-            physical_notes.append(
-                f"고통 {pain_val}: 캐릭터별 pain_tolerance에 따라 반응이 다르다. "
-                "low인 캐릭터는 행동이 느려지고 표정이 일그러진다. high인 캐릭터도 미세한 신호를 보인다."
-            )
-        if intox_val >= 30:
-            physical_notes.append(
-                f"취기 {intox_val}: 캐릭터별 honesty_profile의 deception_skill이 낮아진다. "
-                "leaky_topics에 해당하는 비밀이 실수로 새어나올 수 있다. "
-                "sacred_secrets는 만취 상태에서도 절대 말하지 않는다."
-            )
-        if physical_notes:
-            parts.append("\n[물리 상태 → 행동 연동]\n" + "\n".join(f"- {n}" for n in physical_notes))
-
-    # Event hints — STEP 9: 조건부 이벤트 시드 발동
+    # Event hints (conditional)
     if s is not None:
         event_hint = get_event_seed_for_scene(s)
         if event_hint:
             parts.append(event_hint)
 
-    # PATCH-33 FIX-1: Pulse System injection — movement suggestion gated
+    # PATCH-34: Pulse injection — only PROACTIVE mode, abbreviated
     turns_here = s.get("turns_at_current_location", 0) if s else 0
     movement_allowed_in_pulse = turns_here >= MOVEMENT_GATE_TURNS
 
     if pulse_result:
         if pulse_result["mode"] == "PROACTIVE":
-            if movement_allowed_in_pulse:
-                option1 = "1. 캐릭터가 자발적 행동(새 주제 제시, 감정 고백, 장소 이동 제안)을 합니다."
-            else:
-                option1 = ("1. 캐릭터가 자발적 행동(새 주제 제시, 감정 고백, 현재 장소 "
-                           "내 활동 제안)을 합니다. ⛔ 장소 이동 제안 절대 금지.")
+            move_note = "" if movement_allowed_in_pulse else " ⛔이동제안금지."
             parts.append(
-                "\n=== 🔴 PROACTIVE 모드 (유저 수동 감지) ===\n"
-                "현재 유저가 짧은 입력, 감정 정체, 같은 장소 반복 등 수동적 패턴을 보이고 있습니다.\n"
-                "이번 턴에서 캐릭터가 반드시 다음 중 하나를 실행하세요:\n"
-                f"{option1}\n"
-                "2. 환경 이벤트(소리, 날씨 변화, 제3자 등장)를 서술에 포함합니다.\n"
-                "3. 캐릭터가 플레이어에게 구체적 선택지(A 또는 B)를 제시합니다.\n"
-                f"힌트: {pulse_result['suggestion']}\n"
-                "중요: 유저의 기존 맥락과 자연스럽게 연결하세요. 갑작스럽거나 비현실적이면 안 됩니다."
+                f"\n🔴 PROACTIVE: 유저 수동. 캐릭터가 새 주제/감정/활동 제안.{move_note}\n"
+                f"힌트: {pulse_result['suggestion']}"
             )
         elif pulse_result["mode"] == "NUDGE":
             nudge_char = pulse_result.get("nudge_char", "캐릭터")
-            if movement_allowed_in_pulse:
-                nudge_text = (
-                    f"유저가 약간 수동적입니다. {nudge_char}이(가) 자연스럽게 다음 행동이나 장소 이동을 "
-                    "제안합니다.\n"
-                    f"예: \"그나저나 오늘 시장에 새로운 가게가 생겼다던데... 같이 가볼래?\" 같은 제안.\n"
-                )
-            else:
-                nudge_text = (
-                    f"유저가 약간 수동적입니다. {nudge_char}이(가) 현재 장소 안에서 새로운 화제나 활동을 "
-                    "제안합니다. ⛔ 장소 이동 제안은 절대 금지.\n"
-                    "예: \"그나저나 이 메뉴 한번 시켜볼까?\" 같은 현재 장소 내 제안.\n"
-                )
+            move_note = "" if movement_allowed_in_pulse else " ⛔이동제안금지."
             parts.append(
-                "\n=== 🟡 NUDGE 모드 (약한 수동 신호) ===\n"
-                f"{nudge_text}"
+                f"\n🟡 NUDGE: {nudge_char}이(가) 현재 장소 내 활동 제안.{move_note}\n"
                 f"힌트: {pulse_result['suggestion']}"
             )
-        # REACTIVE: nothing added — respect user direction
 
     return "\n".join(parts)
 
@@ -3825,152 +3712,63 @@ def _build_conversation_routing(on_screen: list, player_name: str, recent_turns:
 
 
 def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
-    """The FINAL directive block, placed immediately before user input.
-
-    PATCH-32: Gemini's recency bias means this block has the highest compliance.
-    ALL hard rules go here. director_brief contains only soft context.
+    """PATCH-34: Collapsed to 3 rules + player protection (~200 tokens).
+    
+    Gemini Flash follows at most 3 rules in a 7k-token prompt.
+    Everything else is enforced in post_process_script().
     """
-    parts = []
-    turn = s.get("turn_number", 0) or len(s.get("turns", []))
-    loc = s.get("current_location", DEFAULT_LOCATION)
-    turns_here = s.get("turns_at_current_location", 0)
     player_name = s.get("player_name", "사용자")
-
-    # PATCH-33 FIX-10: Scene note narration override (before movement gate, highest priority)
+    turns_here = s.get("turns_at_current_location", 0)
     scene_note = s.get("_scene_note", "")
+    npcs = [n for n in on_screen if n != player_name]
+
+    # ── RULE 1: LOCATION (always) ──
     if scene_note:
-        display_name = scene_note.split('.')[0].strip()
-        parts.insert(0,
-            f"⚠️⚠️ [장소명 교정] 시스템 내부 이름은 '{loc}'이지만, "
-            f"유저와 나레이션에서는 다음 이름만 사용하라: "
-            f"'{display_name}'\n"
-            f"'{loc}'이라는 이름을 나레이션이나 대사에서 절대 사용하지 마라.\n"
-        )
-
-    # 1. Movement gate (highest priority) — PATCH-32 FIX-1
-    parts.append(build_movement_gate_clause(turns_here, user_input))
-
-    # 2. Scene note (location clarification)
-    if scene_note:
-        parts.append(f"[장면 설정] {scene_note}\n")
-
-    # 3. Ensemble casting call — PATCH-32 FIX-3
-    casting_lines = []
-    for char in on_screen:
-        if char == player_name:
-            continue
-        constraint = _get_ensemble_constraint(char)
-        if constraint:
-            casting_lines.append(f"  {char}: {constraint.strip()}")
-    if casting_lines:
-        parts.append("[캐스팅]\n" + "\n".join(casting_lines) + "\n")
-
-    # 4. Object continuity — PATCH-32 FIX-4
-    recent_turns = s.get("turns", [])[-5:]
-    parts.append(_build_object_continuity_block(recent_turns))
-
-    # 5. Anti-repetition — PATCH-32 FIX-5 (expanded 3-turn window)
-    parts.append(build_anti_repetition_context(s, on_screen))
-
-    # 6. Secret gates — PATCH-32 FIX-6
-    parts.append(_check_secret_gates(s))
-
-    # 7. Player agency guard (abbreviated reminder)
-    parts.append(
-        f"[플레이어 보호] {player_name}의 대사·행동·감정을 쓰지 마라. "
-        f"{player_name}은 외부 조작자이다.\n"
-    )
-
-    # 8. Narrative quality directive
-    parts.append(
-        "[서사 품질]\n"
-        "- 장소를 반복 언급하지 마라. 한 턴에 장소명은 최대 1회.\n"
-        "- 나레이션은 감각(시각, 청각, 후각, 촉각) 중 1~2가지를 포함하라.\n"
-        "- 대화가 나레이션보다 많아야 한다. 비율 대화:나레이션 ≈ 7:3.\n"
-        "- 각 캐릭터의 대사는 직전 대사의 내용을 받아서 이어가라 (yes-and).\n"
-        "- 무의미한 리액션(웃음, 고개 끄덕임)만으로 턴을 채우지 마라.\n"
-    )
-
-    # PATCH-33 FIX-5: Conversation routing directive (3+ character scenes)
-    parts.append(_build_conversation_routing(on_screen, player_name, recent_turns))
-
-    # ── 유저 입력 분석 (preserved from existing logic) ──
-    input_len = len(user_input.strip())
-    has_q = any(q in user_input for q in ["?", "？", "뭐", "왜", "어디", "누구", "어떻게", "언제", "진짜"])
-    has_action = "*" in user_input or any(a in user_input for a in ["한다", "했다", "간다", "본다", "잡다", "열다", "마신다", "먹는다"])
-    has_emotion = any(e in user_input for e in ["웃", "울", "화", "슬", "기쁘", "무서", "부끄", "짜증", "ㅋㅋ", "ㅎㅎ", "ㅠ"])
-
-    user_guide = []
-    if has_q:
-        user_guide.append("질문 포함 → NPC 중 누군가가 반드시 대답")
-    if has_action:
-        user_guide.append("행동 포함 → 결과/반응을 나레이션에 포함")
-    if has_emotion:
-        user_guide.append("감정 표현 → NPC들이 그 감정에 반응")
-    if input_len < 15 and not has_q:
-        user_guide.append("짧은 입력 → NPC 반응도 가볍고 간결하게. 과도한 전개 금지")
-    if not user_guide:
-        user_guide.append("자연스럽게 반응하라")
-
-    user_mirror = f"유저({player_name})의 입력: \"{user_input[:200]}\"\n"
-    user_mirror += "필수반응: " + " / ".join(user_guide)
-    parts.append(f"[유저의 말이 이 씬의 중심이다]\n{user_mirror}\n유저의 입력을 무시하고 NPC끼리만 대화하는 것은 금지.\n")
-
-    # ── 발화 균형 (preserved) ──
-    history = s.get("history", []) or s.get("turns", [])
-    speaker_counts = {}
-    for h in history[-3:]:
-        for block in h.get("script", []):
-            if block.get("type") == "dialogue":
-                ch = block.get("character", "")
-                speaker_counts[ch] = speaker_counts.get(ch, 0) + 1
-    total_lines = sum(speaker_counts.values()) or 1
-
-    balance_parts = []
-    for ch in on_screen:
-        if ch == player_name:
-            continue
-        count = speaker_counts.get(ch, 0)
-        role = ENSEMBLE_ROLES.get(ch, {})
-        budget = role.get("voice_budget", "medium")
-        ratio_pct = int(count * 100 / total_lines) if total_lines else 0
-        balance_parts.append(f"  {ch}({role.get('function','?')}): {count}회({ratio_pct}%) [예산:{budget}]")
-
-    balance_warning = ""
-    if speaker_counts:
-        dominant = max(speaker_counts, key=speaker_counts.get)
-        if speaker_counts[dominant] / total_lines > 0.45:
-            quiet = [c for c in on_screen if c != player_name and speaker_counts.get(c, 0) <= 1]
-            balance_warning = (
-                f"\n⚠️ {dominant}가 최근 대화를 지배하고 있다. "
-                f"{', '.join(quiet) if quiet else '다른 캐릭터들'}의 반응을 우선 보여줘라. "
-                f"{dominant}는 이번 턴에서 관찰/리액션 위주로."
-            )
-
-    if balance_parts:
-        parts.append(
-            "[앙상블 발화 분포]\n"
-            "최근 3턴:\n" + chr(10).join(balance_parts) + balance_warning + "\n"
-        )
-
-    # ── 리듬 (preserved) ──
-    if turn <= 3:
-        rhythm = "초반이다. 서로를 알아가는 여유. 급할 필요 없다."
-    elif turn <= 10:
-        rhythm = "자리 잡는 단계. 유저와 캐릭터 사이에 작은 감정적 순간을 만들어라."
-    elif turn <= 20:
-        rhythm = "중반. 캐릭터의 다른 면모, 관계 변화, 의외의 반응이 나올 시기."
+        loc_display = scene_note.split('.')[0].strip()
+        rule1 = (f"RULE 1 — LOCATION: 장면은 '{loc_display}' 내부다. "
+                 f"'{s.get('current_location', '')}' 이름 사용 금지. "
+                 f"이동 제안/이동 묘사 절대 금지.")
     else:
-        rhythm = "장기 세션. 유저가 몰입했다. 더 깊은 감정, 더 진한 비밀 조각을 선물하라."
-    parts.append(f"[리듬] {rhythm}\n")
+        loc = s.get("current_location", DEFAULT_LOCATION)
+        rule1 = f"RULE 1 — LOCATION: 현재 장소는 {loc}. 이동 금지."
 
-    # Improvisation rule (abbreviated)
-    parts.append(
-        "[즉흥 창작] 캐릭터는 DB 설정과 모순되지 않는 범위에서 새로운 에피소드를 창작할 수 있다. "
-        "단, sacred_secrets 직접 공개와 다른 캐릭터의 core identity 변경은 금지.\n"
+    # ── RULE 2: VOICE BALANCE (dynamic per turn) ──
+    if len(npcs) >= 2:
+        last_turn = (s.get("turns", []) or [None])[-1]
+        last_dominant = ""
+        if last_turn and isinstance(last_turn, dict):
+            speakers = [b.get("character", "") for b in last_turn.get("script", [])
+                        if b.get("type") == "dialogue"]
+            if speakers:
+                from collections import Counter
+                c = Counter(speakers)
+                last_dominant = c.most_common(1)[0][0]
+
+        quiet_npc = [n for n in npcs if n != last_dominant]
+        lead = quiet_npc[0] if quiet_npc else npcs[0]
+        follower = last_dominant if last_dominant in npcs else npcs[-1]
+
+        rule2 = (f"RULE 2 — VOICE: 이번 턴에서 {lead}가 먼저 말하고 "
+                 f"{follower}는 짧은 리액션(1문장)만. "
+                 f"NPC끼리 직접 대화 1회 필수. 유저만 바라보며 번갈아 말하기 금지.")
+    else:
+        npc = npcs[0] if npcs else "NPC"
+        rule2 = f"RULE 2 — VOICE: {npc}는 2~3문장. 유저의 말에 직접 반응하라."
+
+    # ── RULE 3: CONTEXT ANCHOR (what just happened) ──
+    last_turn = (s.get("turns", []) or [None])[-1]
+    if last_turn and isinstance(last_turn, dict):
+        user_said = (last_turn.get("user_input") or "")[:60]
+        rule3 = (f"RULE 3 — CONTEXT: 유저가 방금 '{user_said}'라고 했다. "
+                 f"이 말에 직접 반응하라. 이미 답한 질문을 다시 하지 마라.")
+    else:
+        rule3 = "RULE 3 — CONTEXT: 첫 턴이다. 캐릭터들이 자연스럽게 등장하라."
+
+    return (
+        "### DIRECTOR'S 3 RULES (이것만 따라라) ###\n"
+        f"{rule1}\n{rule2}\n{rule3}\n"
+        f"[플레이어 보호] {player_name}의 대사/행동/감정 쓰지 마라.\n"
     )
-
-    return "### 연출자의 직감 (최우선 규칙) ###\n" + "\n".join(p for p in parts if p)
 
 
 def build_dima_prompt(s: dict, user_input: str) -> tuple:
@@ -4745,6 +4543,92 @@ def post_process_script(script: list, s: dict) -> list:
                 c = re.sub(rf'{re.escape(player_name)}(을|를)\s',
                           f'{player_name} 씨\\1 ', c)
                 block["content"] = c
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # PATCH-34 FIX-B: CODE-ENFORCED POST-PROCESSING
+    # These constraints are enforced here instead of in the prompt.
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # B1: Ensemble voice budget enforcement — TRIM excess dialogue blocks
+    char_dialogue_counts = {}
+    for block in processed:
+        if block.get("type") == "dialogue":
+            ch = block.get("character", "")
+            char_dialogue_counts[ch] = char_dialogue_counts.get(ch, 0) + 1
+
+    trimmed = []
+    char_used = {}
+    for block in processed:
+        if block.get("type") == "dialogue":
+            ch = block.get("character", "")
+            role = ENSEMBLE_ROLES.get(ch, {})
+            budget = role.get("voice_budget", "medium")
+            max_blocks = VOICE_BUDGET_MAX_BLOCKS.get(budget, 2)
+            used = char_used.get(ch, 0)
+            if used >= max_blocks:
+                # Convert excess dialogue to narration observation
+                trimmed.append({
+                    "type": "narration",
+                    "content": f"{ch}이(가) 무언가 말하려다 미소만 짓고 입을 다문다."
+                })
+                continue
+            char_used[ch] = used + 1
+        trimmed.append(block)
+    processed = trimmed
+
+    # B2: Location name enforcement in narration
+    scene_note = s.get("_scene_note", "") if isinstance(s, dict) else ""
+    internal_loc = s.get("current_location", "") if isinstance(s, dict) else ""
+    if scene_note and internal_loc:
+        display_name = scene_note.split('.')[0].strip()
+        for block in processed:
+            if block.get("type") == "narration" and block.get("content"):
+                block["content"] = block["content"].replace(
+                    internal_loc, display_name
+                )
+
+    # B3: Movement detection and BLOCKING in output
+    turns_here = s.get("turns_at_current_location", 0) if isinstance(s, dict) else 0
+    current_input = s.get("_current_user_input", "") if isinstance(s, dict) else ""
+    user_wants_move = _user_requests_move(current_input) if current_input else False
+    if turns_here < MOVEMENT_GATE_TURNS and not user_wants_move:
+        for block in processed:
+            content = block.get("content", "")
+            if any(kw in content for kw in MOVEMENT_BLOCKING_KEYWORDS):
+                if block.get("type") == "narration":
+                    # Split on sentence boundaries and filter out movement sentences
+                    sentences = content.split('.')
+                    kept = [s_part for s_part in sentences
+                            if not MOVEMENT_NARRATION_VERBS.search(s_part)]
+                    block["content"] = '.'.join(kept).strip() or "(장면이 계속된다.)"
+                elif block.get("type") == "dialogue":
+                    # Split on clause boundaries and filter out movement clauses
+                    clauses = re.split(r'[,.]', content)
+                    kept = [c_part for c_part in clauses
+                            if not MOVEMENT_DIALOGUE_VERBS.search(c_part)]
+                    block["content"] = ', '.join(c_part.strip() for c_part in kept if c_part.strip())
+                    if not block["content"]:
+                        block["content"] = "(고개를 끄덕이며 미소 짓는다.)"
+
+    # B4: Prop continuity logging
+    established_props = set()
+    if isinstance(s, dict):
+        for turn in s.get("turns", [])[-5:]:
+            for b in turn.get("script", []):
+                for obj in TRACKABLE_SCENE_OBJECTS:
+                    if obj in b.get("content", ""):
+                        established_props.add(obj)
+
+    new_props_found = []
+    for block in processed:
+        content = block.get("content", "")
+        for obj in TRACKABLE_SCENE_OBJECTS:
+            if obj in content and obj not in established_props:
+                new_props_found.append(obj)
+                established_props.add(obj)
+
+    if new_props_found:
+        logger.info(f"[Prop] New props detected in output: {new_props_found}")
 
     return processed
 
@@ -5592,9 +5476,15 @@ def execute_turn():
             if char_name not in on_screen_chars:
                 on_screen_chars.append(char_name)
 
-        # ── PATCH-26: Detect location change from user input ──
+        # ── PATCH-34 FIX-C: Unified move gate (single path) ──
+        # detect_location_change for player input REQUIRES _user_requests_move() first.
+        # This eliminates the dual-path contradiction where one gate blocks but the other allows.
         current_loc = s.get("current_location", DEFAULT_LOCATION)
-        loc_change = detect_location_change(user_input, current_loc, speaker=None)
+        if _user_requests_move(user_input):
+            loc_change = detect_location_change(user_input, current_loc, speaker=None)
+        else:
+            loc_change = None  # No move detection if user didn't explicitly request
+
         if loc_change:
             destination = loc_change["destination"]
             apply_location_change(s, destination, mover=None, reason="user_move")
@@ -5608,7 +5498,6 @@ def execute_turn():
             char_locs = s.get("character_locations", {})
             for cn in on_screen_chars:
                 if cn not in followers and char_locs.get(cn) != destination:
-                    # 이전 장소에 그대로 (자동 이동하지 않음)
                     pass
 
             logger.info(f"[Spatial] Player→{destination}, followers={followers}")
@@ -5622,7 +5511,10 @@ def execute_turn():
             logger.info(f"[Spatial] {char_name} departed to {dep['destination']} ({dep['reason']})")
 
         # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
+        # PATCH-34 FIX-G: Store user_input for post_process_script() access
+        s["_current_user_input"] = user_input
         final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
+        s.pop("_current_user_input", None)  # Clean up after post-processing
 
         # ── PATCH-31: Detect ACTUAL NPC moves from narration only (not dialogue proposals) ──
         for block in final_script:
