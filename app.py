@@ -91,6 +91,9 @@ SUGGESTION_GLOBAL_COOLDOWN = 3     # 전체 제안 쿨다운 (턴)
 MAX_RECENT_NARRATION_OPENINGS = 5  # 최근 나레이션 시작 패턴 추적 수
 OPENING_BOOST_TURNS = 3            # 첫 N턴은 오프닝 부스트 활성화
 
+# PATCH-26: Pattern to detect "캐릭터: 「대사」" in narration blocks
+NARRATION_DIALOGUE_PATTERN = re.compile(r'^([가-힣]+)\s*[：:]\s*[「"\'](.*)[」"\']\s*$')
+
 MODEL_ILLUSTRATION = "gemini-2.5-flash-preview-image"
 ILLUSTRATIONS_DIR = BASE_DIR / "static" / "illustrations"
 ILLUSTRATIONS_DIR.mkdir(exist_ok=True)
@@ -3683,9 +3686,7 @@ def post_process_script(script: list, s: dict) -> list:
         elif btype == "narration":
             content = block.get("content", "")
             # ── PATCH-26: narration 내 대사 형식 감지 교정 ──
-            narr_dialogue_match = re.match(
-                r'^([가-힣]+)\s*[：:]\s*[「"\'](.*)[」"\']\s*$', content
-            )
+            narr_dialogue_match = NARRATION_DIALOGUE_PATTERN.match(content)
             if narr_dialogue_match:
                 char_name = narr_dialogue_match.group(1)
                 if char_name in ALL_CHARACTER_NAMES:
