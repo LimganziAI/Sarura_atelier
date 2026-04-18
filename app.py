@@ -319,6 +319,44 @@ def _build_location_aliases() -> Dict[str, str]:
 LOCATION_ALIASES: Dict[str, str] = _build_location_aliases()
 logger.info(f"Location alias map built: {len(LOCATION_ALIASES)} entries")
 
+# ─── PATCH-27: Scene Zero (첫 턴 장면 설정 추출) ────────────
+SCENE_ZERO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "location": {"type": "string", "description": "장면의 장소. DB에 있는 이름이면 그대로, 없으면 유저가 묘사한 대로"},
+        "time_of_day": {"type": "string", "enum": ["새벽", "아침", "한낮", "오후", "해질녘", "밤", "심야", "미지정"]},
+        "mood": {"type": "string", "description": "장면 분위기. 예: 긴장, 편안, 로맨틱, 코믹, 비장 등"},
+        "relationship_context": {"type": "string", "description": "유저와 NPC의 관계 맥락. 예: 소개팅, 첫만남, 오랜 친구, 구조자 등"},
+        "user_role": {"type": "string", "description": "유저가 자신에 대해 설정한 역할/직업. 없으면 null"},
+        "special_conditions": {"type": "array", "items": {"type": "string"}, "description": "특수 상황. 예: 부상, 전쟁, 축제, 비밀임무 등"},
+        "is_custom_location": {"type": "boolean", "description": "이 장소가 world_db에 정의되지 않은 즉석 장소인가"}
+    },
+    "required": ["location", "time_of_day", "mood"]
+}
+
+# 키워드 기반 빠른 추출용 사전 (LLM 호출 없이)
+_TIME_KEYWORDS = {
+    "새벽": "새벽", "아침": "아침", "오전": "아침", "점심": "한낮",
+    "한낮": "한낮", "오후": "오후", "저녁": "해질녘", "해질녘": "해질녘",
+    "밤": "밤", "야간": "밤", "심야": "심야", "자정": "심야",
+}
+
+_MOOD_KEYWORDS = {
+    "소개팅": "로맨틱+긴장", "데이트": "로맨틱", "파티": "축제",
+    "전투": "비장", "전쟁": "비장+긴장", "폐허": "비장",
+    "축제": "축제", "일상": "편안", "힐링": "편안",
+    "수사": "미스터리", "살인": "미스터리+공포", "비밀": "미스터리",
+    "공포": "공포", "호러": "공포",
+}
+
+_RELATIONSHIP_KEYWORDS = {
+    "소개팅": "blind_date", "첫만남": "first_meeting",
+    "친구": "friends", "동료": "colleagues", "선후배": "senior_junior",
+    "연인": "lovers", "부부": "married", "가족": "family",
+    "적": "enemies", "라이벌": "rivals",
+    "구조": "rescuer", "의뢰": "client",
+}
+
 # ─── Startup: ENG_SLUG_MAP ↔ static/gifs/ validation ────────
 _GIFS_DIR = BASE_DIR / "static" / "gifs"
 
@@ -916,21 +954,19 @@ def get_event_seed_for_scene(s: dict) -> str:
 
 # ─── STEP 11: Maestro 호출 빈도 최적화 ──────────────────────
 def should_call_maestro(s: dict, user_input: str) -> bool:
-    """Maestro 호출 여부를 판단하는 적응형 스케줄"""
+    """Maestro 호출 여부를 판단하는 적응형 스케줄 (PATCH-27 조정)"""
     turn_num = len(s.get("turns", []))
 
-    if turn_num == 0:
-        return False
+    if turn_num <= 1:
+        return False  # 첫 2턴은 데이터 부족
 
     if turn_num <= 10:
-        return True
+        return turn_num % 2 == 0  # 짝수 턴만
 
     if turn_num <= 30:
-        return turn_num % 2 == 0
+        return turn_num % 3 == 0
 
-    if turn_num % 3 == 0:
-        return True
-
+    # 중요 키워드가 있으면 항상 호출
     important_keywords = [
         "고백", "좋아", "싫어", "비밀", "진심", "약속", "미안",
         "고마워", "위험", "도망", "싸움", "울", "화나", "무서"
@@ -938,7 +974,7 @@ def should_call_maestro(s: dict, user_input: str) -> bool:
     if any(kw in (user_input or "") for kw in important_keywords):
         return True
 
-    return False
+    return turn_num % 4 == 0
 
 
 # ─── Director defaults ───────────────────────────────────────
@@ -1591,6 +1627,170 @@ def check_departure_returns(s: dict, on_screen: List[str],
     return returns
 
 
+# ─── PATCH-27: Scene Zero 추출 함수들 ─────────────────────────
+
+def _quick_extract_scene_zero(seed_text: str) -> dict:
+    """LLM 호출 없이 키워드 매칭으로 Scene Zero를 빠르게 추출.
+    짧은 입력이나 LLM 폴백용."""
+    result = {
+        "location": None,
+        "time_of_day": "미지정",
+        "mood": "auto",
+        "relationship_context": None,
+        "user_role": None,
+        "special_conditions": [],
+        "is_custom_location": False,
+    }
+
+    if not seed_text or len(seed_text) < 5:
+        return result
+
+    # 1) 시간대 추출
+    for kw, time_val in _TIME_KEYWORDS.items():
+        if kw in seed_text:
+            result["time_of_day"] = time_val
+            break
+
+    # 2) 장소 추출 — LOCATION_ALIASES에서 가장 긴 매칭 우선
+    sorted_aliases = sorted(LOCATION_ALIASES.keys(), key=len, reverse=True)
+    for alias in sorted_aliases:
+        if alias in seed_text:
+            result["location"] = LOCATION_ALIASES[alias]
+            break
+
+    # 앨리어스에 없으면 "~에서", "~에 있는" 패턴으로 장소 후보 추출
+    if not result["location"]:
+        loc_patterns = [
+            r'(.{2,15}?)(?:에서|에 있는|에 앉아|에 도착)',
+            r'(.{2,15}?)(?:라는 곳|이라는 장소|라는 카페|라는 식당|라는 술집)',
+        ]
+        for pat in loc_patterns:
+            m = re.search(pat, seed_text)
+            if m:
+                candidate = m.group(1).strip()
+                # 문장 부호나 조사 제거
+                candidate = re.sub(r'^[,.\s의에서]+', '', candidate)
+                candidate = candidate.rstrip(',. \t\n\r')
+                if len(candidate) >= 2:
+                    # 다시 앨리어스 체크
+                    for alias in sorted_aliases:
+                        if alias in candidate:
+                            result["location"] = LOCATION_ALIASES[alias]
+                            break
+                    if not result["location"]:
+                        result["location"] = candidate
+                        result["is_custom_location"] = True
+                    break
+
+    # 3) 분위기 추출
+    for kw, mood in _MOOD_KEYWORDS.items():
+        if kw in seed_text:
+            result["mood"] = mood
+            break
+
+    # 4) 관계 맥락 추출
+    for kw, rel in _RELATIONSHIP_KEYWORDS.items():
+        if kw in seed_text:
+            result["relationship_context"] = rel
+            break
+
+    return result
+
+
+def _llm_extract_scene_zero(seed_text: str, on_screen: list) -> Optional[dict]:
+    """복잡한 seed_text를 LLM으로 정밀 분석. 실패 시 None."""
+    prompt = (
+        "아래 텍스트는 인터랙티브 소설의 첫 장면 설정이다.\n"
+        "이 텍스트에서 장소, 시간대, 분위기, 유저-캐릭터 관계, "
+        "유저 역할, 특수 상황을 추출하라.\n"
+        "장소가 DB에 없는 곳이면 is_custom_location=true로 표시하라.\n"
+        "정보가 없는 항목은 null로 남겨라.\n\n"
+        f"등장 캐릭터: {', '.join(on_screen)}\n\n"
+        f"텍스트:\n{seed_text[:1500]}"
+    )
+
+    config = genai_types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=SCENE_ZERO_SCHEMA,
+        safety_settings=get_safety_settings(),
+        temperature=0.1,
+        max_output_tokens=512,
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=256),
+    )
+
+    try:
+        result = call_gemini_with_timeout(MODEL_MAESTRO, [prompt], config, timeout_sec=10)
+        if result:
+            text = _extract_text(result)
+            if text:
+                parsed = json.loads(text)
+                logger.info(f"[Scene Zero LLM] Extracted: {parsed}")
+                return parsed
+    except Exception as e:
+        logger.warning(f"[Scene Zero LLM] Failed: {e}")
+
+    return None
+
+
+def run_scene_zero(seed_text: str, s: dict, on_screen: list):
+    """첫 턴 seed_text를 분석하여 세션 초기 상태를 설정.
+
+    전략:
+    1. seed_text가 30자 미만 → 키워드 매칭만 (LLM 호출 없음)
+    2. seed_text가 30~200자 → 키워드 매칭 (빠르고 충분)
+    3. seed_text가 200자 이상 → LLM 정밀 추출 (설정이 복잡할 가능성)
+    4. LLM 실패 → 키워드 매칭 폴백
+    """
+    if not seed_text or seed_text in ("[PLAYER_PAUSE]", "[CONTINUE_SCENE]"):
+        return  # 아무 설정 없음 → 기본값 유지
+
+    # 단계 1: 항상 키워드 매칭 실행 (빠름)
+    quick = _quick_extract_scene_zero(seed_text)
+
+    # 단계 2: 긴 입력이면 LLM 정밀 추출 시도
+    scene_zero = quick
+    if len(seed_text) >= 200:
+        llm_result = _llm_extract_scene_zero(seed_text, on_screen)
+        if llm_result:
+            # LLM 결과가 있으면 quick 결과를 덮어쓰되, None인 필드는 quick 유지
+            for key, val in llm_result.items():
+                if val is not None and val != "미지정" and val != "" and val != []:
+                    scene_zero[key] = val
+
+    # 단계 3: 추출 결과를 세션에 반영
+
+    # 3-a) 장소
+    location = scene_zero.get("location")
+    if location:
+        # DB에 있는 장소인지 확인
+        canonical = LOCATION_ALIASES.get(location)
+        if canonical:
+            location = canonical
+            scene_zero["is_custom_location"] = False
+
+        s["current_location"] = location
+        s["world"]["space"]["current_location"] = location
+
+        # 온스크린 캐릭터 위치 동기화
+        player_name = s.get("player_name", "사용자")
+        s["character_locations"][player_name] = location
+        for char in on_screen:
+            s["character_locations"][char] = location
+
+        logger.info(f"[Scene Zero] Location set: {location} "
+                    f"(custom={scene_zero.get('is_custom_location', False)})")
+
+    # 3-b) 시간대
+    time_of_day = scene_zero.get("time_of_day")
+    if time_of_day and time_of_day != "미지정":
+        s["world"]["time"]["display"] = time_of_day
+        logger.info(f"[Scene Zero] Time set: {time_of_day}")
+
+    # 3-c) 전체 Scene Zero 카드를 세션에 저장 (DIMA 참조용)
+    s["_scene_zero"] = scene_zero
+    logger.info(f"[Scene Zero] Card: {scene_zero}")
+
+
 def build_spatial_context(s: dict, on_screen: List[str]) -> str:
     """DIMA 프롬프트에 삽입할 공간 정보 블록 생성."""
     current = s.get("current_location", DEFAULT_LOCATION)
@@ -1729,33 +1929,68 @@ def record_suggestion(s: dict, char_name: str):
 
 
 def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
-    """반복 방지 지시문 생성."""
+    """반복 방지 지시문 생성 (PATCH-27 강화판)."""
     lines = []
 
-    # 1) 제안 쿨다운 안내
+    # 1) 제안 쿨다운
     blocked = [n for n in on_screen if not can_character_suggest(s, n)]
     if blocked:
-        lines.append(f"[제안 금지] 다음 캐릭터는 이번 턴에 '어디 갈래?', '뭐 할래?' 같은 "
-                     f"방향 제안을 하면 안 됨: {', '.join(blocked)}")
+        lines.append(f"[제안 금지] {', '.join(blocked)} — 이번 턴 방향 제안 금지")
 
-    # 2) 최근 나레이션 오프닝 패턴 회피
+    # 2) 나레이션 오프닝 다양화
     recent_openings = s.get("_recent_narration_openings", [])
     if recent_openings:
-        lines.append(f"[나레이션 시작 다양화] 최근 사용한 나레이션 시작 패턴을 피할 것: "
-                     f"{', '.join(recent_openings[-MAX_RECENT_NARRATION_OPENINGS:])}")
+        lines.append(
+            f"[나레이션 시작 금지 패턴] "
+            f"{', '.join(repr(o) for o in recent_openings[-5:])}")
 
-    # 3) 캐치프레이즈 예산 알림
-    mem = s.get("memory", {})
-    char_last = mem.get("character_last", {})
+    # 3) 캐치프레이즈 — 최근 3턴 집계
+    recent_turns = s.get("turns", [])[-3:]
+    char_phrase_count = {}
+    for turn in recent_turns:
+        for block in turn.get("script", []):
+            if block.get("type") != "dialogue":
+                continue
+            speaker = block.get("character", "")
+            content = block.get("content", "")
+            if not speaker or not content:
+                continue
+            cached = _CHAR_RUNTIME_CACHE.get(speaker, {})
+            for cp in cached.get("catchphrases", []):
+                if cp in content[:30]:
+                    key = (speaker, cp)
+                    char_phrase_count[key] = char_phrase_count.get(key, 0) + 1
+
+    for (char, phrase), count in char_phrase_count.items():
+        if count >= 2 and char in on_screen:
+            lines.append(
+                f"⚠️ [{char}] '{phrase}' 최근 {count}회 사용 → 이번 턴 사용 금지")
+
+    # 4) 감정 연속 — 동일 캐릭터 2턴 연속 동일 감정 시 경고 (3턴 연속 방지)
     for name in on_screen:
-        last = char_last.get(name, {})
-        last_said = last.get("said", "")
-        cached = _CHAR_RUNTIME_CACHE.get(name, {})
-        catchphrases = cached.get("catchphrases", [])
-        for cp in catchphrases:
-            if cp in last_said:
-                lines.append(f"[{name}] 직전 턴에 '{cp}'를 사용함 → 이번 턴 사용 금지")
-                break
+        recent_emos = []
+        for turn in recent_turns:
+            for block in turn.get("script", []):
+                if (block.get("type") == "dialogue" and
+                    block.get("character") == name and
+                    block.get("emotion")):
+                    recent_emos.append(block["emotion"])
+        if len(recent_emos) >= 2 and len(set(recent_emos)) == 1:
+            lines.append(
+                f"⚠️ [{name}] '{recent_emos[0]}' {len(recent_emos)}턴 연속 → "
+                f"이번 턴 반드시 다른 감정")
+
+    # 5) 대사 시작 패턴 — 직전 턴 대사의 첫 어절과 겹치면 안 됨
+    if recent_turns:
+        last_turn = recent_turns[-1]
+        for block in last_turn.get("script", []):
+            if block.get("type") == "dialogue" and block.get("content"):
+                char = block.get("character", "")
+                first_word = block["content"].strip()[:15]
+                if char in on_screen:
+                    lines.append(
+                        f"[{char}] 직전 대사 시작: '{first_word}...' → "
+                        f"이번 턴 동일 시작 금지")
 
     return "\n".join(lines) if lines else ""
 
@@ -3079,12 +3314,13 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 last_action_summary = b["content"][:MAX_ACTION_SUMMARY_LENGTH]
                 break
 
+    # PATCH-27: scene_continuity_block에서 장소 줄 제거 (build_spatial_context에서 담당)
     scene_continuity_block = (
         f"\n=== 현재 장면 상태 ===\n"
-        f"- 장소: {location}\n"
         f"- 진행 중인 행동: {last_action_summary if last_action_summary else '(첫 턴)'}\n"
-        f"- 장면 규칙: 유저가 장소 이동을 명시하지 않는 한 현재 장소({location})를 유지하라. "
-        f"유저의 행동에 자연스럽게 반응하되, AI가 임의로 장소를 바꾸거나 새로운 이벤트를 삽입하지 마라.\n"
+        f"- 장면 규칙: 유저가 장소 이동을 명시하지 않는 한 현재 장소를 유지하라. "
+        f"유저의 행동에 자연스럽게 반응하되, AI가 임의로 장소를 바꾸거나 "
+        f"새로운 이벤트를 삽입하지 마라.\n"
     )
     recent_turns_1 = all_turns[-1:] if all_turns else []
     raw_recent = []
@@ -3096,36 +3332,10 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 raw_recent.append(f"[{b.get('character','?')}]: {b.get('content','')[:100]}")
     raw_text = "\n".join(raw_recent[-8:])
 
-    # Anti-repetition: extract forbidden patterns from last 3 turns
-    forbidden_starts = set()
-    forbidden_catchphrases = {}  # {character: [used catchphrases]}
-    for t in all_turns[-3:]:
-        for b in t.get("script", []):
-            if b.get("type") == "dialogue" and b.get("content"):
-                char = b.get("character", "")
-                content = b["content"].strip()
-                # 첫 어절 추출 (더 구체적)
-                first_words = content[:20]
-                forbidden_starts.add(first_words)
-                # 캐릭터별 사용한 캐치프레이즈 추적
-                if char:
-                    cps = forbidden_catchphrases.setdefault(char, [])
-                    for cp_word in TRACKED_CATCHPHRASES:
-                        if cp_word in content[:30]:
-                            cps.append(cp_word)
-
-    anti_repetition_block = ""
-    if forbidden_starts:
-        lines_ar = []
-        lines_ar.append("\n=== ANTI-REPETITION (절대 준수) ===")
-        lines_ar.append("아래와 동일/유사 시작 금지:")
-        for fs in list(forbidden_starts)[:8]:
-            lines_ar.append(f'  ❌ "{fs}..."')
-        for char, cps in forbidden_catchphrases.items():
-            if len(cps) >= 2:
-                lines_ar.append(f"  ⚠️ {char}: 최근 3턴에서 '{cps[0]}' 등을 {len(cps)}회 사용. 이번 턴에서 사용 금지.")
-        lines_ar.append("같은 캐릭터가 3턴 연속 동일 emotion 사용 금지.")
-        anti_repetition_block = "\n".join(lines_ar)
+    # PATCH-27: anti_repetition_block을 build_anti_repetition_context로 대체
+    anti_repetition_block = build_anti_repetition_context(s, s.get("on_screen", []))
+    if anti_repetition_block:
+        anti_repetition_block = "\n=== ANTI-REPETITION ===\n" + anti_repetition_block
 
     recent_conversation_log = (
         f"{scene_continuity_block}\n"
@@ -3376,6 +3586,45 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
 
     # Opening Narration: first turn directive
     if turn_count == 0:
+        # PATCH-27: Scene Zero 카드를 DIMA에 최우선 주입
+        scene_zero = s.get("_scene_zero", {})
+        if scene_zero:
+            sz_lines = ["\n### SCENE ZERO — 유저가 설정한 첫 장면 (최우선 준수) ###"]
+            sz_location = scene_zero.get("location")
+            if sz_location:
+                is_custom = scene_zero.get("is_custom_location", False)
+                if is_custom:
+                    sz_lines.append(
+                        f"장소: {sz_location} (유저가 직접 설정한 장소. "
+                        f"world_db에 없으므로 유저 묘사를 기반으로 자유롭게 연출하라)")
+                else:
+                    sz_lines.append(f"장소: {sz_location}")
+                sz_lines.append(
+                    f"⚠️ 절대로 이 장소를 '{DEFAULT_LOCATION}'나 다른 기본 장소로 바꾸지 마라. "
+                    f"감각 앵커도 {sz_location}에 맞게 작성하라.")
+
+            sz_time = scene_zero.get("time_of_day")
+            if sz_time and sz_time != "미지정":
+                sz_lines.append(f"시간대: {sz_time}")
+
+            sz_mood = scene_zero.get("mood")
+            if sz_mood and sz_mood != "auto":
+                sz_lines.append(f"분위기: {sz_mood}")
+
+            sz_rel = scene_zero.get("relationship_context")
+            if sz_rel:
+                sz_lines.append(f"관계 맥락: {sz_rel} — 캐릭터의 첫 대사와 태도를 이에 맞춰라")
+
+            sz_role = scene_zero.get("user_role")
+            if sz_role:
+                sz_lines.append(f"유저 역할: {sz_role} — NPC가 이 역할에 맞게 유저를 대하라")
+
+            sz_conditions = scene_zero.get("special_conditions", [])
+            if sz_conditions:
+                sz_lines.append(f"특수 상황: {', '.join(sz_conditions)}")
+
+            director_brief = "\n".join(sz_lines) + "\n\n" + director_brief
+
         char_names_str = ", ".join(
             n for n in on_screen_chars if n != player_name
         )
@@ -3386,6 +3635,18 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             f"   등장 캐릭터: {char_names_str}\n"
             "3. 그 후에 대화 시작\n"
         )
+
+    # PATCH-27: Scene Zero 리마인드 (2~5턴)
+    if 1 <= turn_count <= 5:
+        scene_zero = s.get("_scene_zero")
+        if scene_zero:
+            sz_remind = []
+            if scene_zero.get("relationship_context"):
+                sz_remind.append(f"관계 맥락: {scene_zero['relationship_context']}")
+            if scene_zero.get("user_role"):
+                sz_remind.append(f"유저 역할: {scene_zero['user_role']}")
+            if sz_remind:
+                director_brief += "\n[Scene Zero 리마인드] " + " | ".join(sz_remind)
 
     if u_text_strip == "[PLAYER_PAUSE]":
         director_brief += (
@@ -3408,11 +3669,6 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     profile_context = build_player_profile_context(s)
     if profile_context:
         director_brief += "\n\n" + profile_context
-
-    # PATCH-26: 반복 방지 지시문 주입
-    anti_rep_context = build_anti_repetition_context(s, on_screen)
-    if anti_rep_context:
-        director_brief += "\n\n" + anti_rep_context
 
     # ── PATCH-26: Suggestion control ──
     director_brief += "\n\n" + """### 제안/방향 질문 규칙 ###
@@ -3737,6 +3993,19 @@ def post_process_script(script: list, s: dict) -> list:
                     content = content.replace("내 가슴", "분위기")
                     break  # 한 블록당 1회 치환이면 충분
             block["content"] = content
+
+    # PATCH-27: NPC 대사에서 플레이어 이름이 주어로 사용되는 패턴 교정
+    player_name = get_player_name(s)
+    if player_name and len(player_name) >= 2:
+        for block in processed:
+            if block.get("type") == "dialogue" and block.get("content"):
+                c = block["content"]
+                # "김갑수은/이/을/의" → "김갑수 씨는/가/를/의"
+                c = re.sub(rf'{re.escape(player_name)}(은|이)\s',
+                          f'{player_name} 씨\\1 ', c)
+                c = re.sub(rf'{re.escape(player_name)}(을|를)\s',
+                          f'{player_name} 씨\\1 ', c)
+                block["content"] = c
 
     return processed
 
@@ -4404,6 +4673,9 @@ def bootstrap():
             s["character_locations"][char] = current_loc
 
     seed_text = (data.get("seed_text") or "").strip() or "[PLAYER_PAUSE]"
+
+    # PATCH-27: Scene Zero — 첫 턴 장면 설정 추출
+    run_scene_zero(seed_text, s, final_cast)
 
     # Generate first turn
     _pulse = None

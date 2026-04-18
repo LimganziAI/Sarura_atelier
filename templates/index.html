@@ -805,7 +805,9 @@
         // or STATE.current_location (from direct API response). Check both paths.
         const locationDisplay = document.getElementById('location-display');
         if (locationDisplay) {
-            const loc = STATE?.world?.space?.current_location || STATE?.current_location;
+            const loc = STATE?.current_location
+                     || STATE?.world?.space?.current_location
+                     || '라운지';
             locationDisplay.textContent = loc || '';
             if (loc) {
                 locationDisplay.style.display = '';
