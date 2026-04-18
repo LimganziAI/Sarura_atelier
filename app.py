@@ -1934,7 +1934,10 @@ def build_spatial_context(s: dict, on_screen: List[str]) -> str:
     current = s.get("current_location", DEFAULT_LOCATION)
     char_locs = s.get("character_locations", {})
 
-    lines = [f"### 현재 장소: {current}"]
+    # PATCH-33 FIX-10: Use scene_note for display name instead of internal location name
+    scene_note = s.get("_scene_note", "")
+    display_name = scene_note.split('.')[0].strip() if scene_note else current
+    lines = [f"### 현재 장소: {display_name}"]
 
     # 현재 장소에 있는 캐릭터
     here = [n for n in on_screen if char_locs.get(n) == current]
@@ -2162,6 +2165,29 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
                 f"[{char}] 최근 {count}턴 연속 등장 — 같은 행동 패턴 반복 금지. "
                 "새로운 행동, 반응, 감정 변화를 보여줘라."
             )
+
+    # 8) PATCH-33 FIX-6: Question repeat detection (semantic anti-repetition)
+    recent_questions = []
+    for turn in recent_turns:
+        for block in turn.get("script", []):
+            if block.get("type") == "dialogue":
+                content = block.get("content", "")
+                char = block.get("character", "")
+                # Detect questions (Korean question markers)
+                if any(q in content for q in ["?", "？", "인가요", "인가",
+                       "건가요", "건가", "할까요", "을까요", "나요",
+                       "세요", "죠", "는지"]):
+                    q_summary = f"{char}: {content[:40]}"
+                    recent_questions.append(q_summary)
+
+    if len(recent_questions) >= 2:
+        lines.append(
+            f"⚠️ [질문 반복 경고] 최근 3턴에서 질문 {len(recent_questions)}회:\n"
+            + "\n".join(f"  - {q}" for q in recent_questions[-4:]) +
+            "\n→ 같은 의미의 질문을 다시 하지 마라. "
+            "유저가 이미 대답한 질문을 재질문하는 것은 금지. "
+            "새로운 화제를 꺼내거나 행동으로 전환하라."
+        )
 
     if lines:
         return "[반복 방지]\n" + "\n".join(lines)
@@ -2719,6 +2745,21 @@ def build_character_block_for_prompt(
     current_stage = session_rels.get(name, {}).get("stage", 1)
     stage_desc = rd.get(f"stage_{current_stage}_description", "")
 
+    # PATCH-33 FIX-8: Override vs_플레이어 dynamics with ensemble role
+    ensemble_init = ENSEMBLE_ROLES.get(name, {}).get("initiative", "")
+    if ensemble_init == "selective":
+        vs_player_text = (
+            f"[앙상블 우선] 이 캐릭터는 selective 역할이므로 "
+            f"유저에게 적극적으로 말 걸지 않는다. "
+            f"대부분 관찰하고, 결정적 순간에만 한마디. "
+            f"원본 지시 참고용: {vs_player_text[:60]}"
+        )
+    elif ensemble_init == "reactive":
+        if "주도적" in vs_player_text:
+            vs_player_text = vs_player_text.replace(
+                "주도적", "반응적(앙상블 우선)"
+            )
+
     guide_lines = []
     if vs_player_text:
         guide_lines.append(f"  플레이어 기본자세: {vs_player_text[:120]}")
@@ -2869,7 +2910,9 @@ def build_adaptive_instruction(s: dict) -> str:
         "2. EPISODE: 감각묘사(2문장) → 대화(자유롭게) → 열린 결말. "
         "3. VOICE: catchphrase_budget 준수. 같은 시작어 2턴 연속 금지. "
         "4. PLAYER SANCTUARY: 플레이어 감정/생각 절대 서술 금지. "
-        "5. DRIVE: [캐릭터별 행동 지시]가 있으면 반드시 수행."
+        "5. DRIVE: [캐릭터별 행동 지시]가 있으면 반드시 수행. "
+        "6. ENSEMBLE: 각 캐릭터의 voice_budget을 초과하는 대사를 생성하지 마라. "
+        "short = 1~2문장, selective = 대부분 침묵."
     )
 
     # ── Output format + Emotion whitelist ──
@@ -2900,6 +2943,23 @@ def build_adaptive_instruction(s: dict) -> str:
 
     # ── Character cast list (briefs are in user prompt only — PATCH-30 dedup) ──
     parts.append(f"[등장인물] {', '.join(on_screen)}")
+
+    # PATCH-33 FIX-4: Ensemble role hard constraints in SYSTEM INSTRUCTION (highest authority)
+    ensemble_lines = []
+    for char in on_screen:
+        if char == player:
+            continue
+        role = ENSEMBLE_ROLES.get(char, {})
+        budget = role.get("voice_budget", "medium")
+        init = role.get("initiative", "reactive")
+        if budget in ("minimal", "short") or init == "selective":
+            budget_desc = {"minimal": "0~1", "short": "1~2", "medium": "2~3"}.get(budget, "2~3")
+            ensemble_lines.append(
+                f"⚠️ {char}: 턴당 {budget_desc}문장 제한. "
+                f"initiative={init}. 이 제한은 vs_플레이어 dynamics보다 우선."
+            )
+    if ensemble_lines:
+        parts.append("[앙상블 역할 — 절대 규칙]\n" + "\n".join(ensemble_lines))
 
     parts.append(EUGENE_FILTER_RULE)
 
@@ -3716,6 +3776,54 @@ def _check_secret_gates(session_state: dict) -> str:
     return "\n".join(secret_notes) + "\n"
 
 
+# PATCH-33 FIX-5: Conversation routing helper for multi-NPC scenes
+def _build_conversation_routing(on_screen: list, player_name: str, recent_turns: list) -> str:
+    """Generate turn-order and inter-NPC dialogue directives for 3+ character scenes."""
+    npcs = [n for n in on_screen if n != player_name]
+    if len(npcs) < 2:
+        return ""
+
+    # Determine who spoke last
+    last_speakers = []
+    if recent_turns:
+        for b in recent_turns[-1].get("script", []):
+            if b.get("type") == "dialogue":
+                last_speakers.append(b.get("character", ""))
+
+    # Count speaker frequency over last 3 turns
+    speaker_counts = {}
+    for t in recent_turns[-3:]:
+        for b in t.get("script", []):
+            if b.get("type") == "dialogue":
+                ch = b.get("character", "")
+                speaker_counts[ch] = speaker_counts.get(ch, 0) + 1
+
+    sorted_npcs = sorted(npcs, key=lambda n: speaker_counts.get(n, 0))
+
+    routing = (
+        "[대화 라우팅 — 3인 이상 씬 필수 규칙]\n"
+        f"이번 턴 대사 순서 제안: {' → '.join(sorted_npcs)}\n"
+        "- NPC끼리 직접 대화하는 블록을 최소 1개 포함하라.\n"
+        "  예: 샐리가 라이니에게 말하고, 라이니가 샐리에게 반응.\n"
+        "- 모든 NPC가 유저만 바라보며 번갈아 말하는 패턴 금지.\n"
+        "- 유저의 말에 반응하는 NPC는 1명이면 충분. 나머지는 "
+        "그 반응에 대해 NPC끼리 코멘트.\n"
+    )
+
+    # If one NPC dominated, add rebalance
+    if last_speakers and len(set(last_speakers)) == 1:
+        dominant = last_speakers[0]
+        quiet = [n for n in npcs if n != dominant]
+        if quiet:
+            routing += (
+                f"⚠️ {dominant}가 직전 턴을 독점했다. "
+                f"이번 턴에서는 {quiet[0]}이(가) 먼저 말하고, "
+                f"{dominant}는 짧은 리액션만.\n"
+            )
+
+    return routing
+
+
 def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
     """The FINAL directive block, placed immediately before user input.
 
@@ -3728,11 +3836,21 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
     turns_here = s.get("turns_at_current_location", 0)
     player_name = s.get("player_name", "사용자")
 
+    # PATCH-33 FIX-10: Scene note narration override (before movement gate, highest priority)
+    scene_note = s.get("_scene_note", "")
+    if scene_note:
+        display_name = scene_note.split('.')[0].strip()
+        parts.insert(0,
+            f"⚠️⚠️ [장소명 교정] 시스템 내부 이름은 '{loc}'이지만, "
+            f"유저와 나레이션에서는 다음 이름만 사용하라: "
+            f"'{display_name}'\n"
+            f"'{loc}'이라는 이름을 나레이션이나 대사에서 절대 사용하지 마라.\n"
+        )
+
     # 1. Movement gate (highest priority) — PATCH-32 FIX-1
     parts.append(build_movement_gate_clause(turns_here, user_input))
 
     # 2. Scene note (location clarification)
-    scene_note = s.get("_scene_note", "")
     if scene_note:
         parts.append(f"[장면 설정] {scene_note}\n")
 
@@ -3772,6 +3890,9 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
         "- 각 캐릭터의 대사는 직전 대사의 내용을 받아서 이어가라 (yes-and).\n"
         "- 무의미한 리액션(웃음, 고개 끄덕임)만으로 턴을 채우지 마라.\n"
     )
+
+    # PATCH-33 FIX-5: Conversation routing directive (3+ character scenes)
+    parts.append(_build_conversation_routing(on_screen, player_name, recent_turns))
 
     # ── 유저 입력 분석 (preserved from existing logic) ──
     input_len = len(user_input.strip())
@@ -3911,7 +4032,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         f"유저의 행동에 자연스럽게 반응하되, AI가 임의로 장소를 바꾸거나 "
         f"새로운 이벤트를 삽입하지 마라.\n"
     )
-    recent_turns_1 = all_turns[-1:] if all_turns else []
+    recent_turns_raw = all_turns[-3:] if all_turns else []
     # PATCH-28: build_compressed_history 적용
     compressed_history = build_compressed_history(all_turns)
     raw_recent = []
@@ -3919,21 +4040,24 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     for entry in compressed_history:
         if isinstance(entry, dict) and entry.get("_summary"):
             raw_recent.append(entry["content"])
-    # Include last turn raw details
-    for t in recent_turns_1:
+    # PATCH-33 FIX-3: Include last 3 turns raw details (was 1)
+    for t in recent_turns_raw:
         if t.get("user_input"):
             raw_recent.append(f"[Player]: {t['user_input'][:120]}")
-        for b in t.get("script", [])[:4]:
-            if b.get("type") == "dialogue":
+        block_count = 0
+        for b in t.get("script", []):
+            if b.get("type") == "dialogue" and block_count < 3:
                 raw_recent.append(f"[{b.get('character','?')}]: {b.get('content','')[:100]}")
-    raw_text = "\n".join(raw_recent[-8:])
+                block_count += 1
+        raw_recent.append("---")  # turn separator
+    raw_text = "\n".join(raw_recent)[:1500]
 
     # PATCH-30: anti-repetition moved to directors_instinct block (near user input)
 
     recent_conversation_log = (
         f"{scene_continuity_block}\n"
         f"=== 흐름 요약 (최근 10턴) ===\n{digest_text}\n\n"
-        f"=== 직전 대화 (최근 1턴 원문) ===\n{raw_text}"
+        f"=== 최근 대화 (최근 3턴 원문) ===\n{raw_text}"
     )
 
     # Character briefs with scene continuity + Maestro action_context
