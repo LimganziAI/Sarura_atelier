@@ -1669,8 +1669,8 @@ def _quick_extract_scene_zero(seed_text: str) -> dict:
             if m:
                 candidate = m.group(1).strip()
                 # 문장 부호나 조사 제거
-                candidate = re.sub(r'^[,.\s의에서]*', '', candidate)
-                candidate = re.sub(r'[,.\s]*$', '', candidate)
+                candidate = re.sub(r'^[,.\s의에서]+', '', candidate)
+                candidate = candidate.rstrip(',. \t\n\r')
                 if len(candidate) >= 2:
                     # 다시 앨리어스 체크
                     for alias in sorted_aliases:
@@ -1754,7 +1754,7 @@ def run_scene_zero(seed_text: str, s: dict, on_screen: list):
         if llm_result:
             # LLM 결과가 있으면 quick 결과를 덮어쓰되, None인 필드는 quick 유지
             for key, val in llm_result.items():
-                if val is not None and val != "미지정" and val != "":
+                if val is not None and val != "미지정" and val != "" and val != []:
                     scene_zero[key] = val
 
     # 단계 3: 추출 결과를 세션에 반영
@@ -1966,7 +1966,7 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
             lines.append(
                 f"⚠️ [{char}] '{phrase}' 최근 {count}회 사용 → 이번 턴 사용 금지")
 
-    # 4) 감정 연속 — 동일 캐릭터 3턴 연속 동일 감정 금지
+    # 4) 감정 연속 — 동일 캐릭터 2턴 연속 동일 감정 시 경고 (3턴 연속 방지)
     for name in on_screen:
         recent_emos = []
         for turn in recent_turns:
@@ -3600,7 +3600,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 else:
                     sz_lines.append(f"장소: {sz_location}")
                 sz_lines.append(
-                    f"⚠️ 절대로 이 장소를 '라운지'나 다른 기본 장소로 바꾸지 마라. "
+                    f"⚠️ 절대로 이 장소를 '{DEFAULT_LOCATION}'나 다른 기본 장소로 바꾸지 마라. "
                     f"감각 앵커도 {sz_location}에 맞게 작성하라.")
 
             sz_time = scene_zero.get("time_of_day")
