@@ -808,7 +808,7 @@
             const loc = STATE?.current_location
                      || STATE?.world?.space?.current_location
                      || '라운지';
-            const sceneNote = STATE?._scene_note || '';
+            const sceneNote = STATE?._scene_note || STATE?.scene_note || '';
             // PATCH-31/32: If scene_note exists, show its first sentence instead of raw location name
             const displayText = sceneNote ? sceneNote.split('.')[0].trim() : loc;
             locationDisplay.textContent = displayText || loc;
