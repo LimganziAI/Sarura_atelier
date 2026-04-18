@@ -3335,7 +3335,7 @@ def build_compressed_history(history: list) -> list:
                 chars.add(block.get("character", "?"))
             elif block.get("type") == "narration" and not key_event:
                 key_event = block.get("content", "")[:50]
-        summary_line = f"[요약] 유저:\"{user_said}\" → {','.join(chars) or '나레이션'}: {key_event}"
+        summary_line = f"[요약] 유저:\"{user_said}\" → {','.join(sorted(chars)) or '나레이션'}: {key_event}"
         summaries.append({"_summary": True, "content": summary_line})
     
     return summaries + recent
