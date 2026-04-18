@@ -1186,6 +1186,18 @@ def trim_turns_after_maestro(s: dict):
     if len(turns) <= SLIDING_WINDOW_SIZE:
         return
     removed = turns[:-SLIDING_WINDOW_SIZE]
+
+    # PATCH-31: Archive for UI display before trimming
+    archived = s.setdefault("archived_turns", [])
+    for t in removed:
+        archived.append({
+            "turn_id": t.get("turn_id"),
+            "user_input": t.get("user_input", ""),
+            "script": t.get("script", []),
+            "emotion": t.get("emotion", ""),
+        })
+    s["archived_turns"] = archived[-50:]  # Keep last 50 turns for display
+
     digest = s.setdefault("flow_digest_10", [])
     for t in removed:
         summary = t.get("summary", "")
@@ -2077,24 +2089,21 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
                         f"[{char}] 직전 대사 시작: '{first_word}...' → "
                         f"이번 턴 동일 시작 금지")
 
-    # 6) PATCH-30: Anti-semantic-repetition — 직전 턴의 "행동 종류" 반복 금지
-    if recent_turns:
-        last_turn = recent_turns[-1]
-        last_actions = []
-        for block in last_turn.get("script", []):
+    # 6) PATCH-31: Anti-semantic-repetition — track move proposals across 3 turns
+    move_proposal_count = 0
+    for turn in recent_turns:
+        for block in turn.get("script", []):
             if block.get("type") == "dialogue":
-                content = block.get("content", "")[:60]
-                if any(kw in content for kw in ["가자", "갈래", "이동", "가볼까", "나가", "출발"]):
-                    last_actions.append(f"이동 제안: {content[:40]}")
-                elif any(kw in content for kw in ["뭐 할래", "어떻게", "어디 가"]):
-                    last_actions.append(f"방향 질문: {content[:40]}")
+                content = block.get("content", "")[:80]
+                if any(kw in content for kw in ["가자", "갈래", "이동", "가볼까", "출발", "따라와"]):
+                    move_proposal_count += 1
 
-        if last_actions:
-            lines.append(
-                f"⚠️ 직전 턴에서 이미 발생한 행동: {'; '.join(last_actions)}. "
-                f"이번 턴에서 같은 종류의 행동을 반복하면 안 된다. "
-                f"이동을 이미 제안했으면 이번 턴에서 실제로 이동하거나 대화를 계속하라."
-            )
+    if move_proposal_count >= 2:
+        lines.append(
+            f"⚠️⚠️ 최근 3턴에서 이동 제안이 {move_proposal_count}회 반복됨! "
+            f"이번 턴에서 이동 제안 절대 금지. "
+            f"이미 이동했으면 새 장소를 묘사하라. 이동하지 않았으면 현재 장소에서 대화를 계속하라."
+        )
 
     return "\n".join(lines) if lines else ""
 
@@ -3173,36 +3182,33 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
     if genre in ("mystery", "thriller", "noir"):
         parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
 
-    # FIX-8: 캐릭터별 역할 분화 강제
+    # PATCH-31: Use ENSEMBLE_ROLES for role distribution, not relationship_matrix.dynamics
     if s is not None:
         on_screen = s.get("on_screen", [])
         player = s.get("player_name", "사용자")
         npcs = [n for n in on_screen if n != player]
         if len(npcs) >= 2:
-            # 캐릭터 DB에서 dynamics 참조
             role_lines = []
             for npc in npcs:
-                cdb = CHARACTERS_DB.get(npc, {})
-                vs_player = cdb.get("relationship_matrix", {}).get("플레이어", {})
-                dynamics = vs_player.get("dynamics", "중립적")
-                if dynamics == "주도적":
-                    role_lines.append(f"- {npc}: 이번 턴에서 대화를 주도하거나 새로운 행동을 제안하라.")
-                elif dynamics == "반응적":
-                    other_npc = next((n for n in npcs if n != npc), npcs[0])
-                    role_lines.append(f"- {npc}: 이번 턴에서 상황을 관찰하고, {other_npc}의 행동에 반응하라.")
+                role = ENSEMBLE_ROLES.get(npc, {})
+                initiative = role.get("initiative", "reactive")
+                budget = role.get("voice_budget", "medium")
+                if initiative == "selective":
+                    role_lines.append(f"- {npc}: 관찰 위주. 대사 0~1문장. 대화 주도 금지.")
+                elif initiative == "proactive":
+                    role_lines.append(f"- {npc}: 대화를 주도하되, 장소 이동 제안은 유저가 먼저 하지 않는 한 금지.")
+                elif initiative == "reactive":
+                    role_lines.append(f"- {npc}: 상대의 행동에 반응. 대사 {budget}.")
                 else:
-                    role_lines.append(f"- {npc}: 이번 턴에서 독자적인 행동(딴짓, 자기 이야기)을 하라.")
-
+                    role_lines.append(f"- {npc}: 자유롭게 행동. 대사 {budget}.")
             parts.append(
                 "\n[캐릭터 역할 분배 — 이번 턴]\n"
-                "2캐릭터 이상 씬에서 모든 캐릭터가 유저만 바라보며 같은 반응 금지.\n"
-                "반드시 NPC끼리 1회 이상 대화하거나 반응해야 함.\n"
+                "NPC끼리 1회 이상 교류 필수. 모든 NPC가 유저만 바라보며 같은 반응 금지.\n"
                 + "\n".join(role_lines)
             )
         elif len(npcs) == 1:
             parts.append(
-                "\n[캐릭터 행동 분배]\n"
-                "- 캐릭터가 유저에게만 집중하되, 환경과 상호작용하는 행동도 포함하라."
+                "\n[캐릭터 행동 분배] 환경과 상호작용하는 행동도 포함하라."
             )
     else:
         parts.append(
@@ -3479,13 +3485,16 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
 
     if _user_requests_move(user_input):
         # User explicitly requests move — gate opens
-        location_feel = "충분히 머물렀다. 서사적 전환점이 자연스럽게 올 수 있다."
+        location_feel = "유저가 이동에 동의했다. 즉시 실행하라."
         loc_block += (
-            "\n✅ 유저가 이동을 원한다. 이번 턴에서 실제로 이동하라. "
-            "이동 과정을 짧게 나레이션(1-2문장)하고, 새 장소에 도착한 모습을 보여줘라. "
-            "'가자'를 또 반복하지 말고 실제로 가라."
+            "\n\n⚠️⚠️⚠️ [최우선 — 즉시 이동 실행] ⚠️⚠️⚠️\n"
+            "유저가 이동에 동의했다. 이번 턴에서 반드시:\n"
+            "1. 이동 과정을 나레이션 1-2문장으로 짧게 서술\n"
+            "2. 새 장소에 도착한 모습을 보여줘라\n"
+            "3. '가자'나 '이동하자'를 또 반복하면 세션 실패. 이미 갔다.\n"
+            "4. 도착 후 새 장소에서의 첫 대화를 시작하라."
         )
-    elif turns_here < 5:
+    elif turns_here < 8:  # PATCH-31: raised from 5 to 8
         # Hard movement lock
         location_feel = (
             "방금 이 장소에 도착했거나 아직 분위기가 자리잡는 중이다. "
@@ -3498,7 +3507,7 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
             "이동 관련 대사/나레이션 일체 금지. "
             "이 장소 안에서 일어나는 대화와 행동에만 집중하라."
         )
-    elif turns_here <= 5:
+    elif turns_here <= 8:
         location_feel = "이 장소에서 이야기가 흐르고 있다. 공간의 디테일을 활용해 장면을 풍부하게."
     else:
         location_feel = "충분히 머물렀다. 서사적 전환점이 자연스럽게 올 수 있다."
@@ -3598,10 +3607,15 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
                     if obj in content:
                         scene_objects.add(obj)
 
-    scene_objects_note = ""
+    # PATCH-31: Strengthened scene object tracking
+    scene_objects_note = "[소품 관리]\n"
     if scene_objects:
-        scene_objects_note = f"\n[씬에 이미 등장한 소품] {', '.join(scene_objects)}\n"
-    scene_objects_note += "새로운 소품을 등장시키려면 반드시 나레이션에서 설명하라. 없던 물건이 갑자기 나타나면 안 된다.\n"
+        scene_objects_note += f"씬에 이미 등장한 소품: {', '.join(scene_objects)}\n"
+    scene_objects_note += (
+        "⛔ 이전 나레이션에서 등장하지 않은 소지품(가방, 병, 핸드폰, 우산 등)은 "
+        "갑자기 사용할 수 없다. 새 소품이 필요하면 먼저 나레이션에서 "
+        "'가지고 온 것'으로 자연스럽게 설정한 후 사용하라."
+    )
 
     # ── 조합 ──
     return f"""### 감독의 본능 (DIRECTOR'S INSTINCT) ###
@@ -4062,39 +4076,13 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     if profile_context:
         director_brief += "\n\n" + profile_context
 
-    # ── PATCH-26: Suggestion control ──
-    director_brief += "\n\n" + """### 제안/방향 질문 규칙 ###
-- 캐릭터가 "어디 가고 싶어?", "뭐 할까?", "어떻게 할래?" 같은 방향 제안은 꼭 필요한 순간에만 한다.
-- 플레이어가 3턴 이상 소극적이거나 장면이 정체될 때만 허용.
-- 같은 캐릭터가 연속 2턴 이내에 제안하는 것은 절대 금지.
-- 제안 대신 캐릭터 자신의 행동/반응/독백으로 장면을 진행할 것."""
+    # ── PATCH-31: Removed "제안/방향 질문 규칙" — covered by directors_instinct ──
 
-    # ── PATCH-26: Movement rule for DIMA ──
-    director_brief += "\n\n" + """### 이동 묘사 규칙 ###
-- 캐릭터가 자리를 뜨는 장면을 쓸 때, 반드시 구체적 목적지를 명시하라.
-  (❌ "밖에 나갈게" → ⭕ "주방에 가서 물 좀 마시고 올게")
-- NPC가 혼자 이동할 때는 나레이션으로 "[캐릭터]이(가) [장소]으로 향했다" 형태로 명시.
-- 플레이어에게 동행을 권유할 때는 목적지를 반드시 말한다."""
+    # ── PATCH-31: Removed "이동 묘사 규칙" — covered by directors_instinct ──
 
-    # ── PATCH-26: Opening narration variety ──
-    turn_num_p26 = len(s.get("turns", []))
-    if turn_num_p26 <= OPENING_BOOST_TURNS:
-        director_brief += "\n\n" + """### 오프닝 부스트 ###
-- 세션 초반이므로 장면 묘사를 풍부하게 하고, 캐릭터 등장을 자연스럽게 연출하라.
-- 배경 분위기(시간, 날씨, 소리)를 상세히 묘사하여 몰입감을 높일 것."""
+    # ── PATCH-31: Removed duplicate "오프닝 부스트" — covered by PATCH-25 boost below ──
 
-    # ── PATCH-26: On-screen cast spatial hints ──
-    char_locs_p26 = s.get("character_locations", {})
-    current_loc_p26 = s.get("current_location", DEFAULT_LOCATION)
-    cast_hints = []
-    for cn in on_screen:
-        loc = char_locs_p26.get(cn, current_loc_p26)
-        status = "같은 장소" if loc == current_loc_p26 else f"다른 장소({loc})"
-        sb = CHARACTERS_DB.get(cn, {}).get("spatial_behavior", {})
-        wander = sb.get("wandering_tendency", 0.2)
-        cast_hints.append(f"  {cn}: {status}, 배회성향={wander:.1f}")
-    if cast_hints:
-        director_brief += "\n\n### 캐릭터 위치 현황 ###\n" + "\n".join(cast_hints)
+    # ── PATCH-31: Removed "캐릭터 위치 현황" — covered by directors_instinct casting block ──
 
     # PATCH-26: 이동 이벤트 주입 (move_events from session)
     move_events = s.get("move_events", [])[-5:]  # 최근 5건
@@ -4116,19 +4104,10 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                                 f"도착 장면을 자연스럽게 연출하라.")
         director_brief += "\n\n" + "\n".join(mv_lines)
 
-    # PATCH-25: 캐릭터 마지막 발언 기억 주입 (반복 방지)
-    char_last_p25 = s.get("memory", {}).get("character_last", {})
-    on_screen_npc_names = [n for n in s.get("on_screen", []) if n != player_name]
-    if char_last_p25:
-        last_lines_p25 = ["## [직전 발언 — 같은 시작어/내용 반복 금지]"]
-        for cname in on_screen_npc_names:
-            if cname in char_last_p25:
-                info = char_last_p25[cname]
-                last_lines_p25.append(f"- {cname}: \"{info.get('said', '')}\" (T{info.get('turn', '?')})")
-        if len(last_lines_p25) > 1:
-            director_brief += "\n\n" + "\n".join(last_lines_p25)
+    # PATCH-31: Removed "직전 발언 — 같은 시작어/내용 반복 금지" — covered by anti-repetition in directors_instinct
 
     # PATCH-25: 초반 오프닝 부스트 (턴 1~3)
+    on_screen_npc_names = [n for n in s.get("on_screen", []) if n != player_name]
     if turn_count <= 3:
         boost_lines = ["# [오프닝 부스트 — 첫인상 각인]"]
         boost_lines.append("각 캐릭터는 자기 성격을 강하게 드러내는 구체적 행동을 해라.")
@@ -5319,39 +5298,34 @@ def execute_turn():
         # V5.0: Step 3 — D.I.M.A turn (uses build_adaptive_instruction internally)
         final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
 
-        # ── PATCH-26: Detect NPC location changes from generated script ──
-        current_loc = s.get("current_location", DEFAULT_LOCATION)
+        # ── PATCH-31: Detect ACTUAL NPC moves from narration only (not dialogue proposals) ──
         for block in final_script:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "dialogue":
-                speaker = block.get("character", "")
-                content = block.get("content", "")
-                if speaker and content:
+            # SKIP dialogue — proposals in dialogue are NOT actual moves
+            if block.get("type") != "narration":
+                continue
+            content = block.get("content", "")
+            # Only detect completed movement verbs
+            completed_patterns = [
+                r'(?:으?로)\s*(?:향했다|옮겼다|이동했다|걸어갔다)',
+                r'(?:에)\s*(?:도착했다|도착하자|다다르자)',
+                r'(?:에서)\s*(?:나왔다|빠져나왔다)',
+                r'발걸음을\s*옮긴다',
+            ]
+            if not any(re.search(p, content) for p in completed_patterns):
+                continue
+            for cn in on_screen_chars:
+                if cn in content:
                     npc_move = detect_location_change(
                         content,
                         s.get("current_location", DEFAULT_LOCATION),
-                        speaker=speaker
+                        speaker=cn
                     )
                     if npc_move and npc_move.get("mover"):
                         move_character(s, npc_move["mover"],
                                       npc_move["destination"],
-                                      reason="npc_dialogue")
-
-            elif block.get("type") == "narration":
-                content = block.get("content", "")
-                # 나레이션에서 캐릭터 이동 감지
-                for cn in on_screen_chars:
-                    if cn in content:
-                        npc_move = detect_location_change(
-                            content,
-                            s.get("current_location", DEFAULT_LOCATION),
-                            speaker=cn
-                        )
-                        if npc_move and npc_move.get("mover"):
-                            move_character(s, npc_move["mover"],
-                                          npc_move["destination"],
-                                          reason="narration_move")
+                                      reason="narration_move")
 
         # ── PATCH-26: Track suggestion usage ──
         for block in final_script:
@@ -5471,6 +5445,7 @@ def execute_turn():
             "character_locations": s.get("character_locations", {}),
             "current_location": s.get("current_location", DEFAULT_LOCATION),
             "previous_location": s.get("previous_location"),
+            "scene_note": s.get("_scene_note", ""),
             "departure_returns": [
                 {"character": r["character"], "to": r["to"]} for r in departure_returns
             ],
