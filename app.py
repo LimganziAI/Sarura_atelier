@@ -98,6 +98,8 @@ SUPPORTED_EMOTIONS = [
 ANALYZER_RETRY_INTERVAL = 5  # 분석 실패 후 재시도까지 대기할 턴 수
 
 # PATCH-31: Movement-related constants
+# PATCH-32: Hard movement gate — 10 turns minimum
+MOVEMENT_GATE_TURNS = 10
 MOVEMENT_PROPOSAL_KEYWORDS = ["가자", "갈래", "이동", "가볼까", "출발", "따라와"]
 COMPLETED_MOVE_PATTERNS = [
     re.compile(r'(?:으?로)\s*(?:향했다|옮겼다|이동했다|걸어갔다)'),
@@ -609,6 +611,27 @@ HIDDEN_LORE_RULES = {
         "hint_allowed": True,
         "reveal_condition": "relationship_stage >= 3",
         "ai_behavior_note": "테피가 크래더에 대한 감정으로 인해 가끔 마법이 불안정해지는 묘사는 허용. 직접적으로 '사랑하면 죽는다'는 설정 언급은 금지"
+    },
+    # PATCH-32: Ner secret gate (RC-5 fix)
+    "네르": {
+        "hidden_facts": ["로맨스 소설을 몰래 읽고 거울 앞에서 여자다운 취미를 즐기는 소녀다운 면"],
+        "hint_allowed": True,
+        "reveal_condition": "relationship_stage >= 3 OR intoxication >= 40",
+        "ai_behavior_note": (
+            "네르의 소녀다운 취미는 관계 단계 3 이상이거나 취기가 40 이상일 때만 힌트 수준으로 드러낼 수 있다. "
+            "직접적인 '로맨스 소설 읽는다'는 언급은 단계 4 이상에서만 가능. "
+            "평소에는 '분홍 책갈피를 급히 숨기는 동작', '거울 앞에서 뭔가 하다 들킨 듯한 반응' 수준의 간접 묘사만 허용."
+        )
+    },
+    # PATCH-32: Sally secret gate (RC-5 fix)
+    "샐리": {
+        "hidden_facts": ["테피에 대한 깊은 우정과 보호 본능", "크래더(유진)에 대한 소꿉친구 추억"],
+        "hint_allowed": True,
+        "reveal_condition": "intoxication >= 40 OR relationship_stage >= 3",
+        "ai_behavior_note": (
+            "샐리의 깊은 감정은 취기 40 이상이거나 관계 단계 3 이상에서 드러난다. "
+            "평소에는 시원시원한 언니 이미지 유지. 테피와 크래더에 대한 이야기에서만 특별히 진지해지는 순간 허용."
+        )
     }
 }
 
@@ -1464,26 +1487,35 @@ def detect_location_change(text: str, current_location: str,
     """텍스트에서 장소 이동 의도를 감지.
     speaker가 있으면 해당 캐릭터의 이동, 없으면 플레이어/전체 이동으로 판단.
 
+    PATCH-32 FIX-2: When speaker is provided (NPC narration detection),
+    only completed-move verbs count. Dialogue proposals ("가볼까?", "가자")
+    are NOT location changes for NPCs.
+
     Returns: {"destination": str, "mover": str|None, "raw_match": str} or None
     """
     if not text or len(text) < 2:
         return None
 
-    # 이동 의도 키워드
-    move_patterns = [
-        r'(?:으?로|에)\s*(?:가자|갈래|가볼까|이동|갑시다|가요|가겠)',
-        r'(?:으?로|에)\s*(?:갔다|갔어|갔습니다|향했다|옮겼다)',
-        r'(?:으?로|에)\s*(?:가보자|가보는|가봐|가보겠)',
-        r'(?:으?로|에)\s*(?:돌아가|돌아갈|돌아갔)',
-        r'(?:으?로|에|을|를)\s*(?:나가|나갈|나갔|나간다)',
-        r'(?:에서)\s*(?:나왔다|나왔어|빠져나)',
-        r'(?:으?로)\s*(?:향하|향했|향해)',
-        r'(?:으?로)\s*(?:이동하|옮기|옮겼)',
-    ]
-
-    has_intent = any(re.search(p, text) for p in move_patterns)
-    if not has_intent:
-        return None
+    if speaker is not None:
+        # NPC narration path: ONLY completed-move verbs (PATCH-32)
+        has_completed_move = any(p.search(text) for p in COMPLETED_MOVE_PATTERNS)
+        if not has_completed_move:
+            return None
+    else:
+        # Player input path: detect both proposals and completed moves
+        move_patterns = [
+            r'(?:으?로|에)\s*(?:가자|갈래|가볼까|이동|갑시다|가요|가겠)',
+            r'(?:으?로|에)\s*(?:갔다|갔어|갔습니다|향했다|옮겼다)',
+            r'(?:으?로|에)\s*(?:가보자|가보는|가봐|가보겠)',
+            r'(?:으?로|에)\s*(?:돌아가|돌아갈|돌아갔)',
+            r'(?:으?로|에|을|를)\s*(?:나가|나갈|나갔|나간다)',
+            r'(?:에서)\s*(?:나왔다|나왔어|빠져나)',
+            r'(?:으?로)\s*(?:향하|향했|향해)',
+            r'(?:으?로)\s*(?:이동하|옮기|옮겼)',
+        ]
+        has_intent = any(re.search(p, text) for p in move_patterns)
+        if not has_intent:
+            return None
 
     # 앨리어스 맵에서 매칭 (긴 이름 우선)
     sorted_aliases = sorted(LOCATION_ALIASES.keys(), key=len, reverse=True)
@@ -2098,7 +2130,7 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
                         f"[{char}] 직전 대사 시작: '{first_word}...' → "
                         f"이번 턴 동일 시작 금지")
 
-    # 6) PATCH-31: Anti-semantic-repetition — track move proposals across 3 turns
+    # 6) PATCH-31/32: Anti-semantic-repetition — track move proposals across 3 turns
     move_proposal_count = 0
     for turn in recent_turns:
         for block in turn.get("script", []):
@@ -2114,7 +2146,26 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
             f"이미 이동했으면 새 장소를 묘사하라. 이동하지 않았으면 현재 장소에서 대화를 계속하라."
         )
 
-    return "\n".join(lines) if lines else ""
+    # 7) PATCH-32 FIX-5: Per-character action repeat detection across 3 turns
+    char_appearance_count = {}
+    for turn in recent_turns:
+        seen_in_turn = set()
+        for block in turn.get("script", []):
+            char = block.get("character", "narration")
+            if char and char not in seen_in_turn:
+                seen_in_turn.add(char)
+                char_appearance_count[char] = char_appearance_count.get(char, 0) + 1
+
+    for char, count in char_appearance_count.items():
+        if count >= 3 and char in on_screen:
+            lines.append(
+                f"[{char}] 최근 {count}턴 연속 등장 — 같은 행동 패턴 반복 금지. "
+                "새로운 행동, 반응, 감정 변화를 보여줘라."
+            )
+
+    if lines:
+        return "[반복 방지]\n" + "\n".join(lines)
+    return ""
 
 
 def merge_ui_settings(s: dict, incoming: Optional[dict]):
@@ -3191,29 +3242,15 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
     if genre in ("mystery", "thriller", "noir"):
         parts.append("- [건조한 정밀 묘사]: 은유 최소화, 짧은 서술문, 물리적 증거 중심 묘사.")
 
-    # PATCH-31: Use ENSEMBLE_ROLES for role distribution, not relationship_matrix.dynamics
+    # PATCH-32 FIX-9: Role distribution moved to directors_instinct (ensemble casting).
+    # Only retain NPC interaction rule (non-rule contextual guidance).
     if s is not None:
         on_screen = s.get("on_screen", [])
         player = s.get("player_name", "사용자")
         npcs = [n for n in on_screen if n != player]
         if len(npcs) >= 2:
-            role_lines = []
-            for npc in npcs:
-                role = ENSEMBLE_ROLES.get(npc, {})
-                initiative = role.get("initiative", "reactive")
-                budget = role.get("voice_budget", "medium")
-                if initiative == "selective":
-                    role_lines.append(f"- {npc}: 관찰 위주. 대사 0~1문장. 대화 주도 금지.")
-                elif initiative == "proactive":
-                    role_lines.append(f"- {npc}: 대화를 주도하되, 장소 이동 제안은 유저가 먼저 하지 않는 한 금지.")
-                elif initiative == "reactive":
-                    role_lines.append(f"- {npc}: 상대의 행동에 반응. 대사 {budget}.")
-                else:
-                    role_lines.append(f"- {npc}: 자유롭게 행동. 대사 {budget}.")
             parts.append(
-                "\n[캐릭터 역할 분배 — 이번 턴]\n"
-                "NPC끼리 1회 이상 교류 필수. 모든 NPC가 유저만 바라보며 같은 반응 금지.\n"
-                + "\n".join(role_lines)
+                "\n[NPC 상호작용] NPC끼리 1회 이상 교류 필수. 모든 NPC가 유저만 바라보며 같은 반응 금지."
             )
         elif len(npcs) == 1:
             parts.append(
@@ -3414,8 +3451,11 @@ def build_adaptive_char_brief(char_name: str, rel_data: dict, turn: int,
     role = ENSEMBLE_ROLES.get(char_name, {})
     stage = calculate_relationship_stage(rel_data) if rel_data else 1
     
-    # PATCH-30: Ensemble role as FIRST LINE — hard constraint
-    if role.get("initiative") == "selective":
+    # PATCH-32 FIX-3: Immutable ensemble constraint as FIRST LINE
+    ensemble_constraint = _get_ensemble_constraint(char_name)
+    if ensemble_constraint:
+        lines = [f"[{char_name}]\n{ensemble_constraint.strip()}"]
+    elif role.get("initiative") == "selective":
         lines = [
             f"[{char_name}] ⚠️ 이 캐릭터는 이번 턴에서 대사 0~1문장만 허용. "
             f"대부분 관찰하고 미소짓고 지켜보는 역할. "
@@ -3470,126 +3510,237 @@ def build_adaptive_char_brief(char_name: str, rel_data: dict, turn: int,
     return "\n".join(lines)
 
 
-# ─── PATCH-30: Movement request detection ─────────────────────
+# ─── PATCH-32: Movement request detection & gate clause ─────────────────────
 def _user_requests_move(user_input: str) -> bool:
-    """유저 입력에서 장소 이동 의도를 감지."""
-    move_keywords = ["가자", "이동", "떠나", "나가", "옮기", "돌아가", "가볼까", "가실까", "안내"]
-    return any(kw in user_input for kw in move_keywords)
+    """Detect explicit user request for location change. PATCH-32: expanded patterns."""
+    move_patterns = [
+        "이동하자", "가자", "갈까", "가볼까", "옮기자", "나가자",
+        "다른 곳", "장소를 바꿔", "장소 변경", "어디로", "로 가",
+        "로 이동", "에 가자", "출발", "이동", "떠나", "나가",
+        "옮기", "돌아가", "가실까", "안내"
+    ]
+    text = user_input.strip()
+    return any(p in text for p in move_patterns)
 
 
-def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
-    """감독의 본능 — 규칙이 아니라 감각으로 안내하는 통합 연출 블록."""
-    turn = s.get("turn_number", 0)
-    loc = s.get("current_location", DEFAULT_LOCATION)
-    turns_here = s.get("turns_at_current_location", 0)
-    player_name = s.get("player_name", "사용자")
-    
-    # ── 장소 분위기 + PATCH-30: Hard movement gate ──
-    loc_block = f"현재: {loc} ({turns_here}턴째)"
+def build_movement_gate_clause(turns_here: int, user_input: str) -> str:
+    """Generate the movement gate directive for the director's instinct block.
+    PATCH-32: Hard gate at MOVEMENT_GATE_TURNS (10 turns minimum).
+    """
+    user_wants_move = _user_requests_move(user_input)
 
-    # PATCH-30: Include scene note if available (e.g. "카페 거리" → "카페 실내")
-    scene_note = s.get("_scene_note", "")
-    if scene_note:
-        loc_block += f"\n🎬 {scene_note}"
-
-    if _user_requests_move(user_input):
-        # User explicitly requests move — gate opens
-        location_feel = "유저가 이동에 동의했다. 즉시 실행하라."
-        loc_block += (
-            "\n\n⚠️⚠️⚠️ [최우선 — 즉시 이동 실행] ⚠️⚠️⚠️\n"
-            "유저가 이동에 동의했다. 이번 턴에서 반드시:\n"
-            "1. 이동 과정을 나레이션 1-2문장으로 짧게 서술\n"
-            "2. 새 장소에 도착한 모습을 보여줘라\n"
-            "3. '가자'나 '이동하자'를 또 반복하면 세션 실패. 이미 갔다.\n"
-            "4. 도착 후 새 장소에서의 첫 대화를 시작하라."
+    if user_wants_move:
+        return (
+            "✅ [이동 허용] 유저가 장소 변경을 요청했다. "
+            "이번 턴에서 장면 전환을 자연스럽게 수행하라. "
+            "이동 과정의 묘사를 간결하게 포함하되, 도착 후 새 장소의 감각 묘사로 마무리.\n"
         )
-    elif turns_here < 8:  # PATCH-31: raised from 5 to 8
-        # Hard movement lock
-        location_feel = (
-            "방금 이 장소에 도착했거나 아직 분위기가 자리잡는 중이다. "
-            "이 공간을 느끼고 탐색하는 시간을 줘라."
+
+    if turns_here < MOVEMENT_GATE_TURNS:
+        return (
+            f"⛔ [이동 금지 — 현재 턴 {turns_here}/{MOVEMENT_GATE_TURNS}] "
+            f"현재 장소에서 아직 {MOVEMENT_GATE_TURNS - turns_here}턴 남았다.\n"
+            "- NPC가 '가자', '이동하자' 등 장소 변경을 제안하는 대사 금지.\n"
+            "- NPC가 다른 장소를 언급하며 관심을 유도하는 것도 금지.\n"
+            "- 유저가 직접 이동을 요청하지 않는 한, 모든 캐릭터는 현재 장소에 머문다.\n"
+            "- 대신 현재 장소의 분위기, 소품, 감각 디테일을 활용해 풍부한 장면을 만들어라.\n"
         )
-        loc_block += (
-            f"\n⛔ [절대 금지] 이 장소에 머문 지 아직 {turns_here}턴이다. "
-            "캐릭터가 장소 이동을 제안하거나, 다른 곳으로 가자고 말하거나, "
-            "떠날 준비를 하는 묘사를 하면 이 세션은 실패한다. "
-            "이동 관련 대사/나레이션 일체 금지. "
-            "이 장소 안에서 일어나는 대화와 행동에만 집중하라."
-        )
-    elif turns_here <= 8:
-        location_feel = "이 장소에서 이야기가 흐르고 있다. 공간의 디테일을 활용해 장면을 풍부하게."
     else:
-        location_feel = "충분히 머물렀다. 서사적 전환점이 자연스럽게 올 수 있다."
-    
-    # ── 발화 균형 ──
-    history = s.get("history", [])
-    speaker_counts = {}
-    for h in history[-3:]:
-        for block in h.get("script", []):
-            if block.get("type") == "dialogue":
-                ch = block.get("character", "")
-                speaker_counts[ch] = speaker_counts.get(ch, 0) + 1
-    total_lines = sum(speaker_counts.values()) or 1
-    
-    balance_parts = []
-    for ch in on_screen:
-        count = speaker_counts.get(ch, 0)
-        role = ENSEMBLE_ROLES.get(ch, {})
-        budget = role.get("voice_budget", "medium")
-        ratio_pct = int(count * 100 / total_lines) if total_lines else 0
-        balance_parts.append(f"  {ch}({role.get('function','?')}): {count}회({ratio_pct}%) [예산:{budget}]")
-    
-    # 독점 경고
-    balance_warning = ""
-    if speaker_counts:
-        dominant = max(speaker_counts, key=speaker_counts.get)
-        if speaker_counts[dominant] / total_lines > 0.45:
-            quiet = [c for c in on_screen if speaker_counts.get(c, 0) <= 1]
-            balance_warning = (
-                f"\n⚠️ {dominant}가 최근 대화를 지배하고 있다. "
-                f"{', '.join(quiet) if quiet else '다른 캐릭터들'}의 반응을 우선 보여줘라. "
-                f"{dominant}는 이번 턴에서 관찰/리액션 위주로."
-            )
-    
-    # ── 리듬 ──
-    if turn <= 3:
-        rhythm = "초반이다. 서로를 알아가는 여유. 급할 필요 없다."
-    elif turn <= 10:
-        rhythm = "자리 잡는 단계. 유저와 캐릭터 사이에 작은 감정적 순간을 만들어라."
-    elif turn <= 20:
-        rhythm = "중반. 캐릭터의 다른 면모, 관계 변화, 의외의 반응이 나올 시기."
-    else:
-        rhythm = "장기 세션. 유저가 몰입했다. 더 깊은 감정, 더 진한 비밀 조각을 선물하라."
-    
-    # ── 비밀 게이트 ──
+        return (
+            f"🟡 [이동 가능 — 현재 턴 {turns_here}] "
+            "유저의 요청이 있거나, 분위기상 자연스러울 때만 장소 변경 제안 가능.\n"
+            "단, 반드시 제안 형태(\"~에 가볼까?\")로만. 나레이션에서 일방적으로 이동시키지 마라.\n"
+            "이동 제안은 3턴에 1회 이하.\n"
+        )
+
+
+# ─── PATCH-32: Ensemble role constraint helper ─────────────────────
+def _get_ensemble_constraint(char_name: str) -> str:
+    """Generate hard ensemble role constraint for a character.
+    PATCH-32 FIX-3: Overrides character DB vs_플레이어 dynamics.
+    """
+    role = ENSEMBLE_ROLES.get(char_name)
+    if not role:
+        return ""
+
+    budget_map = {
+        "minimal": "이 캐릭터는 턴당 0~1문장만 말한다. 침묵 자체가 존재감.",
+        "short": "이 캐릭터는 턴당 1~2문장만 말한다. 간결하게.",
+        "medium": "이 캐릭터는 턴당 2~3문장까지 말할 수 있다.",
+        "long": "자유롭게 발화 가능."
+    }
+
+    init_map = {
+        "reactive": "다른 캐릭터의 행동에 반응하는 방식으로만 참여한다.",
+        "proactive": "스스로 화제를 던지고 상황을 주도할 수 있다.",
+        "selective": "대부분 관찰하다가 결정적 순간에만 개입한다."
+    }
+
+    budget_desc = budget_map.get(role.get("voice_budget", "medium"), "")
+    init_desc = init_map.get(role.get("initiative", "reactive"), "")
+
+    return (
+        f"[앙상블 역할: {role.get('function', '?')}] {budget_desc} {init_desc}\n"
+        f"그룹 스타일: {role.get('group_style', '')}\n"
+        f"⚠️ 이 역할 제한은 character_db의 vs_플레이어 dynamics보다 우선한다.\n"
+    )
+
+
+# ─── PATCH-32: Scene object continuity tracking ─────────────────────
+def _build_object_continuity_block(recent_turns: list) -> str:
+    """Scan recent turns for established objects and build continuity rules.
+    PATCH-32 FIX-4: Enforces TRACKABLE_SCENE_OBJECTS.
+    """
+    established_objects = set()
+    for turn in recent_turns:
+        for block in turn.get("script", []):
+            content = block.get("content", "")
+            for obj in TRACKABLE_SCENE_OBJECTS:
+                if obj in content:
+                    established_objects.add(obj)
+
+    if not established_objects:
+        return (
+            "[소품 규칙] 아직 장면에 등장한 소품이 없다. "
+            "새로운 소품을 도입할 때는 반드시 나레이션에서 자연스럽게 묘사한 후 사용하라. "
+            "예: '테이블 위에 놓여 있던 컵을 집어들며' (O) vs 갑자기 '컵을 건넸다' (X)\n"
+        )
+
+    obj_list = ", ".join(established_objects)
+    return (
+        f"[소품 연속성] 현재 장면에 등장한 소품: {obj_list}\n"
+        "- 이 소품들은 이미 존재가 확립되었으므로 자유롭게 참조 가능.\n"
+        "- 새로운 소품(가방, 무기, 음식 등)을 처음 등장시킬 때는 반드시 나레이션에서 존재 이유를 묘사하라.\n"
+        "- 이전에 언급되지 않은 소품이 갑자기 캐릭터 손에 있으면 안 된다.\n"
+    )
+
+
+# ─── PATCH-32: Secret gate checker ─────────────────────
+def _check_secret_gates(session_state: dict) -> str:
+    """Check secret gates for on-screen characters against relationship/intoxication.
+    PATCH-32 FIX-6: Includes Ner and Sally gates.
+    """
     secret_notes = []
-    rels = s.get("relationships", {})
+    rels = session_state.get("relationships", {})
+    on_screen = session_state.get("on_screen", [])
+    core4 = session_state.get("core4", {})
+    intox_val = core4.get("intoxication", {}).get("value", 0) if isinstance(core4.get("intoxication"), dict) else 0
+
     for ch in on_screen:
         if ch not in HIDDEN_LORE_RULES:
             continue
         rule = HIDDEN_LORE_RULES[ch]
         rel = rels.get(ch, {})
         stage = calculate_relationship_stage(rel) if rel else 1
-        if stage >= 4:
+
+        # Parse reveal_condition — evaluate OR conditions together
+        condition = rule.get("reveal_condition", "")
+        can_hint = False
+        can_reveal = False
+
+        # Check stage-based conditions
+        stage_allows_reveal = (
+            ("relationship_stage >= 4" in condition and stage >= 4) or
+            ("specific_story_trigger" in condition and stage >= 4)
+        )
+        stage_allows_hint = (
+            "relationship_stage >= 3" in condition and stage >= 3
+        )
+        # Check intoxication condition
+        intox_allows = (
+            "intoxication >= 40" in condition and intox_val >= 40
+        )
+
+        # OR logic: any satisfied condition grants the appropriate level
+        if stage_allows_reveal:
+            can_reveal = True
+        if stage_allows_hint or intox_allows:
+            can_hint = True
+
+        if can_reveal:
             secret_notes.append(
-                f"{ch}: 관계{stage}(특별). 감정적 계기가 오면 숨겨온 과거를 고백할 수 있다."
+                f"[{ch} 비밀 게이트: OPEN] 관계{stage}, 취기{intox_val}. "
+                f"감정적 계기가 오면 비밀을 고백할 수 있다. {rule['ai_behavior_note']}"
             )
-        elif stage >= 3:
+        elif can_hint:
             secret_notes.append(
-                f"{ch}: 관계{stage}(신뢰). 과거의 조각을 은연중에 흘려도 좋다."
+                f"[{ch} 비밀 게이트: HINT] 관계{stage}, 취기{intox_val}. "
+                f"간접적 힌트만 허용. {rule['ai_behavior_note']}"
             )
-        elif stage >= 2 and turn >= 15:
+        else:
             secret_notes.append(
-                f"{ch}: 관계{stage}, {turn}턴경과. 미세한 단서를 가끔 끼워넣어라."
+                f"[{ch} 비밀 게이트: LOCKED] 관계{stage}, 취기{intox_val}. "
+                f"비밀 관련 언급/힌트 일체 금지."
             )
-    secret_gate = "\n".join(secret_notes) if secret_notes else "캐릭터의 일상적 매력에 집중."
-    
-    # ── 유저 입력 분석 ──
+
+    if not secret_notes:
+        return "[비밀 게이트] 등장 캐릭터 중 비밀 보유자 없음. 일상적 매력에 집중.\n"
+    return "\n".join(secret_notes) + "\n"
+
+
+def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
+    """The FINAL directive block, placed immediately before user input.
+
+    PATCH-32: Gemini's recency bias means this block has the highest compliance.
+    ALL hard rules go here. director_brief contains only soft context.
+    """
+    parts = []
+    turn = s.get("turn_number", 0) or len(s.get("turns", []))
+    loc = s.get("current_location", DEFAULT_LOCATION)
+    turns_here = s.get("turns_at_current_location", 0)
+    player_name = s.get("player_name", "사용자")
+
+    # 1. Movement gate (highest priority) — PATCH-32 FIX-1
+    parts.append(build_movement_gate_clause(turns_here, user_input))
+
+    # 2. Scene note (location clarification)
+    scene_note = s.get("_scene_note", "")
+    if scene_note:
+        parts.append(f"[장면 설정] {scene_note}\n")
+
+    # 3. Ensemble casting call — PATCH-32 FIX-3
+    casting_lines = []
+    for char in on_screen:
+        if char == player_name:
+            continue
+        constraint = _get_ensemble_constraint(char)
+        if constraint:
+            casting_lines.append(f"  {char}: {constraint.strip()}")
+    if casting_lines:
+        parts.append("[캐스팅]\n" + "\n".join(casting_lines) + "\n")
+
+    # 4. Object continuity — PATCH-32 FIX-4
+    recent_turns = s.get("turns", [])[-5:]
+    parts.append(_build_object_continuity_block(recent_turns))
+
+    # 5. Anti-repetition — PATCH-32 FIX-5 (expanded 3-turn window)
+    parts.append(build_anti_repetition_context(s, on_screen))
+
+    # 6. Secret gates — PATCH-32 FIX-6
+    parts.append(_check_secret_gates(s))
+
+    # 7. Player agency guard (abbreviated reminder)
+    parts.append(
+        f"[플레이어 보호] {player_name}의 대사·행동·감정을 쓰지 마라. "
+        f"{player_name}은 외부 조작자이다.\n"
+    )
+
+    # 8. Narrative quality directive
+    parts.append(
+        "[서사 품질]\n"
+        "- 장소를 반복 언급하지 마라. 한 턴에 장소명은 최대 1회.\n"
+        "- 나레이션은 감각(시각, 청각, 후각, 촉각) 중 1~2가지를 포함하라.\n"
+        "- 대화가 나레이션보다 많아야 한다. 비율 대화:나레이션 ≈ 7:3.\n"
+        "- 각 캐릭터의 대사는 직전 대사의 내용을 받아서 이어가라 (yes-and).\n"
+        "- 무의미한 리액션(웃음, 고개 끄덕임)만으로 턴을 채우지 마라.\n"
+    )
+
+    # ── 유저 입력 분석 (preserved from existing logic) ──
     input_len = len(user_input.strip())
     has_q = any(q in user_input for q in ["?", "？", "뭐", "왜", "어디", "누구", "어떻게", "언제", "진짜"])
     has_action = "*" in user_input or any(a in user_input for a in ["한다", "했다", "간다", "본다", "잡다", "열다", "마신다", "먹는다"])
     has_emotion = any(e in user_input for e in ["웃", "울", "화", "슬", "기쁘", "무서", "부끄", "짜증", "ㅋㅋ", "ㅎㅎ", "ㅠ"])
-    
+
     user_guide = []
     if has_q:
         user_guide.append("질문 포함 → NPC 중 누군가가 반드시 대답")
@@ -3601,66 +3752,66 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
         user_guide.append("짧은 입력 → NPC 반응도 가볍고 간결하게. 과도한 전개 금지")
     if not user_guide:
         user_guide.append("자연스럽게 반응하라")
-    
+
     user_mirror = f"유저({player_name})의 입력: \"{user_input[:200]}\"\n"
     user_mirror += "필수반응: " + " / ".join(user_guide)
+    parts.append(f"[유저의 말이 이 씬의 중심이다]\n{user_mirror}\n유저의 입력을 무시하고 NPC끼리만 대화하는 것은 금지.\n")
 
-    # ── PATCH-30: Scene object tracking ──
-    scene_objects = set()
+    # ── 발화 균형 (preserved) ──
     history = s.get("history", []) or s.get("turns", [])
+    speaker_counts = {}
     for h in history[-3:]:
         for block in h.get("script", []):
-            content = block.get("content", "")
-            if block.get("type") == "narration":
-                for obj in TRACKABLE_SCENE_OBJECTS:
-                    if obj in content:
-                        scene_objects.add(obj)
+            if block.get("type") == "dialogue":
+                ch = block.get("character", "")
+                speaker_counts[ch] = speaker_counts.get(ch, 0) + 1
+    total_lines = sum(speaker_counts.values()) or 1
 
-    # PATCH-31: Strengthened scene object tracking
-    scene_objects_note = "[소품 관리]\n"
-    if scene_objects:
-        scene_objects_note += f"씬에 이미 등장한 소품: {', '.join(scene_objects)}\n"
-    scene_objects_note += (
-        "⛔ 이전 나레이션에서 등장하지 않은 소지품(가방, 병, 핸드폰, 우산 등)은 "
-        "갑자기 사용할 수 없다. 새 소품이 필요하면 먼저 나레이션에서 "
-        "'가지고 온 것'으로 자연스럽게 설정한 후 사용하라."
+    balance_parts = []
+    for ch in on_screen:
+        if ch == player_name:
+            continue
+        count = speaker_counts.get(ch, 0)
+        role = ENSEMBLE_ROLES.get(ch, {})
+        budget = role.get("voice_budget", "medium")
+        ratio_pct = int(count * 100 / total_lines) if total_lines else 0
+        balance_parts.append(f"  {ch}({role.get('function','?')}): {count}회({ratio_pct}%) [예산:{budget}]")
+
+    balance_warning = ""
+    if speaker_counts:
+        dominant = max(speaker_counts, key=speaker_counts.get)
+        if speaker_counts[dominant] / total_lines > 0.45:
+            quiet = [c for c in on_screen if c != player_name and speaker_counts.get(c, 0) <= 1]
+            balance_warning = (
+                f"\n⚠️ {dominant}가 최근 대화를 지배하고 있다. "
+                f"{', '.join(quiet) if quiet else '다른 캐릭터들'}의 반응을 우선 보여줘라. "
+                f"{dominant}는 이번 턴에서 관찰/리액션 위주로."
+            )
+
+    if balance_parts:
+        parts.append(
+            "[앙상블 발화 분포]\n"
+            "최근 3턴:\n" + chr(10).join(balance_parts) + balance_warning + "\n"
+        )
+
+    # ── 리듬 (preserved) ──
+    if turn <= 3:
+        rhythm = "초반이다. 서로를 알아가는 여유. 급할 필요 없다."
+    elif turn <= 10:
+        rhythm = "자리 잡는 단계. 유저와 캐릭터 사이에 작은 감정적 순간을 만들어라."
+    elif turn <= 20:
+        rhythm = "중반. 캐릭터의 다른 면모, 관계 변화, 의외의 반응이 나올 시기."
+    else:
+        rhythm = "장기 세션. 유저가 몰입했다. 더 깊은 감정, 더 진한 비밀 조각을 선물하라."
+    parts.append(f"[리듬] {rhythm}\n")
+
+    # Improvisation rule (abbreviated)
+    parts.append(
+        "[즉흥 창작] 캐릭터는 DB 설정과 모순되지 않는 범위에서 새로운 에피소드를 창작할 수 있다. "
+        "단, sacred_secrets 직접 공개와 다른 캐릭터의 core identity 변경은 금지.\n"
     )
 
-    # ── 조합 ──
-    return f"""### 감독의 본능 (DIRECTOR'S INSTINCT) ###
-
-[유저의 말이 이 씬의 중심이다]
-{user_mirror}
-유저의 입력을 무시하고 NPC끼리만 대화하는 것은 금지.
-
-[장소는 무대다 — 무대는 쉽게 바꾸지 않는다]
-{loc_block}
-{location_feel}
-
-[앙상블 캐스트 — 각자의 "존재 방식"이 다르다]
-최근 3턴 발화 분포:
-{chr(10).join(balance_parts)}
-{balance_warning}
-
-각 캐릭터는 자신의 역할(function)과 발화 예산(voice_budget)에 맞게 존재한다.
-"관찰자(observer)"는 주로 지켜보며 결정적 순간에만 개입한다 — 매턴 질문하거나 게임을 주도하지 않는다.
-"도발자(provocateur)"는 대담한 발언과 직설적 언행으로 분위기를 자극한다.
-"수수께끼(enigma)"는 침묵이 존재감이다. 한마디가 나오면 그것이 핵심이다.
-내향적 캐릭터도 표정, 시선, 작은 동작으로 살아 있음을 보여준다.
-
-[리듬을 느껴라]
-{rhythm}
-매 턴이 "사건"일 필요 없다. 조용한 순간, 눈 마주침, 침묵이 더 강렬할 때가 있다.
-
-[비밀은 냄새처럼 — 서서히, 자연스럽게]
-{secret_gate}
-
-[소품 관리]
-{scene_objects_note}
-
-[즉흥 창작]
-{IMPROVISATION_RULE}
-"""
+    return "### 연출자의 직감 (최우선 규칙) ###\n" + "\n".join(p for p in parts if p)
 
 
 def build_dima_prompt(s: dict, user_input: str) -> tuple:
