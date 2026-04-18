@@ -809,10 +809,10 @@
                      || STATE?.world?.space?.current_location
                      || '라운지';
             const sceneNote = STATE?._scene_note || '';
-            // PATCH-31: If scene_note exists, show its first sentence instead of raw location name
+            // PATCH-31/32: If scene_note exists, show its first sentence instead of raw location name
             const displayText = sceneNote ? sceneNote.split('.')[0].trim() : loc;
             locationDisplay.textContent = displayText || loc;
-            locationDisplay.title = loc;  // Full location name as tooltip
+            locationDisplay.title = sceneNote || loc;  // PATCH-32: Full scene_note on hover
             if (displayText) {
                 locationDisplay.style.display = '';
             } else {
@@ -1018,11 +1018,11 @@
                 if (locBadge) {
                   const prevLoc = locBadge.title || locBadge.textContent;
                   const newLoc = turnResponse.current_location;
-                  // PATCH-31: Use scene_note for display if available
+                  // PATCH-31/32: Use scene_note for display if available
                   const sNote = turnResponse.scene_note || '';
                   const displayLoc = sNote ? sNote.split('.')[0].trim() : newLoc;
                   locBadge.textContent = displayLoc;
-                  locBadge.title = newLoc;
+                  locBadge.title = sNote || newLoc;  // PATCH-32: Full scene_note on hover
                   locBadge.style.display = '';
                   if (prevLoc && prevLoc !== newLoc) {
                     locBadge.classList.add('transitioning');
