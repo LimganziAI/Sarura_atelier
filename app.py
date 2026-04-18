@@ -1195,8 +1195,10 @@ def init_session(session_id: Optional[str] = None) -> dict:
             "confidence_score": 0,
             "last_analyzed_turn": 0,
         },
-        # PATCH-25: 캐릭터별 개별 위치 추적
-        "character_locations": {},
+        # PATCH-26: 캐릭터별 개별 위치 추적 (default_character_locations로 초기화)
+        "character_locations": copy.deepcopy(
+            WORLD_DB.get("default_character_locations", {})
+        ),
         # ── PATCH-26: Spatial tracking ──
         "current_location": DEFAULT_LOCATION,
         "previous_location": None,
@@ -1207,10 +1209,6 @@ def init_session(session_id: Optional[str] = None) -> dict:
         "_suggestion_global_last": 0,
         "_recent_narration_openings": [],  # 최근 나레이션 시작 문구
     }
-    # ── PATCH-26: Deep-copy default character locations ──
-    s["character_locations"] = copy.deepcopy(
-        WORLD_DB.get("default_character_locations", {})
-    )
     # ── PATCH-26: Player profile (extended) ──
     s["player_profile"]["estimated_preferences"] = []
     s["player_profile"]["interaction_style"] = "unknown"
@@ -1267,8 +1265,9 @@ def _migrate_session(s: dict) -> dict:
     # PATCH-26 migration
     s.setdefault("current_location", DEFAULT_LOCATION)
     s.setdefault("previous_location", None)
-    s.setdefault("character_locations",
-                 copy.deepcopy(WORLD_DB.get("default_character_locations", {})))
+    if "character_locations" not in s:
+        s["character_locations"] = copy.deepcopy(
+            WORLD_DB.get("default_character_locations", {}))
     s.setdefault("move_events", [])
     s.setdefault("_departure_tracker", {})
     s.setdefault("player_profile", {
@@ -3412,11 +3411,14 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     if anti_rep_context:
         director_brief += "\n\n" + anti_rep_context
 
-    # PATCH-25: 이동 이벤트 주입
-    move_events = s.pop("_location_move_events", [])
-    if move_events:
+    # PATCH-26: 이동 이벤트 주입 (move_events from session)
+    move_events = s.get("move_events", [])[-5:]  # 최근 5건
+    # Also consume legacy _location_move_events if any
+    legacy_events = s.pop("_location_move_events", [])
+    all_move_events = legacy_events + move_events
+    if all_move_events:
         mv_lines = ["# [이번 턴 위치 변경 이벤트]"]
-        for ev in move_events:
+        for ev in all_move_events:
             char = ev["character"]
             fr = ev["from"]
             to = ev["to"]
