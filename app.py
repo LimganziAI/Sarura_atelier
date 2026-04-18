@@ -108,6 +108,15 @@ COMPLETED_MOVE_PATTERNS = [
     re.compile(r'발걸음을\s*옮긴다'),
 ]
 
+# ─── PATCH-34: Post-processing constants ──────────────────────
+VOICE_BUDGET_MAX_BLOCKS = {"minimal": 1, "short": 1, "medium": 2, "long": 4}
+MOVEMENT_BLOCKING_KEYWORDS = [
+    "나가자", "가자", "이동", "옮기", "출발", "따라와",
+    "카페를 나서", "밖으로", "문을 열고 나"
+]
+MOVEMENT_NARRATION_VERBS = re.compile(r'(?:나서|나가|이동|옮기|출발|떠나)')
+MOVEMENT_DIALOGUE_VERBS = re.compile(r'(?:가자|가볼까|이동|나가자|따라와)')
+
 # Event seed injection guards
 EVENT_SEED_MIN_TURNS = 15        # 이벤트 시드 주입에 필요한 최소 턴 수
 EVENT_SEED_LOCATION = "기숙사"   # 이벤트 시드가 발동 가능한 장소 키워드
@@ -4553,7 +4562,7 @@ def post_process_script(script: list, s: dict) -> list:
             ch = block.get("character", "")
             role = ENSEMBLE_ROLES.get(ch, {})
             budget = role.get("voice_budget", "medium")
-            max_blocks = {"minimal": 1, "short": 1, "medium": 2, "long": 4}.get(budget, 2)
+            max_blocks = VOICE_BUDGET_MAX_BLOCKS.get(budget, 2)
             used = char_used.get(ch, 0)
             if used >= max_blocks:
                 # Convert excess dialogue to narration observation
@@ -4582,21 +4591,21 @@ def post_process_script(script: list, s: dict) -> list:
     current_input = s.get("_current_user_input", "") if isinstance(s, dict) else ""
     user_wants_move = _user_requests_move(current_input) if current_input else False
     if turns_here < MOVEMENT_GATE_TURNS and not user_wants_move:
-        move_keywords = ["나가자", "가자", "이동", "옮기", "출발", "따라와",
-                         "카페를 나서", "밖으로", "문을 열고 나"]
         for block in processed:
             content = block.get("content", "")
-            if any(kw in content for kw in move_keywords):
+            if any(kw in content for kw in MOVEMENT_BLOCKING_KEYWORDS):
                 if block.get("type") == "narration":
-                    block["content"] = re.sub(
-                        r'[^.]*(?:나서|나가|이동|옮기|출발|떠나)[^.]*\.',
-                        '', content
-                    ).strip() or "(장면이 계속된다.)"
+                    # Split on sentence boundaries and filter out movement sentences
+                    sentences = content.split('.')
+                    kept = [s_part for s_part in sentences
+                            if not MOVEMENT_NARRATION_VERBS.search(s_part)]
+                    block["content"] = '.'.join(kept).strip() or "(장면이 계속된다.)"
                 elif block.get("type") == "dialogue":
-                    block["content"] = re.sub(
-                        r'[^,]*(?:가자|가볼까|이동|나가자|따라와)[^,]*[,.]?',
-                        '', content
-                    ).strip()
+                    # Split on clause boundaries and filter out movement clauses
+                    clauses = re.split(r'[,.]', content)
+                    kept = [c_part for c_part in clauses
+                            if not MOVEMENT_DIALOGUE_VERBS.search(c_part)]
+                    block["content"] = ', '.join(c_part.strip() for c_part in kept if c_part.strip())
                     if not block["content"]:
                         block["content"] = "(고개를 끄덕이며 미소 짓는다.)"
 
