@@ -3311,24 +3311,44 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
         if event_hint:
             parts.append(event_hint)
 
-    # Pulse System injection
+    # PATCH-33 FIX-1: Pulse System injection — movement suggestion gated
+    turns_here = s.get("turns_at_current_location", 0) if s else 0
+    movement_allowed_in_pulse = turns_here >= MOVEMENT_GATE_TURNS
+
     if pulse_result:
         if pulse_result["mode"] == "PROACTIVE":
+            if movement_allowed_in_pulse:
+                option1 = "1. 캐릭터가 자발적 행동(새 주제 제시, 감정 고백, 장소 이동 제안)을 합니다."
+            else:
+                option1 = ("1. 캐릭터가 자발적 행동(새 주제 제시, 감정 고백, 현재 장소 "
+                           "내 활동 제안)을 합니다. ⛔ 장소 이동 제안 절대 금지.")
             parts.append(
                 "\n=== 🔴 PROACTIVE 모드 (유저 수동 감지) ===\n"
                 "현재 유저가 짧은 입력, 감정 정체, 같은 장소 반복 등 수동적 패턴을 보이고 있습니다.\n"
                 "이번 턴에서 캐릭터가 반드시 다음 중 하나를 실행하세요:\n"
-                "1. 캐릭터가 자발적 행동(새 주제 제시, 감정 고백, 장소 이동 제안)을 합니다.\n"
+                f"{option1}\n"
                 "2. 환경 이벤트(소리, 날씨 변화, 제3자 등장)를 서술에 포함합니다.\n"
                 "3. 캐릭터가 플레이어에게 구체적 선택지(A 또는 B)를 제시합니다.\n"
                 f"힌트: {pulse_result['suggestion']}\n"
                 "중요: 유저의 기존 맥락과 자연스럽게 연결하세요. 갑작스럽거나 비현실적이면 안 됩니다."
             )
         elif pulse_result["mode"] == "NUDGE":
+            nudge_char = pulse_result.get("nudge_char", "캐릭터")
+            if movement_allowed_in_pulse:
+                nudge_text = (
+                    f"유저가 약간 수동적입니다. {nudge_char}이(가) 자연스럽게 다음 행동이나 장소 이동을 "
+                    "제안합니다.\n"
+                    f"예: \"그나저나 오늘 시장에 새로운 가게가 생겼다던데... 같이 가볼래?\" 같은 제안.\n"
+                )
+            else:
+                nudge_text = (
+                    f"유저가 약간 수동적입니다. {nudge_char}이(가) 현재 장소 안에서 새로운 화제나 활동을 "
+                    "제안합니다. ⛔ 장소 이동 제안은 절대 금지.\n"
+                    "예: \"그나저나 이 메뉴 한번 시켜볼까?\" 같은 현재 장소 내 제안.\n"
+                )
             parts.append(
                 "\n=== 🟡 NUDGE 모드 (약한 수동 신호) ===\n"
-                "유저가 약간 수동적입니다. 캐릭터의 대사나 행동에 다음 행동을 자연스럽게 유도하는 요소를 한 가지 넣으세요.\n"
-                "예: \"그나저나 오늘 시장에 새로운 가게가 생겼다던데... 같이 가볼래?\" 같은 제안.\n"
+                f"{nudge_text}"
                 f"힌트: {pulse_result['suggestion']}"
             )
         # REACTIVE: nothing added — respect user direction
@@ -3512,15 +3532,33 @@ def build_adaptive_char_brief(char_name: str, rel_data: dict, turn: int,
 
 # ─── PATCH-32: Movement request detection & gate clause ─────────────────────
 def _user_requests_move(user_input: str) -> bool:
-    """Detect explicit user request for location change. PATCH-32: expanded patterns."""
-    move_patterns = [
-        "이동하자", "가자", "갈까", "가볼까", "옮기자", "나가자",
-        "다른 곳", "장소를 바꿔", "장소 변경", "어디로", "로 가",
-        "로 이동", "에 가자", "출발", "이동", "떠나", "나가",
-        "옮기", "돌아가", "가실까", "안내"
-    ]
+    """Detect explicit user request for location change.
+    PATCH-33: Pattern-based detection requiring PLAYER as agent of movement.
+    Excludes honorific questions and agreement/consent (false positives).
+    """
     text = user_input.strip()
-    return any(p in text for p in move_patterns)
+    if not text:
+        return False
+
+    # Exclude patterns: questions about others' preferences, honorific questions, agreement
+    exclude_patterns = [
+        r'(?:하실|하시|하실까|갈까요|이동하실|하시겠)',  # honorific questions
+        r'(?:좋아요|좋지|괜찮)',  # agreement/consent
+    ]
+    for ep in exclude_patterns:
+        if re.search(ep, text):
+            return False
+
+    # Require imperative/volitional forms where PLAYER is the agent
+    explicit_patterns = [
+        r'(?:에|로|까지)\s*(?:가자|갈래|가볼까|갑시다|가요)',
+        r'(?:으?로|에)\s*이동하자',
+        r'장소를?\s*(?:바꾸|옮기|변경)',
+        r'다른\s*(?:곳|장소|데)(?:로|에)\s*(?:가|옮기)',
+        r'여기서?\s*(?:나가|떠나)',
+        r'(?:출발|이동)\s*(?:하자|할까|합시다)',
+    ]
+    return any(re.search(p, text) for p in explicit_patterns)
 
 
 def build_movement_gate_clause(turns_here: int, user_input: str) -> str:
@@ -5254,6 +5292,9 @@ def bootstrap():
     # PATCH-27: Scene Zero — 첫 턴 장면 설정 추출
     run_scene_zero(seed_text, s, final_cast)
 
+    # PATCH-33 FIX-9: Bootstrap starts at turn 1 (not 0)
+    s["turns_at_current_location"] = 1
+
     # Generate first turn
     _pulse = None
     _bootstrap_response = None
@@ -5302,7 +5343,8 @@ def bootstrap():
             "personal_colors": PERSONAL_COLORS,
             "pulse": _build_pulse_payload(_pulse, s),
             "current_location": s.get("current_location", DEFAULT_LOCATION),
-            "character_locations": s.get("character_locations", {})}
+            "character_locations": s.get("character_locations", {}),
+            "scene_note": s.get("_scene_note", "")}
     return jsonify(resp)
 
 
