@@ -376,6 +376,27 @@ def _build_location_aliases() -> Dict[str, str]:
 LOCATION_ALIASES: Dict[str, str] = _build_location_aliases()
 logger.info(f"Location alias map built: {len(LOCATION_ALIASES)} entries")
 
+# ─── PATCH-30: Location Semantic Overrides ────────────────────
+# When a user says "카페" but the canonical name is "카페 거리",
+# the scene note clarifies that the scene is INSIDE the cafe.
+LOCATION_SEMANTIC_OVERRIDES: Dict[str, Dict[str, str]] = {
+    "카페": {
+        "canonical": "카페 거리",
+        "scene_note": "카페 거리에 위치한 아늑한 카페 실내. 테이블, 의자, 커피 향, 에어컨 바람. '카페 거리'라는 이름이지만 장면은 카페 내부다."
+    },
+    "술집": {
+        "canonical": "뒷골목의 선술집 '녹슨 톱니바퀴'",
+        "scene_note": "선술집 내부. 나무 테이블, 흐린 조명, 맥주 거품, 웅성거리는 대화."
+    },
+    "맥주집": {
+        "canonical": "뒷골목의 선술집 '녹슨 톱니바퀴'",
+        "scene_note": "수제 맥주가 있는 분위기 좋은 술집 내부."
+    },
+}
+
+# ─── PATCH-30: Trackable scene objects for prop continuity ────
+TRACKABLE_SCENE_OBJECTS = ["가방", "컵", "잔", "우산", "명함", "핸드폰", "책"]
+
 # ─── PATCH-27: Scene Zero (첫 턴 장면 설정 추출) ────────────
 SCENE_ZERO_SCHEMA = {
     "type": "object",
@@ -1815,12 +1836,24 @@ def run_scene_zero(seed_text: str, s: dict, on_screen: list):
     if location:
         # DB에 있는 장소인지 확인
         canonical = LOCATION_ALIASES.get(location)
-        if canonical:
+
+        # PATCH-30: Semantic override — e.g. "카페" → canonical "카페 거리" + scene_note for indoor
+        # The override applies when: the keyword is in user text AND
+        # either no canonical alias exists, or the canonical alias matches the override's target.
+        for keyword, override in LOCATION_SEMANTIC_OVERRIDES.items():
+            if keyword in seed_text:
+                if canonical is None or canonical == override["canonical"]:
+                    location = override["canonical"]
+                    scene_zero["_scene_note"] = override["scene_note"]
+                    break
+
+        if canonical and "_scene_note" not in scene_zero:
             location = canonical
-            scene_zero["is_custom_location"] = False
+        scene_zero["is_custom_location"] = not bool(LOCATION_ALIASES.get(location))
 
         s["current_location"] = location
         s["world"]["space"]["current_location"] = location
+        s["_scene_note"] = scene_zero.get("_scene_note", "")
 
         # 온스크린 캐릭터 위치 동기화
         player_name = s.get("player_name", "사용자")
@@ -1829,7 +1862,8 @@ def run_scene_zero(seed_text: str, s: dict, on_screen: list):
             s["character_locations"][char] = location
 
         logger.info(f"[Scene Zero] Location set: {location} "
-                    f"(custom={scene_zero.get('is_custom_location', False)})")
+                    f"(custom={scene_zero.get('is_custom_location', False)}, "
+                    f"scene_note={scene_zero.get('_scene_note', '')})")
 
     # 3-b) 시간대
     time_of_day = scene_zero.get("time_of_day")
@@ -2042,6 +2076,25 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
                     lines.append(
                         f"[{char}] 직전 대사 시작: '{first_word}...' → "
                         f"이번 턴 동일 시작 금지")
+
+    # 6) PATCH-30: Anti-semantic-repetition — 직전 턴의 "행동 종류" 반복 금지
+    if recent_turns:
+        last_turn = recent_turns[-1]
+        last_actions = []
+        for block in last_turn.get("script", []):
+            if block.get("type") == "dialogue":
+                content = block.get("content", "")[:60]
+                if any(kw in content for kw in ["가자", "갈래", "이동", "가볼까", "나가", "출발"]):
+                    last_actions.append(f"이동 제안: {content[:40]}")
+                elif any(kw in content for kw in ["뭐 할래", "어떻게", "어디 가"]):
+                    last_actions.append(f"방향 질문: {content[:40]}")
+
+        if last_actions:
+            lines.append(
+                f"⚠️ 직전 턴에서 이미 발생한 행동: {'; '.join(last_actions)}. "
+                f"이번 턴에서 같은 종류의 행동을 반복하면 안 된다. "
+                f"이동을 이미 제안했으면 이번 턴에서 실제로 이동하거나 대화를 계속하라."
+            )
 
     return "\n".join(lines) if lines else ""
 
@@ -2685,10 +2738,14 @@ def build_character_block_for_prompt(
 # V5.0: Adaptive System Instruction Builder (replaces build_system_instruction_for_scene)
 # =========================================================================
 def build_adaptive_instruction(s: dict) -> str:
-    """V5.0 adaptive system instruction builder.
+    """V5.0 adaptive system instruction builder (PATCH-30: restructured).
 
     Assembles prompt based on play_style, turn count, and session state.
     Designed for Gemini implicit caching: keeps prefix stable across turns.
+
+    TIER 1 (TOP — highest attention): Agency guard, Golden Rules, Core Rules, Output Format, Emotion Whitelist
+    TIER 2 (MIDDLE — moderate attention): Character cast list, Relationships, CORE-4, Memory
+    TIER 3 (BOTTOM — lower attention): Genre/style, Analyzer cache, Maestro overrides
     """
     parts = []
     turn_count = len(s.get("turns", []))
@@ -2698,16 +2755,72 @@ def build_adaptive_instruction(s: dict) -> str:
     player = get_player_name(s)
     ui = s.get("ui_settings", {})
 
-    # ── BLOCK 1: Safety + Role (FIXED prefix for cache hit) ──
+    # ══════════════════════════════════════════════════════════════
+    # TIER 1 (TOP — highest LLM attention)
+    # ══════════════════════════════════════════════════════════════
+
+    # ── Safety + Role ──
     parts.append(SAFETY_PREAMBLE)
-    parts.append(EUGENE_FILTER_RULE)
     parts.append(
         "당신은 D.I.M.A(Director-level Interactive Multi-character Actor)입니다. "
         "사용자의 입력에 반응하여 등장 캐릭터들의 대사·행동·나레이션을 script JSON으로 출력합니다. "
         "모든 캐릭터는 성인(20세 이상)입니다."
     )
 
-    # ── BLOCK 2: Player + UI settings ──
+    # ── PLAYER AGENCY GUARD (always at top) ──
+    if turn_count <= 1:
+        parts.append(PLAYER_AGENCY_GUARD.format(player_name=player))
+    else:
+        parts.append(
+            f"[PLAYER GUARD] {player}의 대사/감정/행동을 절대 쓰지 마라. "
+            f"NPC 시점의 관찰로만 표현."
+        )
+
+    # ── GOLDEN RULE 0: 유저 입력 절대 우선 ──
+    parts.append(
+        "[GOLDEN RULE 0: 유저 입력 절대 우선] "
+        "유저의 메시지에 장소, 상황, 시간, 인물 관계 등의 설정이 포함되어 있으면, "
+        "그것이 세계관 DB의 기본 장소보다 절대적으로 우선합니다. "
+        "유저가 장소를 지정하지 않은 경우에만 세계관 DB의 기본 장소를 사용하세요."
+    )
+
+    # ── GOLDEN RULE 1: 플레이어 내면 불가침 ──
+    parts.append(
+        "[GOLDEN RULE 1: 플레이어 내면 불가침] "
+        "나레이션은 '카메라 렌즈'. "
+        "서술 가능: ✅ 환경 묘사, NPC의 외적 행동, 사물의 상태. "
+        "서술 금지: ❌ 플레이어의 감정/생각/시선/신체 반응/판단."
+    )
+
+    # ── CORE BEHAVIORAL RULES ──
+    parts.append(
+        "[CORE RULES] "
+        "1. ALIVE: 캐릭터는 자기 욕구대로 먼저 행동한다. 유저를 기다리지 않는다. "
+        "2캐릭터 이상: 같은 반응 금지. NPC끼리 최소 1회 교류. "
+        "2. EPISODE: 감각묘사(2문장) → 대화(자유롭게) → 열린 결말. "
+        "3. VOICE: catchphrase_budget 준수. 같은 시작어 2턴 연속 금지. "
+        "4. PLAYER SANCTUARY: 플레이어 감정/생각 절대 서술 금지. "
+        "5. DRIVE: [캐릭터별 행동 지시]가 있으면 반드시 수행."
+    )
+
+    # ── Output format + Emotion whitelist ──
+    parts.append(
+        f"[EMOTION WHITELIST] {', '.join(SUPPORTED_EMOTIONS)}\n"
+        "emotion 필드는 반드시 위 목록에서만 선택하세요."
+    )
+    parts.append(
+        '[출력 형식] JSON: {"script": [{"type":"narration"|"dialogue"|"monologue", '
+        '"content":"텍스트", "character":"캐릭터명", "emotion":"감정태그", '
+        '"emotion_intensity":1~10, "monologue":"내면독백(선택)"}]}\n'
+        "- emotion_intensity: 1~10 변동. 항상 5 금지.\n"
+        "- monologue: dialogue 안에 넣기. 대사와 다른 숨은 감정 필수."
+    )
+
+    # ══════════════════════════════════════════════════════════════
+    # TIER 2 (MIDDLE — moderate attention)
+    # ══════════════════════════════════════════════════════════════
+
+    # ── Player + UI settings ──
     pov = "1인칭(나)" if ui.get("pov_first_person") else "3인칭"
     parts.append(
         f"[설정] 플레이어: {player} | 시점: {pov} | "
@@ -2716,18 +2829,10 @@ def build_adaptive_instruction(s: dict) -> str:
         f"묘사밀도: {ui.get('description_focus', 5)}/10"
     )
 
-    # ── BLOCK 3: Character deep profiles (from characters_db.json) ──
-    sess_rels = s.get("relationships", {})
-    for cname in on_screen:
-        if cname == player:
-            continue
-        block = build_character_block_for_prompt(
-            cname, on_screen, player, sess_rels,
-            turn_count=turn_count,
-            core4=s.get("core4"),
-        )
-        if block:
-            parts.append(block)
+    # ── Character cast list (briefs are in user prompt only — PATCH-30 dedup) ──
+    parts.append(f"[등장인물] {', '.join(on_screen)}")
+
+    parts.append(EUGENE_FILTER_RULE)
 
     # ── BLOCK 3.5: Age hierarchy & honorific rules ──
     AGE_HIERARCHY_RULE = """
@@ -2860,25 +2965,11 @@ def build_adaptive_instruction(s: dict) -> str:
     if mo.get("world_inject"):
         parts.append(f"[세계관 추가] {mo['world_inject']}")
 
-    # ── BLOCK 8.5: PLAYER AGENCY GUARD (강화판) ──
-    if turn_count <= 1:
-        parts.append(PLAYER_AGENCY_GUARD.format(player_name=player))
-    else:
-        parts.append(
-            f"[PLAYER GUARD] {player}의 대사/감정/행동을 절대 쓰지 마라. "
-            f"NPC 시점의 관찰로만 표현."
-        )
+    # ══════════════════════════════════════════════════════════════
+    # TIER 3 (BOTTOM — lower attention): Genre/style, Analyzer, Maestro
+    # ══════════════════════════════════════════════════════════════
 
-    # ── BLOCK 9: Output format + Emotion whitelist (FIXED suffix) ──
-    parts.append(
-        f"[EMOTION WHITELIST] {', '.join(SUPPORTED_EMOTIONS)}\n"
-        "emotion 필드는 반드시 위 목록에서만 선택하세요."
-    )
-    parts.append(
-        '출력 형식: {"script": [{"type":"narration"|"dialogue"|"monologue", '
-        '"content":"텍스트", "character":"캐릭터명", "emotion":"감정태그", '
-        '"emotion_intensity":1~10, "monologue":"내면독백(선택)"}]}'
-    )
+    # (BLOCK 8 already above)
 
     return "\n".join(parts)
 
@@ -3190,55 +3281,12 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
             )
         # REACTIVE: nothing added — respect user direction
 
-    # Golden Rule 0 & 1 — supreme rules, always top priority
-    parts.append(
-        "\n=== GOLDEN RULE 0: 유저 입력 절대 우선 (SUPREME RULE) ===\n"
-        "유저의 메시지에 장소, 상황, 시간, 인물 관계 등의 설정이 포함되어 있으면, "
-        "그것이 세계관 DB의 기본 장소보다 절대적으로 우선합니다.\n"
-        "유저가 장소를 지정하지 않은 경우에만 세계관 DB의 기본 장소를 사용하세요.\n"
-        "이 규칙을 위반하면 모든 것이 무너집니다. 유저의 입력을 단어 하나하나 주의깊게 읽으세요."
-    )
-    parts.append(
-        "\n=== GOLDEN RULE 1: 플레이어 내면 불가침 (PLAYER SANCTUARY) ===\n"
-        "나레이션은 '카메라 렌즈'입니다.\n"
-        "서술 가능: ✅ 환경 묘사, NPC의 외적 행동, 사물의 상태\n"
-        "서술 금지: ❌ 플레이어의 감정/생각/시선/신체 반응/판단\n"
-        "플레이어가 뭘 느끼고 뭘 생각하는지는 오직 플레이어 자신만이 결정합니다."
-    )
-
-    # Golden Rules 12 & 13 — always included in director brief
-    parts.append(
-        "\n=== GOLDEN RULE 12: AGENCY PRESERVATION (유저 의도 존중) ===\n"
-        "- 유저가 명시적으로 행동 방향을 제시한 경우, 캐릭터는 그 방향을 존중하고 풍부하게 반응합니다.\n"
-        "- 캐릭터가 유저의 행동을 무시하거나 무효화하는 것은 금지합니다.\n"
-        "- 유저가 '~하고 싶다', '~로 간다' 등 의지를 표현하면, 세계관 내에서 합리적인 한 그 행동이 실현되어야 합니다.\n"
-        "- 단, 세계관 규칙이나 캐릭터 심리에 의한 자연스러운 저항은 허용됩니다."
-    )
-    parts.append(
-        "\n=== GOLDEN RULE 13: PROACTIVE TRACTION (능동적 견인) ===\n"
-        "- PROACTIVE 모드가 활성화되면, 캐릭터는 자신의 내면 욕구, 스케줄, 숨겨진 사정을 기반으로 자발적 행동을 취합니다.\n"
-        "- 이때 캐릭터의 행동은 Character Thought Chain(표면 욕구→숨겨진 욕구→배경 영향→최종 반응)을 반드시 거쳐야 합니다.\n"
-        "- 견인은 '꼬리표 달린 선택지'가 아니라, 캐릭터가 살아있기 때문에 자연스럽게 일어나는 행동이어야 합니다."
-    )
-
     return "\n".join(parts)
 
 
 # ─── Build D.I.M.A prompt ────────────────────────────────────
 DIMA_PROMPT_TEMPLATE = SAFETY_PREAMBLE + """
 You are D.I.M.A., a master theater director writing living scenes.
-
-[CORE RULES]
-1. ALIVE: 캐릭터는 자기 욕구대로 먼저 행동한다. 유저를 기다리지 않는다.
-   - 2캐릭터 이상: 같은 반응 금지. NPC끼리 최소 1회 교류.
-   - 한 캐릭터가 연달아 2~3번 말해도 된다. A→B→A 자연스러운 대화 흐름 허용.
-   - NPC끼리 먼저 대화하다가 유저에게 말 거는 구조도 허용.
-2. EPISODE: 감각묘사(2문장) → 대화(자유롭게) → 열린 결말로 끝.
-   - script 블록 수 제한 없음. 필요하면 6~10개도 가능.
-3. VOICE: catchphrase_budget 준수. 같은 시작어 2턴 연속 금지.
-   - monologue는 캐릭터 고유 어투로. 모든 캐릭터가 같은 톤이면 실패.
-4. PLAYER SANCTUARY: 플레이어 감정/생각 절대 서술 금지.
-5. DRIVE: [캐릭터별 행동 지시]가 있으면 반드시 수행. 이것이 장면의 원동력이다.
 
 [OUTPUT] JSON: {{"script": [{{"type":"narration"|"dialogue","content":"...","character":"...","emotion":"...","emotion_intensity":1~10,"monologue":"..."}}]}}
 - emotion_intensity: 1~10 변동. 항상 5 금지.
@@ -3255,6 +3303,9 @@ You are D.I.M.A., a master theater director writing living scenes.
 
 ### Scene Context ###
 - Location: {location_and_time}
+
+### Director's Instinct ###
+{directors_instinct}
 
 ### Player's Action ###
 Player Name: {player_name}
@@ -3348,13 +3399,26 @@ def build_adaptive_char_brief(char_name: str, rel_data: dict, turn: int,
     role = ENSEMBLE_ROLES.get(char_name, {})
     stage = calculate_relationship_stage(rel_data) if rel_data else 1
     
-    # 항상 포함: 핵심 1줄 (~50토큰)
-    lines = [
-        f"[{char_name}] 역할:{role.get('function','?')} / "
+    # PATCH-30: Ensemble role as FIRST LINE — hard constraint
+    if role.get("initiative") == "selective":
+        lines = [
+            f"[{char_name}] ⚠️ 이 캐릭터는 이번 턴에서 대사 0~1문장만 허용. "
+            f"대부분 관찰하고 미소짓고 지켜보는 역할. "
+            f"질문하거나 게임을 주도하거나 대화를 이끄는 것은 금지. "
+            f"5턴에 1번 정도만 의미있는 한마디를 한다."
+        ]
+    elif role.get("voice_budget") == "minimal":
+        lines = [f"[{char_name}] ⚠️ 대사 최대 1문장. 침묵과 행동으로 존재."]
+    else:
+        lines = [f"[{char_name}]"]
+    
+    # 핵심 1줄 (~50토큰)
+    lines.append(
+        f"역할:{role.get('function','?')} / "
         f"매력:{c.get('core_appeal','')[:50]} / "
         f"말투:{c.get('speech_habit','')} / "
         f"관계:{STAGE_NAMES.get(stage,'경계')}({stage})"
-    ]
+    )
     
     # 앙상블 역할 지시 (항상)
     if role.get('group_style'):
@@ -3391,6 +3455,13 @@ def build_adaptive_char_brief(char_name: str, rel_data: dict, turn: int,
     return "\n".join(lines)
 
 
+# ─── PATCH-30: Movement request detection ─────────────────────
+def _user_requests_move(user_input: str) -> bool:
+    """유저 입력에서 장소 이동 의도를 감지."""
+    move_keywords = ["가자", "이동", "떠나", "나가", "옮기", "돌아가", "가볼까", "가실까", "안내"]
+    return any(kw in user_input for kw in move_keywords)
+
+
 def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
     """감독의 본능 — 규칙이 아니라 감각으로 안내하는 통합 연출 블록."""
     turn = s.get("turn_number", 0)
@@ -3398,11 +3469,34 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
     turns_here = s.get("turns_at_current_location", 0)
     player_name = s.get("player_name", "사용자")
     
-    # ── 장소 분위기 ──
-    if turns_here <= 2:
+    # ── 장소 분위기 + PATCH-30: Hard movement gate ──
+    loc_block = f"현재: {loc} ({turns_here}턴째)"
+
+    # PATCH-30: Include scene note if available (e.g. "카페 거리" → "카페 실내")
+    scene_note = s.get("_scene_note", "")
+    if scene_note:
+        loc_block += f"\n🎬 {scene_note}"
+
+    if _user_requests_move(user_input):
+        # User explicitly requests move — gate opens
+        location_feel = "충분히 머물렀다. 서사적 전환점이 자연스럽게 올 수 있다."
+        loc_block += (
+            "\n✅ 유저가 이동을 원한다. 이번 턴에서 실제로 이동하라. "
+            "이동 과정을 짧게 나레이션(1-2문장)하고, 새 장소에 도착한 모습을 보여줘라. "
+            "'가자'를 또 반복하지 말고 실제로 가라."
+        )
+    elif turns_here < 5:
+        # Hard movement lock
         location_feel = (
             "방금 이 장소에 도착했거나 아직 분위기가 자리잡는 중이다. "
-            "이 공간을 느끼고 탐색하는 시간을 줘라. 장소 이동은 금지."
+            "이 공간을 느끼고 탐색하는 시간을 줘라."
+        )
+        loc_block += (
+            f"\n⛔ [절대 금지] 이 장소에 머문 지 아직 {turns_here}턴이다. "
+            "캐릭터가 장소 이동을 제안하거나, 다른 곳으로 가자고 말하거나, "
+            "떠날 준비를 하는 묘사를 하면 이 세션은 실패한다. "
+            "이동 관련 대사/나레이션 일체 금지. "
+            "이 장소 안에서 일어나는 대화와 행동에만 집중하라."
         )
     elif turns_here <= 5:
         location_feel = "이 장소에서 이야기가 흐르고 있다. 공간의 디테일을 활용해 장면을 풍부하게."
@@ -3492,7 +3586,23 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
     
     user_mirror = f"유저({player_name})의 입력: \"{user_input[:200]}\"\n"
     user_mirror += "필수반응: " + " / ".join(user_guide)
-    
+
+    # ── PATCH-30: Scene object tracking ──
+    scene_objects = set()
+    history = s.get("history", []) or s.get("turns", [])
+    for h in history[-3:]:
+        for block in h.get("script", []):
+            content = block.get("content", "")
+            if block.get("type") == "narration":
+                for obj in TRACKABLE_SCENE_OBJECTS:
+                    if obj in content:
+                        scene_objects.add(obj)
+
+    scene_objects_note = ""
+    if scene_objects:
+        scene_objects_note = f"\n[씬에 이미 등장한 소품] {', '.join(scene_objects)}\n"
+    scene_objects_note += "새로운 소품을 등장시키려면 반드시 나레이션에서 설명하라. 없던 물건이 갑자기 나타나면 안 된다.\n"
+
     # ── 조합 ──
     return f"""### 감독의 본능 (DIRECTOR'S INSTINCT) ###
 
@@ -3501,9 +3611,8 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
 유저의 입력을 무시하고 NPC끼리만 대화하는 것은 금지.
 
 [장소는 무대다 — 무대는 쉽게 바꾸지 않는다]
-현재: {loc} ({turns_here}턴째)
+{loc_block}
 {location_feel}
-장소 이동은 유저가 명시적으로 원하거나, 서사적으로 반드시 필요할 때만.
 
 [앙상블 캐스트 — 각자의 "존재 방식"이 다르다]
 최근 3턴 발화 분포:
@@ -3522,6 +3631,9 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
 
 [비밀은 냄새처럼 — 서서히, 자연스럽게]
 {secret_gate}
+
+[소품 관리]
+{scene_objects_note}
 
 [즉흥 창작]
 {IMPROVISATION_RULE}
@@ -3604,16 +3716,12 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
                 raw_recent.append(f"[{b.get('character','?')}]: {b.get('content','')[:100]}")
     raw_text = "\n".join(raw_recent[-8:])
 
-    # PATCH-27: anti_repetition_block을 build_anti_repetition_context로 대체
-    anti_repetition_block = build_anti_repetition_context(s, s.get("on_screen", []))
-    if anti_repetition_block:
-        anti_repetition_block = "\n=== ANTI-REPETITION ===\n" + anti_repetition_block
+    # PATCH-30: anti-repetition moved to directors_instinct block (near user input)
 
     recent_conversation_log = (
         f"{scene_continuity_block}\n"
         f"=== 흐름 요약 (최근 10턴) ===\n{digest_text}\n\n"
         f"=== 직전 대화 (최근 1턴 원문) ===\n{raw_text}"
-        f"{anti_repetition_block}"
     )
 
     # Character briefs with scene continuity + Maestro action_context
@@ -4032,14 +4140,19 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
             boost_lines.append(f"- {name}: {appeal}{ex}")
         director_brief += "\n\n" + "\n".join(boost_lines)
 
-    # PATCH-28: 감독의 본능 블록 추가
+    # PATCH-28/30: 감독의 본능 블록 — 유저 입력 직전에 위치 (DIMA_PROMPT_TEMPLATE 내)
     directors_block = build_directors_instinct(s, user_input, on_screen_chars)
-    director_brief += "\n\n" + directors_block
+
+    # Anti-repetition alerts (placed with directors_instinct for high attention)
+    anti_rep_for_instinct = build_anti_repetition_context(s, s.get("on_screen", []))
+    if anti_rep_for_instinct:
+        directors_block += "\n\n=== ANTI-REPETITION ===\n" + anti_rep_for_instinct
 
     main_prompt = DIMA_PROMPT_TEMPLATE.format(
         recent_conversation_log=recent_conversation_log,
         character_briefs=character_briefs_content,
         director_brief=director_brief,
+        directors_instinct=directors_block,
         location_and_time=f"{location}",
         player_name=player_name,
         user_input=user_input_for_prompt,
@@ -4311,16 +4424,13 @@ def post_process_script(script: list, s: dict) -> list:
             except (ValueError, TypeError):
                 block["intensity"] = 5
         
-        # 플레이어 이름 3인칭 교정
+        # 플레이어 이름 3인칭 교정 — PATCH-30: monologue 필드도 포함
         if _p28_player_name:
-            if block.get("type") == "dialogue":
-                block["content"] = _fix_player_name_usage(
-                    block.get("content", ""), _p28_player_name
-                )
-            elif block.get("type") == "narration":
-                block["content"] = _fix_player_name_usage(
-                    block.get("content", ""), _p28_player_name
-                )
+            for field in ("content", "monologue"):
+                if block.get(field):
+                    block[field] = _fix_player_name_usage(
+                        block[field], _p28_player_name
+                    )
 
     # PATCH-27: NPC 대사에서 플레이어 이름이 주어로 사용되는 패턴 교정
     player_name = get_player_name(s)
