@@ -459,18 +459,19 @@ def post_process_block_movement(narration_text: str, state: dict) -> str:
     return narration_text.strip()
 
 
+# Pre-compiled patterns for is_explicit_user_move_request (PATCH-35)
+_EXPLICIT_MOVE_PATTERNS = [
+    re.compile(r'(?:으?로)\s*(?:가자|갈래|이동하자|가볼까)'),   # "카페로 가자"
+    re.compile(r'(?:에)\s*(?:가자|갈래|가볼까)'),              # "기숙사에 가자"
+    re.compile(r'장소\s*(?:바꾸|변경|이동)'),                   # "장소 바꾸자"
+    re.compile(r'(?:다른\s*곳|밖|나가)'),                      # "밖으로 나가자"
+]
+
+
 def is_explicit_user_move_request(user_input: str, player_name: str = "") -> bool:
     """사용자가 직접 이동을 요청했는지 판별.
     NPC 대사의 "가자"와 구분하기 위해 엄격한 패턴 사용."""
-
-    move_patterns = [
-        re.compile(r'(?:으?로)\s*(?:가자|갈래|이동하자|가볼까)'),   # "카페로 가자"
-        re.compile(r'(?:에)\s*(?:가자|갈래|가볼까)'),              # "기숙사에 가자"
-        re.compile(r'장소\s*(?:바꾸|변경|이동)'),                   # "장소 바꾸자"
-        re.compile(r'(?:다른\s*곳|밖|나가)'),                      # "밖으로 나가자"
-    ]
-
-    for p in move_patterns:
+    for p in _EXPLICIT_MOVE_PATTERNS:
         if p.search(user_input):
             return True
     return False
@@ -479,14 +480,12 @@ def is_explicit_user_move_request(user_input: str, player_name: str = "") -> boo
 # ═══ PATCH-35 FIX-A3: Voice budget enforcement in post-processing ═══
 def enforce_voice_budget(dialogue_blocks: list, active_characters: list) -> list:
     """각 캐릭터의 voice_budget에 맞게 대사 블록 수를 자른다."""
-    char_block_count: Dict[str, int] = {}
+    from collections import defaultdict
+    char_block_count: Dict[str, int] = defaultdict(int)
     result = []
 
     for block in dialogue_blocks:
         char = block.get("character", "")
-        if char not in char_block_count:
-            char_block_count[char] = 0
-
         role = ENSEMBLE_ROLES.get(char, {})
         budget = role.get("voice_budget", "medium")
         max_blocks = VOICE_BUDGET_MAX_BLOCKS.get(budget, 2)
@@ -2981,16 +2980,16 @@ def build_adaptive_instruction(s: dict) -> str:
     # ── Safety + Role ──
     parts.append(SAFETY_PREAMBLE)
     parts.append(
-        f"You are DIMA (Director-level Interactive Multi-character Actor), "
-        f"a narrative AI that creates immersive, character-driven scenes in the world of Sarura Atelier.\n\n"
-        f"You write like a skilled novelist: vivid sensory details, distinct character voices, "
-        f"natural dialogue flow, and atmospheric description. You are VERBOSE and DETAILED by default. "
-        f"Each response should be at least 250 words with rich prose.\n\n"
-        f"Core rules:\n"
+        "You are DIMA (Director-level Interactive Multi-character Actor), "
+        "a narrative AI that creates immersive, character-driven scenes in the world of Sarura Atelier.\n\n"
+        "You write like a skilled novelist: vivid sensory details, distinct character voices, "
+        "natural dialogue flow, and atmospheric description. You are VERBOSE and DETAILED by default. "
+        "Each response should be at least 250 words with rich prose.\n\n"
+        "Core rules:\n"
         f"1. NEVER write dialogue, thoughts, or actions for {player}.\n"
-        f"2. Each character speaks in their unique voice pattern defined in their profile.\n"
-        f"3. When multiple characters are present, they interact with EACH OTHER naturally.\n"
-        f"4. Focus on the CURRENT scene — describe what characters see, hear, feel, smell."
+        "2. Each character speaks in their unique voice pattern defined in their profile.\n"
+        "3. When multiple characters are present, they interact with EACH OTHER naturally.\n"
+        "4. Focus on the CURRENT scene — describe what characters see, hear, feel, smell."
     )
 
     parts.append(EUGENE_FILTER_RULE)
@@ -3846,6 +3845,7 @@ Write an immersive establishing scene. Include:
         context_anchor = "CONTEXT: This is the first turn. Characters enter the scene naturally."
 
     # ── Build instruction ──
+    cast_text = '\n'.join(char_briefs) if char_briefs else '(no NPCs)'
     instruction = f"""
 ### MAESTRO CUE — Creative Direction ###
 
@@ -3853,7 +3853,7 @@ SCENE: {scene_desc}
 TIME: {time_of_day} | MOOD: {mood}
 
 CAST:
-{chr(10).join(char_briefs) if char_briefs else '(no NPCs)'}
+{cast_text}
 
 CREATIVE DIRECTION:
 Write like a skilled novelist. Be VERBOSE and DETAILED — at least 250 words.
