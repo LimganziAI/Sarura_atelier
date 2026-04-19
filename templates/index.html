@@ -751,6 +751,26 @@
       // --- Render Pulse Chips ---
       function renderPulseChips(pulse) { /* disabled */ }
 
+      // ═══ PATCH-35 FIX-A5: Location badge update ═══
+      function updateLocationBadge(state) {
+          const badge = document.getElementById('location-display');
+          if (!badge) return;
+
+          // Priority: location_display > scene_note's first sentence > current_location
+          const displayName = state.location_display
+              || (state.scene_note && state.scene_note.split('.')[0])
+              || (state._scene_note && state._scene_note.split('.')[0])
+              || state.current_location
+              || (state?.world?.space?.current_location)
+              || '???';
+
+          badge.textContent = displayName;
+          badge.title = state.scene_note || state._scene_note || state.current_location || '';
+          badge.style.display = displayName ? '' : 'none';
+          badge.classList.add('transitioning');
+          setTimeout(() => badge.classList.remove('transitioning'), 600);
+      }
+
       // --- Render full state ---
       const renderUIFromState = async (newState) => {
         hideTypingIndicator();
@@ -800,25 +820,8 @@
         // Sync CORE-4 sliders
         syncCore4Sliders(STATE?.core4);
 
-        // Sync location display (PATCH-26: location badge)
-        // Note: Location may be in STATE.world.space.current_location (from to_public_state)
-        // or STATE.current_location (from direct API response). Check both paths.
-        const locationDisplay = document.getElementById('location-display');
-        if (locationDisplay) {
-            const loc = STATE?.current_location
-                     || STATE?.world?.space?.current_location
-                     || '라운지';
-            const sceneNote = STATE?._scene_note || STATE?.scene_note || '';
-            // PATCH-31/32: If scene_note exists, show its first sentence instead of raw location name
-            const displayText = sceneNote ? sceneNote.split('.')[0].trim() : loc;
-            locationDisplay.textContent = displayText || loc;
-            locationDisplay.title = sceneNote || loc;  // PATCH-32: Full scene_note on hover
-            if (displayText) {
-                locationDisplay.style.display = '';
-            } else {
-                locationDisplay.style.display = 'none';
-            }
-        }
+        // PATCH-35: Use updateLocationBadge for location display
+        updateLocationBadge(STATE);
 
         // Render turns
         el.chatLog.innerHTML = '';
@@ -981,10 +984,13 @@
             const bootResponse = await POST('/bootstrap', bootPayload);
             hideTypingIndicator();
             if (bootResponse && bootResponse.state) {
-              // PATCH-34 FIX-F: Sync scene_note from API response into state
+              // PATCH-35: Sync location_display and scene_note from API response into state
               if (bootResponse.scene_note) {
                 bootResponse.state._scene_note = bootResponse.scene_note;
                 bootResponse.state.scene_note = bootResponse.scene_note;
+              }
+              if (bootResponse.location_display) {
+                bootResponse.state.location_display = bootResponse.location_display;
               }
               applyPersonalColors(bootResponse.personal_colors);
               await renderUIFromState(bootResponse.state);
@@ -1004,10 +1010,13 @@
             });
             hideTypingIndicator();
             if (turnResponse.status === 'ok' && turnResponse.state) {
-              // PATCH-34 FIX-F: Sync scene_note from API response into state
+              // PATCH-35: Sync location_display and scene_note from API response into state
               if (turnResponse.scene_note) {
                 turnResponse.state._scene_note = turnResponse.scene_note;
                 turnResponse.state.scene_note = turnResponse.scene_note;
+              }
+              if (turnResponse.location_display) {
+                turnResponse.state.location_display = turnResponse.location_display;
               }
               applyPersonalColors(turnResponse.personal_colors);
               await renderUIFromState(turnResponse.state);
@@ -1022,29 +1031,22 @@
                   tokenDisplay.textContent = `토큰: ${(tu.session_total.input + tu.session_total.output).toLocaleString()}`;
                 }
               }
-              // PATCH-26: Location transition handling
+              // PATCH-35: Location transition handling via updateLocationBadge
               if (turnResponse.current_location) {
                 const locBadge = document.getElementById('location-display');
                 if (locBadge) {
                   const prevLoc = locBadge.title || locBadge.textContent;
-                  const newLoc = turnResponse.current_location;
-                  // PATCH-31/32: Use scene_note for display if available
-                  const sNote = turnResponse.scene_note || '';
-                  const displayLoc = sNote ? sNote.split('.')[0].trim() : newLoc;
-                  locBadge.textContent = displayLoc;
-                  locBadge.title = sNote || newLoc;  // PATCH-32: Full scene_note on hover
-                  locBadge.style.display = '';
+                  const newLoc = turnResponse.location_display || turnResponse.current_location;
                   if (prevLoc && prevLoc !== newLoc) {
-                    locBadge.classList.add('transitioning');
                     // Show location transition banner
                     const banner = document.createElement('div');
                     banner.className = 'location-transition';
                     banner.textContent = `📍 ${prevLoc} → ${newLoc}`;
                     banner.setAttribute('aria-label', `장소 이동: ${prevLoc}에서 ${newLoc}(으)로`);
                     el.chatLog.appendChild(banner);
-                    setTimeout(() => locBadge.classList.remove('transitioning'), 600);
                   }
                 }
+                updateLocationBadge(STATE);
               }
               // PATCH-26: Log departure/return events
               if (turnResponse.departure_returns && turnResponse.departure_returns.length > 0) {

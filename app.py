@@ -414,6 +414,106 @@ LOCATION_SEMANTIC_OVERRIDES: Dict[str, Dict[str, str]] = {
     },
 }
 
+
+# ═══ PATCH-35 FIX-A1: Location display pipeline ═══
+def get_display_location(canonical_location: str, user_input_location: str = "") -> dict:
+    """
+    canonical 위치명을 받아 UI에 표시할 이름과 scene_note를 반환.
+    user_input_location: 유저가 처음 입력한 장소명 (예: "카페")
+    """
+    # 1. SEMANTIC_OVERRIDES에서 user_input 키로 먼저 찾기
+    override = LOCATION_SEMANTIC_OVERRIDES.get(user_input_location, {})
+    if not override:
+        # canonical에서 역방향 검색
+        for key, val in LOCATION_SEMANTIC_OVERRIDES.items():
+            if val.get("canonical") == canonical_location:
+                override = val
+                break
+
+    if override:
+        return {
+            "location_display": override.get("scene_note", canonical_location).split(".")[0],
+            "scene_note": override.get("scene_note", ""),
+            "canonical": override.get("canonical", canonical_location),
+        }
+
+    return {
+        "location_display": canonical_location,
+        "scene_note": "",
+        "canonical": canonical_location,
+    }
+
+
+# ═══ PATCH-35 FIX-A2: Movement hard-block in post-processing ═══
+def post_process_block_movement(narration_text: str, state: dict) -> str:
+    """Gemini 출력에서 이동 관련 나레이션을 제거/대체한다.
+    이동은 오직 사용자가 명시적으로 요청했을 때만 허용."""
+
+    if state.get("_user_requested_move", False):
+        return narration_text  # 사용자가 요청했으면 통과
+
+    # 이동 완료 패턴 제거
+    for pattern in COMPLETED_MOVE_PATTERNS:
+        narration_text = pattern.sub("", narration_text)
+
+    return narration_text.strip()
+
+
+# Pre-compiled patterns for is_explicit_user_move_request (PATCH-35)
+_EXPLICIT_MOVE_PATTERNS = [
+    re.compile(r'(?:으?로)\s*(?:가자|갈래|이동하자|가볼까)'),   # "카페로 가자"
+    re.compile(r'(?:에)\s*(?:가자|갈래|가볼까)'),              # "기숙사에 가자"
+    re.compile(r'장소\s*(?:바꾸|변경|이동)'),                   # "장소 바꾸자"
+    re.compile(r'(?:다른\s*곳|밖|나가)'),                      # "밖으로 나가자"
+]
+
+
+def is_explicit_user_move_request(user_input: str, player_name: str = "") -> bool:
+    """사용자가 직접 이동을 요청했는지 판별.
+    NPC 대사의 "가자"와 구분하기 위해 엄격한 패턴 사용."""
+    for p in _EXPLICIT_MOVE_PATTERNS:
+        if p.search(user_input):
+            return True
+    return False
+
+
+# ═══ PATCH-35 FIX-A3: Voice budget enforcement in post-processing ═══
+def enforce_voice_budget(dialogue_blocks: list, active_characters: list) -> list:
+    """각 캐릭터의 voice_budget에 맞게 대사 블록 수를 자른다."""
+    from collections import defaultdict
+    char_block_count: Dict[str, int] = defaultdict(int)
+    result = []
+
+    for block in dialogue_blocks:
+        char = block.get("character", "")
+        role = ENSEMBLE_ROLES.get(char, {})
+        budget = role.get("voice_budget", "medium")
+        max_blocks = VOICE_BUDGET_MAX_BLOCKS.get(budget, 2)
+
+        if char_block_count[char] < max_blocks:
+            result.append(block)
+            char_block_count[char] += 1
+        # max 초과분은 무시
+
+    return result
+
+
+# ═══ PATCH-35 FIX-A4: Location name replacement in output text ═══
+def replace_location_names_in_text(text: str, state: dict) -> str:
+    """나레이션/대사에서 canonical 위치명을 scene_note 기반 이름으로 치환."""
+    loc_info = get_display_location(
+        state.get("current_location", ""),
+        state.get("_user_input_location", "")
+    )
+    canonical = loc_info["canonical"]
+    display = loc_info["location_display"]
+
+    if canonical and display and canonical != display:
+        text = text.replace(canonical, display)
+
+    return text
+
+
 # ─── PATCH-30: Trackable scene objects for prop continuity ────
 TRACKABLE_SCENE_OBJECTS = ["가방", "컵", "잔", "우산", "명함", "핸드폰", "책"]
 
@@ -1916,6 +2016,8 @@ def run_scene_zero(seed_text: str, s: dict, on_screen: list):
         s["current_location"] = location
         s["world"]["space"]["current_location"] = location
         s["_scene_note"] = scene_zero.get("_scene_note", "")
+        # PATCH-35: Store the original user input location keyword for display pipeline
+        s["_user_input_location"] = scene_zero.get("location", "")
 
         # 온스크린 캐릭터 위치 동기화
         player_name = s.get("player_name", "사용자")
@@ -2857,14 +2959,11 @@ def build_character_block_for_prompt(
 # V5.0: Adaptive System Instruction Builder (replaces build_system_instruction_for_scene)
 # =========================================================================
 def build_adaptive_instruction(s: dict) -> str:
-    """V5.0 adaptive system instruction builder (PATCH-30: restructured).
+    """PATCH-35: Lean system instruction builder.
 
-    Assembles prompt based on play_style, turn count, and session state.
-    Designed for Gemini implicit caching: keeps prefix stable across turns.
-
-    TIER 1 (TOP — highest attention): Agency guard, Golden Rules, Core Rules, Output Format, Emotion Whitelist
-    TIER 2 (MIDDLE — moderate attention): Character cast list, Relationships, CORE-4, Memory
-    TIER 3 (BOTTOM — lower attention): Genre/style, Analyzer cache, Maestro overrides
+    Only core creative rules remain here. Negative constraints (movement blocking,
+    voice budget enforcement, location name fixes) are handled by Python post-processing.
+    This keeps the system instruction short so Gemini 3 Flash can focus on quality output.
     """
     parts = []
     turn_count = len(s.get("turns", []))
@@ -2875,54 +2974,25 @@ def build_adaptive_instruction(s: dict) -> str:
     ui = s.get("ui_settings", {})
 
     # ══════════════════════════════════════════════════════════════
-    # TIER 1 (TOP — highest LLM attention)
+    # LEAN SYSTEM INSTRUCTION (PATCH-35)
     # ══════════════════════════════════════════════════════════════
 
     # ── Safety + Role ──
     parts.append(SAFETY_PREAMBLE)
     parts.append(
-        "당신은 D.I.M.A(Director-level Interactive Multi-character Actor)입니다. "
-        "사용자의 입력에 반응하여 등장 캐릭터들의 대사·행동·나레이션을 script JSON으로 출력합니다. "
-        "모든 캐릭터는 성인(20세 이상)입니다."
+        "You are DIMA (Director-level Interactive Multi-character Actor), "
+        "a narrative AI that creates immersive, character-driven scenes in the world of Sarura Atelier.\n\n"
+        "You write like a skilled novelist: vivid sensory details, distinct character voices, "
+        "natural dialogue flow, and atmospheric description. You are VERBOSE and DETAILED by default. "
+        "Each response should be at least 250 words with rich prose.\n\n"
+        "Core rules:\n"
+        f"1. NEVER write dialogue, thoughts, or actions for {player}.\n"
+        "2. Each character speaks in their unique voice pattern defined in their profile.\n"
+        "3. When multiple characters are present, they interact with EACH OTHER naturally.\n"
+        "4. Focus on the CURRENT scene — describe what characters see, hear, feel, smell."
     )
 
-    # ── PLAYER AGENCY GUARD (always at top) ──
-    if turn_count <= 1:
-        parts.append(PLAYER_AGENCY_GUARD.format(player_name=player))
-    else:
-        parts.append(
-            f"[PLAYER GUARD] {player}의 대사/감정/행동을 절대 쓰지 마라. "
-            f"NPC 시점의 관찰로만 표현."
-        )
-
-    # ── GOLDEN RULE 0: 유저 입력 절대 우선 ──
-    parts.append(
-        "[GOLDEN RULE 0: 유저 입력 절대 우선] "
-        "유저의 메시지에 장소, 상황, 시간, 인물 관계 등의 설정이 포함되어 있으면, "
-        "그것이 세계관 DB의 기본 장소보다 절대적으로 우선합니다. "
-        "유저가 장소를 지정하지 않은 경우에만 세계관 DB의 기본 장소를 사용하세요."
-    )
-
-    # ── GOLDEN RULE 1: 플레이어 내면 불가침 ──
-    parts.append(
-        "[GOLDEN RULE 1: 플레이어 내면 불가침] "
-        "나레이션은 '카메라 렌즈'. "
-        "서술 가능: ✅ 환경 묘사, NPC의 외적 행동, 사물의 상태. "
-        "서술 금지: ❌ 플레이어의 감정/생각/시선/신체 반응/판단."
-    )
-
-    # ── CORE BEHAVIORAL RULES ──
-    parts.append(
-        "[CORE RULES] "
-        "1. ALIVE: 캐릭터는 자기 욕구대로 먼저 행동한다. 유저를 기다리지 않는다. "
-        "2캐릭터 이상: 같은 반응 금지. NPC끼리 최소 1회 교류. "
-        "2. EPISODE: 감각묘사(2문장) → 대화(자유롭게) → 열린 결말. "
-        "3. VOICE: catchphrase_budget 준수. 같은 시작어 2턴 연속 금지. "
-        "4. PLAYER SANCTUARY: 플레이어 감정/생각 절대 서술 금지. "
-        "5. DRIVE: [캐릭터별 행동 지시]가 있으면 반드시 수행. "
-        "6. ENSEMBLE: 각 캐릭터의 voice_budget을 초과하는 대사를 생성하지 마라. "
-        "short = 1~2문장, selective = 대부분 침묵."
-    )
+    parts.append(EUGENE_FILTER_RULE)
 
     # ── Output format + Emotion whitelist ──
     parts.append(
@@ -2950,27 +3020,8 @@ def build_adaptive_instruction(s: dict) -> str:
         f"묘사밀도: {ui.get('description_focus', 5)}/10"
     )
 
-    # ── Character cast list (briefs are in user prompt only — PATCH-30 dedup) ──
+    # ── Character cast list ──
     parts.append(f"[등장인물] {', '.join(on_screen)}")
-
-    # PATCH-33 FIX-4: Ensemble role hard constraints in SYSTEM INSTRUCTION (highest authority)
-    ensemble_lines = []
-    for char in on_screen:
-        if char == player:
-            continue
-        role = ENSEMBLE_ROLES.get(char, {})
-        budget = role.get("voice_budget", "medium")
-        init = role.get("initiative", "reactive")
-        if budget in ("minimal", "short") or init == "selective":
-            budget_desc = {"minimal": "0~1", "short": "1~2", "medium": "2~3"}.get(budget, "2~3")
-            ensemble_lines.append(
-                f"⚠️ {char}: 턴당 {budget_desc}문장 제한. "
-                f"initiative={init}. 이 제한은 vs_플레이어 dynamics보다 우선."
-            )
-    if ensemble_lines:
-        parts.append("[앙상블 역할 — 절대 규칙]\n" + "\n".join(ensemble_lines))
-
-    parts.append(EUGENE_FILTER_RULE)
 
     # ── BLOCK 3.5: Age hierarchy & honorific rules ──
     AGE_HIERARCHY_RULE = """
@@ -3311,24 +3362,24 @@ You are D.I.M.A., a master theater director writing living scenes.
 - emotion_intensity: 1~10 변동. 항상 5 금지.
 - monologue: dialogue 안에 넣기. 대사와 다른 숨은 감정 필수.
 
+### Scene Context ###
+- Location: {location_and_time}
+
+### Character Briefs ###
+{character_briefs}
+
 ### Recent Conversation Log ###
 {recent_conversation_log}
 
 ### Director's Brief ###
 {director_brief}
 
-### Character Briefs ###
-{character_briefs}
-
-### Scene Context ###
-- Location: {location_and_time}
-
-### Director's Instinct ###
-{directors_instinct}
-
 ### Player's Action ###
 Player Name: {player_name}
 {user_input}
+
+### Director's Cue (FOLLOW THIS) ###
+{directors_instinct}
 """
 
 
@@ -3712,27 +3763,53 @@ def _build_conversation_routing(on_screen: list, player_name: str, recent_turns:
 
 
 def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
-    """PATCH-34: Collapsed to 3 rules + player protection (~200 tokens).
-    
-    Gemini Flash follows at most 3 rules in a 7k-token prompt.
-    Everything else is enforced in post_process_script().
+    """
+    PATCH-35: Maestro Cue Block — positive creative instructions only.
+
+    DESIGN PRINCIPLE:
+    - This block contains ONLY positive creative instructions.
+    - All negative constraints (no movement, voice limits, location fixes)
+      are handled by Python post-processing.
+    - Gemini 3 Flash follows end-of-prompt instructions best,
+      so this block is placed LAST before user input.
+    - Gemini 3 is concise by default; explicitly request rich description.
     """
     player_name = s.get("player_name", "사용자")
-    turns_here = s.get("turns_at_current_location", 0)
-    scene_note = s.get("_scene_note", "")
+    turn_number = len(s.get("turns", []))
     npcs = [n for n in on_screen if n != player_name]
 
-    # ── RULE 1: LOCATION (always) ──
-    if scene_note:
-        loc_display = scene_note.split('.')[0].strip()
-        rule1 = (f"RULE 1 — LOCATION: 장면은 '{loc_display}' 내부다. "
-                 f"'{s.get('current_location', '')}' 이름 사용 금지. "
-                 f"이동 제안/이동 묘사 절대 금지.")
-    else:
-        loc = s.get("current_location", DEFAULT_LOCATION)
-        rule1 = f"RULE 1 — LOCATION: 현재 장소는 {loc}. 이동 금지."
+    # ── Gather character data ──
+    char_briefs = []
+    for cname in npcs:
+        cache = _CHAR_RUNTIME_CACHE.get(cname, {})
+        role = ENSEMBLE_ROLES.get(cname, {})
+        char_briefs.append(
+            f"- {cname}: {role.get('function', '?')} / "
+            f"{cache.get('core_acting_rule', '')} / "
+            f"말투: {cache.get('speech_habit', '')} / "
+            f"습관: {', '.join(cache.get('idle_habits', [])[:2])}"
+        )
 
-    # ── RULE 2: VOICE BALANCE (dynamic per turn) ──
+    # ── Scene context ──
+    location = s.get("current_location", "???")
+    loc_info = get_display_location(location, s.get("_user_input_location", ""))
+    scene_desc = loc_info.get("scene_note", "") or location
+    time_of_day = s.get("world", {}).get("time", {}).get("display", "오후")
+    mood = s.get("_scene_zero", {}).get("mood", "편안")
+
+    # ── Opening boost (first 3 turns get extra sensory detail) ──
+    opening_boost = ""
+    if turn_number <= OPENING_BOOST_TURNS:
+        opening_boost = f"""
+OPENING BOOST (Turn {turn_number}):
+Write an immersive establishing scene. Include:
+- Two specific sensory details (sound, smell, temperature, texture, light)
+- One background element that creates atmosphere (other patrons, weather outside, music)
+- Each character's physical state and posture as they enter/exist in the scene
+"""
+
+    # ── Voice rotation (who leads this turn) ──
+    voice_direction = ""
     if len(npcs) >= 2:
         last_turn = (s.get("turns", []) or [None])[-1]
         last_dominant = ""
@@ -3743,32 +3820,54 @@ def build_directors_instinct(s: dict, user_input: str, on_screen: list) -> str:
                 from collections import Counter
                 c = Counter(speakers)
                 last_dominant = c.most_common(1)[0][0]
-
         quiet_npc = [n for n in npcs if n != last_dominant]
         lead = quiet_npc[0] if quiet_npc else npcs[0]
         follower = last_dominant if last_dominant in npcs else npcs[-1]
+        voice_direction = (
+            f"VOICE ROTATION: {lead} leads this turn's conversation. "
+            f"{follower} responds with a short reaction (1 sentence). "
+            f"NPCs should interact with EACH OTHER at least once, not just with the player."
+        )
+    elif npcs:
+        voice_direction = f"VOICE FOCUS: {npcs[0]} responds with 2~3 rich sentences."
 
-        rule2 = (f"RULE 2 — VOICE: 이번 턴에서 {lead}가 먼저 말하고 "
-                 f"{follower}는 짧은 리액션(1문장)만. "
-                 f"NPC끼리 직접 대화 1회 필수. 유저만 바라보며 번갈아 말하기 금지.")
-    else:
-        npc = npcs[0] if npcs else "NPC"
-        rule2 = f"RULE 2 — VOICE: {npc}는 2~3문장. 유저의 말에 직접 반응하라."
-
-    # ── RULE 3: CONTEXT ANCHOR (what just happened) ──
+    # ── Context anchor ──
+    context_anchor = ""
     last_turn = (s.get("turns", []) or [None])[-1]
     if last_turn and isinstance(last_turn, dict):
         user_said = (last_turn.get("user_input") or "")[:60]
-        rule3 = (f"RULE 3 — CONTEXT: 유저가 방금 '{user_said}'라고 했다. "
-                 f"이 말에 직접 반응하라. 이미 답한 질문을 다시 하지 마라.")
-    else:
-        rule3 = "RULE 3 — CONTEXT: 첫 턴이다. 캐릭터들이 자연스럽게 등장하라."
+        if user_said:
+            context_anchor = (
+                f"CONTEXT: The player just said '{user_said}'. "
+                f"React directly to this. Do not repeat questions already answered."
+            )
+    if not context_anchor and turn_number == 0:
+        context_anchor = "CONTEXT: This is the first turn. Characters enter the scene naturally."
 
-    return (
-        "### DIRECTOR'S 3 RULES (이것만 따라라) ###\n"
-        f"{rule1}\n{rule2}\n{rule3}\n"
-        f"[플레이어 보호] {player_name}의 대사/행동/감정 쓰지 마라.\n"
-    )
+    # ── Build instruction ──
+    cast_text = '\n'.join(char_briefs) if char_briefs else '(no NPCs)'
+    instruction = f"""
+### MAESTRO CUE — Creative Direction ###
+
+SCENE: {scene_desc}
+TIME: {time_of_day} | MOOD: {mood}
+
+CAST:
+{cast_text}
+
+CREATIVE DIRECTION:
+Write like a skilled novelist. Be VERBOSE and DETAILED — at least 250 words.
+Include vivid sensory details, distinct character voices, natural dialogue flow, and atmospheric description.
+Each character has unique mannerisms, speech patterns, and idle habits. Use them.
+When multiple characters are present, they interact with each other naturally — not just with the player.
+
+{opening_boost}
+{voice_direction}
+{context_anchor}
+
+PLAYER PROTECTION: Never write dialogue, thoughts, or actions for {player_name}.
+"""
+    return instruction.strip()
 
 
 def build_dima_prompt(s: dict, user_input: str) -> tuple:
@@ -4630,6 +4729,17 @@ def post_process_script(script: list, s: dict) -> list:
     if new_props_found:
         logger.info(f"[Prop] New props detected in output: {new_props_found}")
 
+    # ═══ PATCH-35 FIX-A2: Movement hard-block in post-processing ═══
+    # Apply post_process_block_movement to all narration blocks
+    for block in processed:
+        if block.get("type") == "narration" and block.get("content"):
+            block["content"] = post_process_block_movement(block["content"], s)
+
+    # ═══ PATCH-35 FIX-A4: Location name replacement in output text ═══
+    for block in processed:
+        if block.get("content"):
+            block["content"] = replace_location_names_in_text(block["content"], s)
+
     return processed
 
 # =========================================================================
@@ -5347,12 +5457,18 @@ def bootstrap():
     update_all_relationship_stages(s)
     save_session(s)
 
+    # ═══ PATCH-35 FIX-A1: Include location_display and scene_note from pipeline ═══
+    boot_loc_info = get_display_location(
+        s.get("current_location", ""),
+        s.get("_user_input_location", "")
+    )
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
             "pulse": _build_pulse_payload(_pulse, s),
             "current_location": s.get("current_location", DEFAULT_LOCATION),
             "character_locations": s.get("character_locations", {}),
-            "scene_note": s.get("_scene_note", "")}
+            "scene_note": boot_loc_info["scene_note"] or s.get("_scene_note", ""),
+            "location_display": boot_loc_info["location_display"]}
     return jsonify(resp)
 
 
@@ -5476,11 +5592,14 @@ def execute_turn():
             if char_name not in on_screen_chars:
                 on_screen_chars.append(char_name)
 
-        # ── PATCH-34 FIX-C: Unified move gate (single path) ──
-        # detect_location_change for player input REQUIRES _user_requests_move() first.
-        # This eliminates the dual-path contradiction where one gate blocks but the other allows.
+        # ── PATCH-35 FIX-A6: Single movement detection gate ──
+        # detect_location_change is ONLY called when user explicitly requests a move.
+        # Gemini output alone can NEVER trigger location changes.
         current_loc = s.get("current_location", DEFAULT_LOCATION)
-        if _user_requests_move(user_input):
+        user_wants_move = is_explicit_user_move_request(user_input, me) or _user_requests_move(user_input)
+        s["_user_requested_move"] = user_wants_move
+
+        if user_wants_move:
             loc_change = detect_location_change(user_input, current_loc, speaker=None)
         else:
             loc_change = None  # No move detection if user didn't explicitly request
@@ -5515,29 +5634,31 @@ def execute_turn():
         s["_current_user_input"] = user_input
         final_script, pulse_result, dima_response = run_dima_turn(s, user_input)
         s.pop("_current_user_input", None)  # Clean up after post-processing
+        s.pop("_user_requested_move", None)  # Clean up PATCH-35 move flag
 
-        # ── PATCH-31: Detect ACTUAL NPC moves from narration only (not dialogue proposals) ──
-        for block in final_script:
-            if not isinstance(block, dict):
-                continue
-            # SKIP dialogue — proposals in dialogue are NOT actual moves
-            if block.get("type") != "narration":
-                continue
-            content = block.get("content", "")
-            # Only detect completed movement verbs (using pre-compiled patterns)
-            if not any(p.search(content) for p in COMPLETED_MOVE_PATTERNS):
-                continue
-            for cn in on_screen_chars:
-                if cn in content:
-                    npc_move = detect_location_change(
-                        content,
-                        s.get("current_location", DEFAULT_LOCATION),
-                        speaker=cn
-                    )
-                    if npc_move and npc_move.get("mover"):
-                        move_character(s, npc_move["mover"],
-                                      npc_move["destination"],
-                                      reason="narration_move")
+        # ── PATCH-35 FIX-A6: NPC narration movement detection — ONLY if user requested move ──
+        if user_wants_move:
+            for block in final_script:
+                if not isinstance(block, dict):
+                    continue
+                # SKIP dialogue — proposals in dialogue are NOT actual moves
+                if block.get("type") != "narration":
+                    continue
+                content = block.get("content", "")
+                # Only detect completed movement verbs (using pre-compiled patterns)
+                if not any(p.search(content) for p in COMPLETED_MOVE_PATTERNS):
+                    continue
+                for cn in on_screen_chars:
+                    if cn in content:
+                        npc_move = detect_location_change(
+                            content,
+                            s.get("current_location", DEFAULT_LOCATION),
+                            speaker=cn
+                        )
+                        if npc_move and npc_move.get("mover"):
+                            move_character(s, npc_move["mover"],
+                                          npc_move["destination"],
+                                          reason="narration_move")
 
         # ── PATCH-26: Track suggestion usage ──
         for block in final_script:
@@ -5650,6 +5771,11 @@ def execute_turn():
         save_session(s)
 
     # V5.0: Step 5 — Include token_usage in response
+    # ═══ PATCH-35 FIX-A1: Include location_display and scene_note from pipeline ═══
+    loc_info = get_display_location(
+        s.get("current_location", ""),
+        s.get("_user_input_location", "")
+    )
     resp = {"status": "ok", "sid": sid, "state": to_public_state(s),
             "personal_colors": PERSONAL_COLORS,
             "pulse": _build_pulse_payload(pulse_result, s),
@@ -5657,7 +5783,8 @@ def execute_turn():
             "character_locations": s.get("character_locations", {}),
             "current_location": s.get("current_location", DEFAULT_LOCATION),
             "previous_location": s.get("previous_location"),
-            "scene_note": s.get("_scene_note", ""),
+            "scene_note": loc_info["scene_note"] or s.get("_scene_note", ""),
+            "location_display": loc_info["location_display"],
             "departure_returns": [
                 {"character": r["character"], "to": r["to"]} for r in departure_returns
             ],
