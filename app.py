@@ -625,7 +625,7 @@ for _cname, _cdb in CHARACTERS_DB.items():
         "relationship_development": _cdb.get("relationship_development", {}),
         "heuristic_keys": list(_bp.get("acting_heuristics", {}).keys()),
         "idle_habits": [
-            (h.get("action", "") if isinstance(h, dict) else str(h))
+            (h.get("action", "") if isinstance(h, dict) else (str(h) if h else ""))
             for h in _bp.get("idle_habits", [])[:3]
         ],
         "honesty_profile": _bp.get("honesty_profile", {}),
@@ -3228,7 +3228,7 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
             # PATCH-36 FIX-H2: analyze_user_pulse doesn't return nudge_char;
             # extract character name from suggestion string instead
             nudge_suggestion = pulse_result.get("suggestion", "")
-            nudge_char = nudge_suggestion.split("이(가)")[0] if "이(가)" in nudge_suggestion else "캐릭터"
+            nudge_char = nudge_suggestion.split("이(가)")[0].strip() if "이(가)" in nudge_suggestion else "캐릭터"
             move_note = "" if movement_allowed_in_pulse else " ⛔이동제안금지."
             parts.append(
                 f"\n🟡 NUDGE: {nudge_char}이(가) 현재 장소 내 활동 제안.{move_note}\n"
