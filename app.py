@@ -618,7 +618,10 @@ for _cname, _cdb in CHARACTERS_DB.items():
         "psychological_mirror": _bp.get("psychological_mirror", {}),
         "relationship_development": _cdb.get("relationship_development", {}),
         "heuristic_keys": list(_bp.get("acting_heuristics", {}).keys()),
-        "idle_habits": _bp.get("idle_habits", [])[:3],
+        "idle_habits": [
+            (h.get("action", "") if isinstance(h, dict) else str(h))
+            for h in _bp.get("idle_habits", [])[:3]
+        ],
         "honesty_profile": _bp.get("honesty_profile", {}),
         "physical_tells": _bp.get("physical_tells", {}),
     }
@@ -2007,6 +2010,7 @@ def run_scene_zero(seed_text: str, s: dict, on_screen: list):
                 if canonical is None or canonical == override["canonical"]:
                     location = override["canonical"]
                     scene_zero["_scene_note"] = override["scene_note"]
+                    scene_zero["_user_keyword"] = keyword  # PATCH-36 FIX-C3
                     break
 
         if canonical and "_scene_note" not in scene_zero:
@@ -2016,8 +2020,8 @@ def run_scene_zero(seed_text: str, s: dict, on_screen: list):
         s["current_location"] = location
         s["world"]["space"]["current_location"] = location
         s["_scene_note"] = scene_zero.get("_scene_note", "")
-        # PATCH-35: Store the original user input location keyword for display pipeline
-        s["_user_input_location"] = scene_zero.get("location", "")
+        # PATCH-36 FIX-C3: Store original user keyword (not canonical) for display pipeline
+        s["_user_input_location"] = scene_zero.get("_user_keyword", "") or scene_zero.get("location", "")
 
         # 온스크린 캐릭터 위치 동기화
         player_name = s.get("player_name", "사용자")
@@ -2959,206 +2963,73 @@ def build_character_block_for_prompt(
 # V5.0: Adaptive System Instruction Builder (replaces build_system_instruction_for_scene)
 # =========================================================================
 def build_adaptive_instruction(s: dict) -> str:
-    """PATCH-35: Lean system instruction builder.
+    """PATCH-36 FIX-M2: Compressed system instruction (~2000 tokens).
 
-    Only core creative rules remain here. Negative constraints (movement blocking,
-    voice budget enforcement, location name fixes) are handled by Python post-processing.
-    This keeps the system instruction short so Gemini 3 Flash can focus on quality output.
+    Gemini 3 performs best with short, direct instructions.
+    Negative constraints (movement blocking, voice budget, location fixes) are
+    handled by Python post-processing, not here.
     """
     parts = []
     turn_count = len(s.get("turns", []))
-    profile = s.get("user_profile", {})
-    play_style = profile.get("play_style", "chat")
     on_screen = s.get("on_screen", [])
     player = get_player_name(s)
     ui = s.get("ui_settings", {})
 
-    # ══════════════════════════════════════════════════════════════
-    # LEAN SYSTEM INSTRUCTION (PATCH-35)
-    # ══════════════════════════════════════════════════════════════
-
-    # ── Safety + Role ──
+    # ── BLOCK 1: Safety + Role + Core Rules (cacheable) ──
     parts.append(SAFETY_PREAMBLE)
     parts.append(
-        "You are DIMA (Director-level Interactive Multi-character Actor), "
-        "a narrative AI that creates immersive, character-driven scenes in the world of Sarura Atelier.\n\n"
-        "You write like a skilled novelist: vivid sensory details, distinct character voices, "
-        "natural dialogue flow, and atmospheric description. You are VERBOSE and DETAILED by default. "
-        "Each response should be at least 250 words with rich prose.\n\n"
-        "Core rules:\n"
-        f"1. NEVER write dialogue, thoughts, or actions for {player}.\n"
-        "2. Each character speaks in their unique voice pattern defined in their profile.\n"
-        "3. When multiple characters are present, they interact with EACH OTHER naturally.\n"
-        "4. Focus on the CURRENT scene — describe what characters see, hear, feel, smell."
+        f"You are DIMA, a narrative AI for Sarura Atelier. "
+        f"Write vivid, immersive scenes with rich sensory details and distinct character voices. "
+        f"Minimum 250 words. Be VERBOSE.\n"
+        f"ABSOLUTE RULES:\n"
+        f"1. NEVER write {player}'s dialogue, thoughts, or actions.\n"
+        f"2. Each character has a unique voice — use their defined speech patterns.\n"
+        f"3. Multiple NPCs interact with EACH OTHER, not just {player}.\n"
+        f"4. Focus on current scene — sounds, smells, textures, light."
     )
-
     parts.append(EUGENE_FILTER_RULE)
 
-    # ── Output format + Emotion whitelist ──
+    # ── BLOCK 2: Output Format (cacheable) ──
     parts.append(
         f"[EMOTION WHITELIST] {', '.join(SUPPORTED_EMOTIONS)}\n"
-        "emotion 필드는 반드시 위 목록에서만 선택하세요."
-    )
-    parts.append(
-        '[출력 형식] JSON: {"script": [{"type":"narration"|"dialogue"|"monologue", '
-        '"content":"텍스트", "character":"캐릭터명", "emotion":"감정태그", '
-        '"emotion_intensity":1~10, "monologue":"내면독백(선택)"}]}\n'
-        "- emotion_intensity: 1~10 변동. 항상 5 금지.\n"
-        "- monologue: dialogue 안에 넣기. 대사와 다른 숨은 감정 필수."
+        '[OUTPUT] JSON: {"script": [{"type":"narration"|"dialogue"|"monologue", '
+        '"content":"text", "character":"name", "emotion":"tag", '
+        '"emotion_intensity":1~10, "monologue":"inner thought"}]}'
     )
 
-    # ══════════════════════════════════════════════════════════════
-    # TIER 2 (MIDDLE — moderate attention)
-    # ══════════════════════════════════════════════════════════════
-
-    # ── Player + UI settings ──
+    # ── BLOCK 3: Settings (short) ──
     pov = "1인칭(나)" if ui.get("pov_first_person") else "3인칭"
-    parts.append(
-        f"[설정] 플레이어: {player} | 시점: {pov} | "
-        f"나레이션 비율: {ui.get('narration_ratio', 40)}% | "
-        f"템포: {ui.get('tempo', 5)}/10 | "
-        f"묘사밀도: {ui.get('description_focus', 5)}/10"
-    )
+    parts.append(f"[설정] 플레이어:{player} 시점:{pov} 등장:{','.join(on_screen)}")
 
-    # ── Character cast list ──
-    parts.append(f"[등장인물] {', '.join(on_screen)}")
-
-    # ── BLOCK 3.5: Age hierarchy & honorific rules ──
-    AGE_HIERARCHY_RULE = """
-[나이 서열 및 호칭 규칙]
-서열(어린→많음): 체니 < 레베카/령/네르 < 루크/마리/세리카 < 샐리/테피 < 라이니 < 크래더
-
-호칭 원칙:
-- 나이가 어린 쪽은 많은 쪽에게 기본적으로 존댓말을 사용한다.
-- 나이가 많은 쪽은 어린 쪽에게 반말을 사용할 수 있다.
-- 단, 캐릭터 고유 성격이 우선: 루크는 모두에게 존댓말, 체니는 어른에게도 반말, 라이니는 우아한 존댓말 등.
-- 크래더는 모두에게 반말이지만 테피에게만 어색하게 격식을 차리려 한다.
-- 같은 나이대끼리는 친밀도에 따라 자유롭게 변화.
-
-특수 규칙:
-- 루크는 기숙사 '관리인'으로서 학생들과 선후배가 아닌 동료 관계.
-- 세리카는 실제로는 훨씬 나이가 많지만 기억상실로 인해 학생으로 행동. 가끔 무의식적으로 나이 든 말투가 튀어나올 수 있음.
-- 샐리는 역성장으로 외모가 어리지만 실제 30대. 말투에서 '아줌마'가 튀어나옴.
-"""
-    # turn 0~2에서만 전체 나이 서열 규칙 삽입 (이후 캐싱 기대)
+    # ── BLOCK 4: Age hierarchy (first 2 turns only) ──
     if turn_count <= 2:
-        parts.append(AGE_HIERARCHY_RULE)
-
-    # ── BLOCK 4: Style-specific extensions ──
-    if play_style in ("chat", "counsel"):
         parts.append(
-            "[스타일: 대화/상담] 자연스러운 일상 대화 중심. 나레이션 최소화. "
-            "캐릭터 감정과 반응에 집중. 따뜻하고 공감적인 톤."
-        )
-    elif play_style == "rp":
-        parts.append(
-            "[스타일: RP] 몰입감 있는 롤플레이. 나레이션과 대사 균형. "
-            "환경·표정·동작 묘사. 캐릭터 간 상호작용."
-        )
-        for cname in on_screen:
-            cached = _CHAR_RUNTIME_CACHE.get(cname, {})
-            if cached.get("appearance_summary"):
-                parts.append(
-                    f"  [{cname} 외모] {cached['appearance_summary']} ({cached.get('height','')})\n"
-                    f"  행동 성향: {cached.get('behavior_hints', '')}"
-                )
-    elif play_style == "novel":
-        parts.append(
-            "[스타일: 소설] 문학적 표현. 심리묘사·복선·긴장감. "
-            "내면 독백 적극 활용. 장면 전환 시 5감 묘사. "
-            "서술의 리듬과 반전을 고려."
-        )
-        for cname in on_screen:
-            cached = _CHAR_RUNTIME_CACHE.get(cname, {})
-            mirror = cached.get("psychological_mirror", {})
-            if mirror:
-                parts.append(f"  [{cname} 심리거울] " +
-                    "; ".join(f"{k}: {v}" for k, v in mirror.items()))
-            if cached.get("appearance_summary"):
-                parts.append(f"  [{cname} 외모] {cached['appearance_summary']}")
-    elif play_style == "game":
-        parts.append(
-            "[스타일: 게임/TRPG] 선택지 제시. 판정·결과 묘사. "
-            "CORE-4 변화를 게임적 피드백으로 전달. "
-            "환경 상호작용과 아이템 활용."
+            "[나이 서열] 체니<레베카/령/네르<루크/마리/세리카<샐리/테피<라이니<크래더. "
+            "어린쪽→많은쪽 존댓말 기본. 캐릭터 고유 말투가 우선."
         )
 
-    # ── BLOCK 5: Analyzer cache (Heavy Input result) ──
-    analyzer = s.get("analyzer_cache")
-    if analyzer and not analyzer.get("_error"):
-        parts.append(
-            f"[유저 세계관] 장르: {analyzer.get('detected_genre', '미정')}\n"
-            f"  요약: {analyzer.get('world_summary', '')}\n"
-            f"  톤: {', '.join(analyzer.get('tone_keywords', []))}\n"
-            f"  핵심 요소: {', '.join(analyzer.get('key_elements', []))}"
-        )
-        directives = analyzer.get("character_directives", [])
-        if directives:
-            parts.append(f"  캐릭터 지시: {'; '.join(directives[:5])}")
-
-    # ── BLOCK 6: Progressive Disclosure (turn-gated) ──
+    # ── BLOCK 5: Relationships (turn 3+, short) ──
     if turn_count >= 3:
         rels = s.get("relationships", {})
-        rel_lines = []
+        rel_parts = []
         for cname in on_screen:
             if cname == player:
                 continue
             rel = rels.get(cname, {})
             stage = STAGE_NAMES.get(rel.get("stage", 1), "경계")
-            vel = get_relationship_velocity(cname)
-            speed_hint = ""
-            if vel.get("affection_mult", 1.0) >= 1.5:
-                speed_hint = " [감정변동 빠름]"
-            elif vel.get("affection_mult", 1.0) <= 0.7:
-                speed_hint = " [감정변동 느림]"
-            rel_lines.append(
-                f"{cname}: {stage}(호감{rel.get('affection',50)}/신뢰{rel.get('trust',50)}/긴장{rel.get('tension',50)}){speed_hint}"
-            )
-        if rel_lines:
-            parts.append(f"[관계] {' | '.join(rel_lines)}")
+            rel_parts.append(f"{cname}:{stage}")
+        if rel_parts:
+            parts.append(f"[관계] {' '.join(rel_parts)}")
 
-    if turn_count >= 5:
-        core4 = s.get("core4", {})
-        c4_parts = []
-        for key in ["energy", "stress", "intoxication", "pain"]:
-            val = core4.get(key, {}).get("value", 0)
-            c4_parts.append(f"{key}={val}({get_core4_description(key, val)})")
-        parts.append(f"[CORE-4] {' | '.join(c4_parts)}")
+    # ── BLOCK 6: Hidden lore (always) ──
+    hidden = get_hidden_lore_instruction(on_screen)
+    if hidden:
+        parts.append(f"[비밀보호] {hidden}")
 
-    if turn_count >= 7:
-        tension = calculate_tension_level(s)
-        parts.append(
-            f"[텐션] 막: {tension['act']} | 긴장도: {tension['tension']}"
-        )
-
-    # ── BLOCK 6.5: Hidden lore protection ──
-    hidden_lore_inst = get_hidden_lore_instruction(on_screen)
-    if hidden_lore_inst:
-        parts.append(f"[비하인드 스토리 보호]\n{hidden_lore_inst}")
-
-    # ── BLOCK 7: Memory ──
-    memory = s.get("memory", {})
-    core_pins = memory.get("core_pins", [])
-    if core_pins:
-        parts.append("[핵심 기억] " + "; ".join(
-            (p[:80] if isinstance(p, str) else str(p)[:80]) for p in core_pins[-5:]
-        ))
-    long_term = memory.get("long_term", [])
-    if long_term:
-        parts.append("[장기 기억] " + "; ".join(str(m)[:60] for m in long_term[-3:]))
-
-    # ── BLOCK 8: Maestro override ──
+    # ── BLOCK 7: Maestro override (if present) ──
     mo = s.get("maestro_override", {})
     if mo.get("style_correction"):
-        parts.append(f"[마에스트로 보정] {mo['style_correction']}")
-    if mo.get("world_inject"):
-        parts.append(f"[세계관 추가] {mo['world_inject']}")
-
-    # ══════════════════════════════════════════════════════════════
-    # TIER 3 (BOTTOM — lower attention): Genre/style, Analyzer, Maestro
-    # ══════════════════════════════════════════════════════════════
-
-    # (BLOCK 8 already above)
+        parts.append(f"[마에스트로] {mo['style_correction']}")
 
     return "\n".join(parts)
 
@@ -4387,7 +4258,7 @@ def generate_llm(
         "max_output_tokens": 4096,
         "response_mime_type": "application/json",
         "safety_settings": get_safety_settings(),
-        "thinking_config": genai_types.ThinkingConfig(thinking_budget=1024),
+        "thinking_config": genai_types.ThinkingConfig(thinking_budget=2048),  # PATCH-36 FIX-M1: 1024→2048
     }
     if response_schema:
         config_kwargs["response_schema"] = response_schema
@@ -4787,9 +4658,9 @@ def run_dima_turn(s: dict, user_input: str) -> tuple:
     """Run one D.I.M.A turn and return (final_script, pulse_result, dima_response)."""
     system_instruction, main_prompt, pulse_result = build_dima_prompt(s, user_input)
 
-    # Use tension-based temperature
-    tension_info = calculate_tension_level(s)
-    temperature = tension_info.get("temperature_hint", 0.75)
+    # PATCH-36 FIX-M5: Gemini 3 공식 권장 temperature 1.0 고정
+    # Google: "Setting temperature below 1.0 may lead to looping or degraded performance"
+    temperature = 1.0
 
     raw = generate_llm(
         prompt=main_prompt,
