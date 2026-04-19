@@ -114,7 +114,13 @@ MOVEMENT_BLOCKING_KEYWORDS = [
     "나가자", "가자", "이동", "옮기", "출발", "따라와",
     "카페를 나서", "밖으로", "문을 열고 나"
 ]
-MOVEMENT_NARRATION_VERBS = re.compile(r'(?:나서|나가|이동|옮기|출발|떠나)')
+# PATCH-36 FIX-H4: Refined regex — match only in movement context, not general verbs
+MOVEMENT_NARRATION_VERBS = re.compile(
+    r'(?:밖으로|문을\s*열고)\s*(?:나서|나가)|'
+    r'(?:으?로|에)\s*(?:이동|옮기)|'
+    r'(?:자리를|장소를)\s*(?:떠나|옮기)|'
+    r'(?:카페를|가게를|술집을)\s*(?:나서|나가)'
+)
 MOVEMENT_DIALOGUE_VERBS = re.compile(r'(?:가자|가볼까|이동|나가자|따라와)')
 
 # Event seed injection guards
@@ -2305,7 +2311,11 @@ def build_anti_repetition_context(s: dict, on_screen: List[str]) -> str:
         )
 
     if lines:
-        return "[반복 방지]\n" + "\n".join(lines)
+        # PATCH-36 FIX-H3: 최대 500자로 제한 — 과도한 반복방지 텍스트가 창작 토큰을 압박하는 것을 방지
+        result = "[반복 방지]\n" + "\n".join(lines)
+        if len(result) > 500:
+            result = result[:500] + "\n(...이하 생략)"
+        return result
     return ""
 
 
@@ -3215,7 +3225,10 @@ def inject_director_brief(ui_settings: dict, s: Optional[dict] = None, pulse_res
                 f"힌트: {pulse_result['suggestion']}"
             )
         elif pulse_result["mode"] == "NUDGE":
-            nudge_char = pulse_result.get("nudge_char", "캐릭터")
+            # PATCH-36 FIX-H2: analyze_user_pulse doesn't return nudge_char;
+            # extract character name from suggestion string instead
+            nudge_suggestion = pulse_result.get("suggestion", "")
+            nudge_char = nudge_suggestion.split("이(가)")[0] if "이(가)" in nudge_suggestion else "캐릭터"
             move_note = "" if movement_allowed_in_pulse else " ⛔이동제안금지."
             parts.append(
                 f"\n🟡 NUDGE: {nudge_char}이(가) 현재 장소 내 활동 제안.{move_note}\n"
@@ -3886,17 +3899,13 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         mood = ds.get("current_mood", "neutral") if isinstance(ds, dict) else "neutral"
         intensity = ds.get("mood_intensity", 5) if isinstance(ds, dict) else 5
         char_brief += f"\n  감정: {mood}(강도{intensity}/10)"
-        continuity_lines.append(char_brief)
+        briefs.append(char_brief)
 
-    # STEP 5-B: 3-Tier 메모리 컨텍스트 주입
-    memory_context = build_memory_context_for_dima(s)
-    continuity_lines.append(memory_context)
-
-    # STEP 7: flow_digest를 DIMA가 읽기 쉬운 형태로 변환
-    flow_context = format_flow_digest_for_dima(s)
-    continuity_lines.append(flow_context)
-
-    briefs.insert(0, "\n".join(continuity_lines))
+    # PATCH-36 FIX-H5+M4: Character briefs now contain ONLY character info.
+    # Memory context and flow digest are already included in recent_conversation_log,
+    # so they are NOT duplicated here. Continuity lines stay separate.
+    if continuity_lines:
+        briefs.insert(0, "\n".join(continuity_lines))
     character_briefs_content = "\n".join(briefs)
 
     # Director brief — with Pulse analysis
@@ -4226,6 +4235,11 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         player_name=player_name,
         user_input=user_input_for_prompt,
     )
+
+    # PATCH-36 FIX-M3: Prompt token budget logging (~4 chars = 1 token)
+    estimated_tokens = len(main_prompt) // 4
+    if estimated_tokens > 6000:
+        logger.warning(f"[Prompt Budget] Main prompt ~{estimated_tokens} tokens — over 6000 target")
 
     return system_instruction, main_prompt, pulse_result
 
@@ -4923,30 +4937,43 @@ def apply_maestro_to_session(s: dict, data: dict):
         s["_character_actions_this_turn"] = ca
 
     # 7. location_update → 장소 변경 (PATCH-23)
+    # PATCH-36 FIX-H6: Apply movement gate check before Maestro-directed location changes
     loc_update = data.get("location_update")
     if loc_update and isinstance(loc_update, str) and loc_update.lower() != "null":
-        apply_location_change(s, loc_update, reason="maestro_directive")
+        turns_here = s.get("turns_at_current_location", 0)
+        if turns_here >= MOVEMENT_GATE_TURNS:
+            apply_location_change(s, loc_update, reason="maestro_directive")
+        else:
+            logger.info(f"[Maestro] Location update blocked by gate: {turns_here}/{MOVEMENT_GATE_TURNS}")
 
     # PATCH-25: 8. character_movements → 캐릭터별 개별 이동
+    # PATCH-36 FIX-H6: Apply movement gate to character_movements as well
+    turns_here = s.get("turns_at_current_location", 0)
     cm = data.get("character_movements")
     if cm and isinstance(cm, dict):
-        for char_name, move_info in cm.items():
-            if not isinstance(move_info, dict):
-                continue
-            dest = move_info.get("destination")
-            reason = move_info.get("reason", "Maestro 지시")
-            if dest and isinstance(dest, str) and dest.lower() != "null":
-                move_character(s, char_name, dest, reason)
+        if turns_here >= MOVEMENT_GATE_TURNS:
+            for char_name, move_info in cm.items():
+                if not isinstance(move_info, dict):
+                    continue
+                dest = move_info.get("destination")
+                reason = move_info.get("reason", "Maestro 지시")
+                if dest and isinstance(dest, str) and dest.lower() != "null":
+                    move_character(s, char_name, dest, reason)
+        else:
+            logger.info(f"[Maestro] Character movements blocked by gate: {turns_here}/{MOVEMENT_GATE_TURNS}")
     elif cm and isinstance(cm, list):
         # ── PATCH-26: Apply Maestro character movements (list format) ──
-        for mv in cm:
-            if not isinstance(mv, dict):
-                continue
-            char_name = mv.get("character", "")
-            dest = mv.get("to", "") or mv.get("destination", "")
-            if char_name and dest and char_name in ALL_CHARACTER_NAMES:
-                canonical = LOCATION_ALIASES.get(dest, dest)
-                move_character(s, char_name, canonical, reason="maestro_directive")
+        if turns_here >= MOVEMENT_GATE_TURNS:
+            for mv in cm:
+                if not isinstance(mv, dict):
+                    continue
+                char_name = mv.get("character", "")
+                dest = mv.get("to", "") or mv.get("destination", "")
+                if char_name and dest and char_name in ALL_CHARACTER_NAMES:
+                    canonical = LOCATION_ALIASES.get(dest, dest)
+                    move_character(s, char_name, canonical, reason="maestro_directive")
+        else:
+            logger.info(f"[Maestro] Character movements (list) blocked by gate: {turns_here}/{MOVEMENT_GATE_TURNS}")
 
     # PATCH-25: 9. player_profile_update → Maestro의 유저 성향 분석 반영
     ppu = data.get("player_profile_update")
