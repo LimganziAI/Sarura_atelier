@@ -5349,8 +5349,10 @@ def reload_db():
     Requires SARURA_ADMIN_TOKEN env var to be set and matched via Authorization header."""
     # Auth check: require token if configured
     if _ADMIN_TOKEN:
+        import hmac
         auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {_ADMIN_TOKEN}":
+        expected = f"Bearer {_ADMIN_TOKEN}"
+        if not hmac.compare_digest(auth, expected):
             return jsonify({"status": "error", "message": "Unauthorized"}), 403
 
     global CHARACTERS_DB, WORLD_DB, ALL_CHARACTER_NAMES, PERSONAL_COLORS, ENG_SLUG_MAP, LOCATION_ALIASES
