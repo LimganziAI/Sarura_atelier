@@ -5340,9 +5340,19 @@ def health():
 
 
 # PATCH-37: Hot-reload endpoint for JSON DB changes without server restart
+_ADMIN_TOKEN = os.environ.get("SARURA_ADMIN_TOKEN", "")
+
+
 @app.route("/admin/reload-db", methods=["POST"])
 def reload_db():
-    """Reload characters_db.json, world_db.json, and rebuild runtime caches."""
+    """Reload characters_db.json, world_db.json, and rebuild runtime caches.
+    Requires SARURA_ADMIN_TOKEN env var to be set and matched via Authorization header."""
+    # Auth check: require token if configured
+    if _ADMIN_TOKEN:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {_ADMIN_TOKEN}":
+            return jsonify({"status": "error", "message": "Unauthorized"}), 403
+
     global CHARACTERS_DB, WORLD_DB, ALL_CHARACTER_NAMES, PERSONAL_COLORS, ENG_SLUG_MAP, LOCATION_ALIASES
 
     try:
@@ -5406,7 +5416,7 @@ def reload_db():
         })
     except Exception as e:
         logger.error(f"[PATCH-37] DB reload failed: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "DB reload failed. Check server logs."}), 500
 
 
 @app.route("/gallery", methods=["GET"])
