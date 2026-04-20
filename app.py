@@ -112,7 +112,12 @@ COMPLETED_MOVE_PATTERNS = [
 VOICE_BUDGET_MAX_BLOCKS = {"minimal": 1, "short": 1, "medium": 2, "long": 4}
 MOVEMENT_BLOCKING_KEYWORDS = [
     "나가자", "가자", "이동", "옮기", "출발", "따라와",
-    "카페를 나서", "밖으로", "문을 열고 나"
+    "카페를 나서", "밖으로", "문을 열고 나",
+    # PATCH-37: 정원 및 간접 이동 표현 추가
+    "정원으로", "정원에", "정원 쪽",
+    "쪽으로 가", "쪽으로 가요", "따라오", "데려갈",
+    "거기 가면", "거기로", "저기로",
+    "올라가자", "내려가자", "가볼래",
 ]
 # PATCH-36 FIX-H4: Refined regex — match only in movement context, not general verbs
 MOVEMENT_NARRATION_VERBS = re.compile(
@@ -121,7 +126,9 @@ MOVEMENT_NARRATION_VERBS = re.compile(
     r'(?:자리를|장소를)\s*(?:떠나|옮기)|'
     r'(?:카페를|가게를|술집을)\s*(?:나서|나가)'
 )
-MOVEMENT_DIALOGUE_VERBS = re.compile(r'(?:가자|가볼까|이동|나가자|따라와)')
+MOVEMENT_DIALOGUE_VERBS = re.compile(
+    r'(?:가자|가볼까|이동|나가자|따라와|가요|갈래요|데려가|올라가자|내려가자)'
+)
 
 # Event seed injection guards
 EVENT_SEED_MIN_TURNS = 15        # 이벤트 시드 주입에 필요한 최소 턴 수
@@ -408,15 +415,24 @@ logger.info(f"Location alias map built: {len(LOCATION_ALIASES)} entries")
 LOCATION_SEMANTIC_OVERRIDES: Dict[str, Dict[str, str]] = {
     "카페": {
         "canonical": "카페 거리",
+        "display_name": "카페 실내",
         "scene_note": "카페 거리에 위치한 아늑한 카페 실내. 테이블, 의자, 커피 향, 에어컨 바람. '카페 거리'라는 이름이지만 장면은 카페 내부다."
     },
     "술집": {
         "canonical": "뒷골목의 선술집 '녹슨 톱니바퀴'",
+        "display_name": "선술집 내부",
         "scene_note": "선술집 내부. 나무 테이블, 흐린 조명, 맥주 거품, 웅성거리는 대화."
     },
     "맥주집": {
         "canonical": "뒷골목의 선술집 '녹슨 톱니바퀴'",
+        "display_name": "선술집 내부",
         "scene_note": "수제 맥주가 있는 분위기 좋은 술집 내부."
+    },
+    # PATCH-37: 정원 오버라이드 추가
+    "정원": {
+        "canonical": "옥상 정원",
+        "display_name": "옥상 정원",
+        "scene_note": "세리카가 가꾸는 옥상 정원. 라벤더와 들꽃이 바람에 흔들리고, 석양이 꽃잎에 금빛을 입힌다."
     },
 }
 
@@ -438,7 +454,8 @@ def get_display_location(canonical_location: str, user_input_location: str = "")
 
     if override:
         return {
-            "location_display": override.get("scene_note", canonical_location).split(".")[0],
+            "location_display": override.get("display_name",
+                                  override.get("scene_note", canonical_location).split(".")[0][:20]),
             "scene_note": override.get("scene_note", ""),
             "canonical": override.get("canonical", canonical_location),
         }
@@ -471,6 +488,11 @@ _EXPLICIT_MOVE_PATTERNS = [
     re.compile(r'(?:에)\s*(?:가자|갈래|가볼까)'),              # "기숙사에 가자"
     re.compile(r'장소\s*(?:바꾸|변경|이동)'),                   # "장소 바꾸자"
     re.compile(r'(?:다른\s*곳|밖|나가)'),                      # "밖으로 나가자"
+    # PATCH-37: 간접 이동 패턴
+    re.compile(r'(?:쪽으로|쪽에)\s*(?:가|가자|가요|갈래)'),
+    re.compile(r'(?:거기|저기|그곳)(?:로|에)\s*(?:가|가자)'),
+    re.compile(r'(?:따라오|따라와|데려가|데려갈)'),
+    re.compile(r'(?:정원|옥상|노천탕|연구실)(?:으?로|에)\s*(?:가|가자|갈래)'),
 ]
 
 
@@ -499,7 +521,18 @@ def enforce_voice_budget(dialogue_blocks: list, active_characters: list) -> list
         if char_block_count[char] < max_blocks:
             result.append(block)
             char_block_count[char] += 1
-        # max 초과분은 무시
+        else:
+            # PATCH-37: 초과분은 내면 독백/행동 나레이션으로 변환 (1회만)
+            inner = block.get("dialogue", block.get("text", block.get("content", "")))
+            if inner and char and char_block_count[char] == max_blocks:
+                narration_block = {
+                    "type": "narration",
+                    "text": (f"{char}이(가) 무언가를 말하려다 입을 다물었다."
+                             if len(inner) < 30 else
+                             f"{char}이(가) 잠시 생각에 잠겼다.")
+                }
+                result.append(narration_block)
+            char_block_count[char] += 1
 
     return result
 
@@ -513,6 +546,10 @@ def replace_location_names_in_text(text: str, state: dict) -> str:
     )
     canonical = loc_info["canonical"]
     display = loc_info["location_display"]
+
+    # PATCH-37: 이미 display_name이 텍스트에 있으면 치환 생략 (이중 치환 방지)
+    if display and display in text:
+        return text
 
     if canonical and display and canonical != display:
         text = text.replace(canonical, display)
@@ -3260,6 +3297,9 @@ You are D.I.M.A., a master theater director writing living scenes.
 
 ### Player's Action ###
 Player Name: {player_name}
+
+{memory_anchor}
+
 {user_input}
 
 ### Director's Cue (FOLLOW THIS) ###
@@ -3270,6 +3310,64 @@ Player Name: {player_name}
 def _short(txt: str, n: int = 100) -> str:
     s = str(txt or "")
     return s if len(s) <= n else s[:n] + "..."
+
+
+# PATCH-37: Memory anchor — compact context reminder injected every turn
+def build_memory_anchor(session_state: dict) -> str:
+    """매 턴 프롬프트에 삽입하는 200토큰 이하 기억 앵커.
+    Gemini 3의 30턴+ 컨텍스트 유실 문제를 완화한다."""
+    parts = []
+    player_name = session_state.get("player_name", "사용자")
+    turn_number = len(session_state.get("turns", []))
+
+    # 1. 현재 장면 핵심
+    location = session_state.get("current_location",
+                session_state.get("world", {}).get("space", {}).get("current_location", "???"))
+    parts.append(f"[리마인더] 위치: {location}, 턴 {turn_number}")
+
+    # 2. 핵심 규칙 리마인드
+    parts.append(f"- {player_name}의 대사/행동/감정 절대 서술 금지")
+    parts.append("- 각 캐릭터 고유 말투 유지")
+
+    # 3. 최근 3턴 핵심 사건 (1줄씩)
+    recent_turns = session_state.get("turns", [])[-3:]
+    recent_events = []
+    for t in recent_turns:
+        user_in = (t.get("user_input") or "")[:30]
+        speakers = []
+        for b in t.get("script", [])[:2]:
+            if b.get("type") == "dialogue" and b.get("character"):
+                speakers.append(b["character"])
+        if user_in or speakers:
+            ev = f"유저:'{user_in}'" if user_in else ""
+            if speakers:
+                ev += f" → {','.join(speakers[:2])} 반응"
+            recent_events.append(ev.strip())
+    if recent_events:
+        parts.append("[최근사건] " + " → ".join(recent_events[-3:]))
+
+    # 4. 감정 상태 (활성 캐릭터의 현재 기분)
+    char_last = session_state.get("memory", {}).get("character_last", {})
+    if char_last:
+        emo_parts = []
+        for name, info in list(char_last.items())[:3]:
+            emo = info.get("emotion", "")
+            if emo:
+                emo_parts.append(f"{name}:{emo}")
+        if emo_parts:
+            parts.append("[감정] " + ", ".join(emo_parts))
+
+    # 5. 관계 단계
+    rels = session_state.get("relationships", {})
+    if rels:
+        rel_parts = []
+        for name, rdata in list(rels.items())[:3]:
+            stage = rdata.get("stage", 1) if isinstance(rdata, dict) else 1
+            rel_parts.append(f"{name}:stage{stage}")
+        if rel_parts:
+            parts.append("[관계] " + ", ".join(rel_parts))
+
+    return "\n".join(parts)
 
 
 def _build_event_digest(turn_id: int, user_input: str, script: list) -> str:
@@ -4226,6 +4324,9 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
     if anti_rep_for_instinct:
         directors_block += "\n\n=== ANTI-REPETITION ===\n" + anti_rep_for_instinct
 
+    # PATCH-37: Build memory anchor for context retention
+    mem_anchor = build_memory_anchor(s)
+
     main_prompt = DIMA_PROMPT_TEMPLATE.format(
         recent_conversation_log=recent_conversation_log,
         character_briefs=character_briefs_content,
@@ -4233,6 +4334,7 @@ def build_dima_prompt(s: dict, user_input: str) -> tuple:
         directors_instinct=directors_block,
         location_and_time=f"{location}",
         player_name=player_name,
+        memory_anchor=mem_anchor,
         user_input=user_input_for_prompt,
     )
 
@@ -5235,6 +5337,88 @@ def health():
         "supported_emotions": SUPPORTED_EMOTIONS,
         "illustration_model": MODEL_ILLUSTRATION,
     })
+
+
+# PATCH-37: Hot-reload endpoint for JSON DB changes without server restart
+_ADMIN_TOKEN = os.environ.get("SARURA_ADMIN_TOKEN", "")
+
+
+@app.route("/admin/reload-db", methods=["POST"])
+def reload_db():
+    """Reload characters_db.json, world_db.json, and rebuild runtime caches.
+    Requires SARURA_ADMIN_TOKEN env var to be set and matched via Authorization header."""
+    # Auth check: require token if configured
+    if _ADMIN_TOKEN:
+        import hmac
+        auth = request.headers.get("Authorization", "")
+        expected = f"Bearer {_ADMIN_TOKEN}"
+        if not hmac.compare_digest(auth, expected):
+            return jsonify({"status": "error", "message": "Unauthorized"}), 403
+
+    global CHARACTERS_DB, WORLD_DB, ALL_CHARACTER_NAMES, PERSONAL_COLORS, ENG_SLUG_MAP, LOCATION_ALIASES
+
+    try:
+        CHARACTERS_DB = _load_json(PROMPT_DIR / "characters_db.json", {})
+        WORLD_DB = _load_json(PROMPT_DIR / "world_db.json", {})
+
+        ALL_CHARACTER_NAMES = list(CHARACTERS_DB.keys())
+        PERSONAL_COLORS.clear()
+        PERSONAL_COLORS.update({
+            k: v.get("metadata", {}).get("color", "#666666")
+            for k, v in CHARACTERS_DB.items()
+        })
+        ENG_SLUG_MAP.clear()
+        ENG_SLUG_MAP.update({
+            k: v.get("metadata", {}).get("eng", k.lower())
+            for k, v in CHARACTERS_DB.items()
+        })
+
+        # Rebuild runtime character cache
+        _CHAR_RUNTIME_CACHE.clear()
+        for _cname, _cdb in CHARACTERS_DB.items():
+            _identity = _cdb.get("identity", {})
+            _bp = _cdb.get("behavior_protocols", {})
+            _sig = _bp.get("signature_speech", {})
+            _CHAR_RUNTIME_CACHE[_cname] = {
+                "core_appeal": _identity.get("core_appeal", "")[:180],
+                "background_hook": _identity.get("background_summary", "")[:100],
+                "core_acting_rule": _bp.get("core_acting_rule", "")[:100],
+                "speech_habit": _sig.get("speech_habit", ""),
+                "honorific_style": _sig.get("honorific_style", ""),
+                "catchphrases": _sig.get("catchphrases", [])[:3],
+                "forbidden_patterns": _sig.get("forbidden_patterns", [])[:2],
+                "tone_mixing_rule": _sig.get("tone_mixing_rule", ""),
+                "catchphrase_budget": _sig.get("catchphrase_budget", ""),
+                "voice_contrast": _sig.get("voice_contrast", ""),
+                "example_lines": _sig.get("example_lines", [])[:2],
+                "personality_dna": _cdb.get("personality_dna", {}),
+                "appearance_summary": _cdb.get("appearance", {}).get("summary", "")[:80],
+                "height": _cdb.get("appearance", {}).get("height", ""),
+                "psychological_mirror": _bp.get("psychological_mirror", {}),
+                "relationship_development": _cdb.get("relationship_development", {}),
+                "heuristic_keys": list(_bp.get("acting_heuristics", {}).keys()),
+                "idle_habits": [
+                    (h.get("action", "") if isinstance(h, dict) else (str(h) if h else ""))
+                    for h in _bp.get("idle_habits", [])[:3]
+                ],
+                "behavior_hints": big5_to_behavior_hints(_cdb.get("personality_dna", {})),
+                "honesty_profile": _bp.get("honesty_profile", {}),
+                "physical_tells": _bp.get("physical_tells", {}),
+            }
+
+        # Rebuild location aliases
+        LOCATION_ALIASES.clear()
+        LOCATION_ALIASES.update(_build_location_aliases())
+
+        logger.info(f"[PATCH-37] DB reloaded: {len(CHARACTERS_DB)} characters, {len(LOCATION_ALIASES)} location aliases")
+        return jsonify({
+            "status": "ok",
+            "characters": len(CHARACTERS_DB),
+            "aliases": len(LOCATION_ALIASES),
+        })
+    except Exception as e:
+        logger.error(f"[PATCH-37] DB reload failed: {e}")
+        return jsonify({"status": "error", "message": "DB reload failed. Check server logs."}), 500
 
 
 @app.route("/gallery", methods=["GET"])
